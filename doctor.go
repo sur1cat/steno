@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // steno doctor — предполётная проверка. Первый запуск сервиса упирается в
@@ -126,15 +128,95 @@ func checkTranscribe(cfg *Config) check {
 			[]string{`→ или поставь "source": "captions", чтобы взять текст из субтитров Meet`}, false}
 	}
 	bin := cfg.Transcribe.Cmd[0]
-	path, err := exec.LookPath(bin)
-	if err != nil {
+	if _, err := exec.LookPath(bin); err != nil {
 		return check{"расшифровка", "fail", "не запускается " + bin,
 			[]string{
 				"→ " + err.Error(),
 				`→ или поставь "source": "captions" — текст возьмётся из субтитров Meet`,
 			}, false}
 	}
-	return check{"расшифровка", "ok", path, nil, false}
+	// Найти файл мало. Адаптеру нужна модель на полгигабайта, и без неё он
+	// падает — а doctor до этого рапортовал «ok». Поэтому прогоняем его
+	// по-настоящему на полусекунде тишины: это проверяет и бинарник, и модель,
+	// и то, что на выходе получается обещанный JSON.
+	out, err := probeTranscriber(cfg)
+	if err != nil {
+		// Показываем хвост ошибки, а не начало: адаптер пишет туда, чего ему
+		// не хватило и какой командой это ставится, — а начало занято
+		// служебным «exit status 1».
+		fix := []string{}
+		for _, l := range lastLines(err.Error(), 5) {
+			fix = append(fix, "→ "+l)
+		}
+		fix = append(fix, `→ или поставь "source": "captions" — текст возьмётся из субтитров Meet`)
+		return check{"расшифровка", "fail", "адаптер не отработал", fix, false}
+	}
+	return check{"расшифровка", "ok", out, nil, false}
+}
+
+// probeTranscriber прогоняет адаптер на полусекунде тишины и проверяет, что он
+// вернул обещанный JSON. Тишина — самый безобидный вход, а проверяется весь
+// путь целиком.
+func probeTranscriber(cfg *Config) (string, error) {
+	dir, err := os.MkdirTemp("", "steno-doctor")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	wav := filepath.Join(dir, "silence.wav")
+	if err := os.WriteFile(wav, silentWAV(time.Second/2), 0o644); err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	probe := *cfg
+	probe.Transcribe.Timeout = Duration(3 * time.Minute)
+	if _, err := runTranscriber(ctx, &probe, wav); err != nil {
+		return "", err
+	}
+	return "адаптер отработал на пробной записи", nil
+}
+
+// silentWAV — 16 кГц моно PCM: ровно то, что адаптеры и ожидают на входе.
+func silentWAV(d time.Duration) []byte {
+	const rate = 16000
+	samples := int(d.Seconds() * rate)
+	data := samples * 2
+	b := make([]byte, 0, 44+data)
+	put32 := func(v uint32) {
+		b = append(b, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
+	}
+	put16 := func(v uint16) { b = append(b, byte(v), byte(v>>8)) }
+
+	b = append(b, "RIFF"...)
+	put32(uint32(36 + data))
+	b = append(b, "WAVEfmt "...)
+	put32(16)
+	put16(1) // PCM
+	put16(1) // моно
+	put32(rate)
+	put32(rate * 2) // байт в секунду
+	put16(2)        // выравнивание блока
+	put16(16)       // бит на отсчёт
+	b = append(b, "data"...)
+	put32(uint32(data))
+	return append(b, make([]byte, data)...)
+}
+
+// lastLines берёт последние непустые строки: у адаптера самое полезное — в
+// конце, там он пишет, чего не хватает и как это поставить.
+func lastLines(s string, n int) []string {
+	var out []string
+	for _, l := range strings.Split(strings.TrimSpace(s), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	if len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return out
 }
 
 func checkClaude(cfg *Config) check {

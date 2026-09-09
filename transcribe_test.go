@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAlignSpeakersUsesCaptionNames(t *testing.T) {
@@ -161,5 +162,69 @@ func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// whisper определяет язык по первым тридцати секундам, а запись созвона
+// начинается с тишины — бот заходит раньше людей. Определился не тот язык, и
+// весь разговор вышел строками [BLANK_AUDIO]: валидный JSON, нулевой код
+// возврата, пустой follow-up как настоящий. Это надо ловить до Claude.
+func TestCheckTranscriptCatchesSilence(t *testing.T) {
+	blank := make([]Segment, 15)
+	for i := range blank {
+		blank[i] = Segment{Start: float64(i * 30), End: float64(i*30 + 30), Text: "[BLANK_AUDIO]"}
+	}
+	err := checkTranscript(blank)
+	if err == nil {
+		t.Fatal("расшифровка из одной тишины принята за настоящую")
+	}
+	if !strings.Contains(err.Error(), "нет речи") {
+		t.Errorf("невнятная ошибка: %v", err)
+	}
+
+	for _, markers := range [][]string{
+		{"[музыка]"}, {"(Music)"}, {"[тишина]"}, {"[inaudible]"}, {""},
+	} {
+		var segs []Segment
+		for _, m := range markers {
+			segs = append(segs, Segment{Text: m})
+		}
+		if checkTranscript(segs) == nil {
+			t.Errorf("пометка %v принята за речь", markers)
+		}
+	}
+
+	// Пометка внутри настоящей реплики её не отменяет.
+	ok := []Segment{
+		{Text: "[шум] так, давайте начнём с релиза, что там с миграцией схемы"},
+		{Text: "миграция готова процентов на восемьдесят, но на стейджинг не успеваю"},
+	}
+	if err := checkTranscript(ok); err != nil {
+		t.Errorf("настоящая расшифровка забракована: %v", err)
+	}
+
+	// Одно слово на часовой созвон — тоже не расшифровка.
+	if checkTranscript([]Segment{{Text: "ага"}}) == nil {
+		t.Error("расшифровка из одного слова принята")
+	}
+}
+
+// doctor должен проверять адаптер по-настоящему: найти файл скрипта мало, ему
+// нужна модель на полгигабайта, и без неё он падает.
+func TestSilentWAVIsValid(t *testing.T) {
+	b := silentWAV(time.Second / 2)
+	if len(b) != 44+16000 {
+		t.Fatalf("длина %d, ожидали %d", len(b), 44+16000)
+	}
+	if string(b[0:4]) != "RIFF" || string(b[8:12]) != "WAVE" || string(b[36:40]) != "data" {
+		t.Fatal("не похоже на WAV")
+	}
+	// 16 кГц, моно, 16 бит — то, что ждут адаптеры.
+	rate := uint32(b[24]) | uint32(b[25])<<8 | uint32(b[26])<<16 | uint32(b[27])<<24
+	if rate != 16000 {
+		t.Errorf("частота %d", rate)
+	}
+	if ch := uint16(b[22]) | uint16(b[23])<<8; ch != 1 {
+		t.Errorf("каналов %d", ch)
 	}
 }

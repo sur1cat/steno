@@ -124,8 +124,45 @@ make test
 
 | Адаптер | Что нужно |
 |---|---|
-| `adapters/whisper-cpp.sh` | whisper.cpp, ffmpeg, jq |
+| `adapters/whisper-cpp.sh` | whisper.cpp, ffmpeg, jq + модель |
 | `adapters/faster-whisper.py` | `pip install faster-whisper` |
+
+Модель — это отдельная загрузка, без неё адаптер не работает:
+
+```
+brew install whisper-cpp ffmpeg jq
+mkdir -p ~/.cache/whisper
+
+# распознавание: large-v3 — 3.1 ГБ, small — 465 МБ и заметно хуже
+curl -L -o ~/.cache/whisper/ggml-large-v3.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin
+
+# VAD — 868 КБ, но ускоряет в 8 раз и убирает выдумки на тишине
+curl -L -o ~/.cache/whisper/ggml-silero-v5.1.2.bin \
+  https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin
+```
+
+VAD стоит поставить обязательно, и вот почему. Запись созвона начинается с
+тишины: бот заходит раньше людей. На тишине whisper всё равно гоняет полный
+энкодер и вдобавок начинает выдумывать текст — на живой записи он выдал
+«Редактор субтитров А.Синецкая» сорок раз подряд, затерев настоящую речь. VAD
+эту тишину просто выбрасывает.
+
+**Скорость**, замерено на записи 285 с (Apple M3, 8 ядер):
+
+| | к реальному времени |
+|---|---|
+| Metal + VAD | **23x** |
+| Metal без VAD | 3.8x |
+| CPU + VAD | 2.1x |
+
+На M3 часовой созвон расшифровывается за две-три минуты. Без GPU падение
+пятнадцатикратное, и это на `small`: `large-v3` тяжелее раз в шесть, так что на
+CPU-сервере часовой созвон будет расшифровываться дольше часа. Либо GPU, либо
+модель поменьше, либо `source: "captions"`.
+
+`steno doctor` прогоняет адаптер по-настоящему — на полусекунде тишины — и
+показывает, чего не хватает. Найти файл скрипта мало: без модели он падает.
 
 Селекторы Meet лежат в `selectors.json` и вшиты в бинарник. Чтобы чинить их
 без пересборки, положи файл рядом и укажи путь в `bot.selectors` — он

@@ -100,6 +100,25 @@ func newFlagSet(name string) *flag.FlagSet {
 	return flag.NewFlagSet(name, flag.ExitOnError)
 }
 
+// parseArgs разбирает флаги, где бы они ни стояли. Стандартный flag
+// останавливается на первом не-флаге, поэтому `steno process <id> --no-followup`
+// молча брал конфиг по умолчанию и падал с невнятным «no rows in result set».
+// Порядок аргументов — не то, на чём человек должен спотыкаться.
+func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
+	}
+}
+
 func setupFlags(fs *flag.FlagSet) *string {
 	return fs.String("c", envOr("STENO_CONFIG", defaultConfigPath), "путь к конфигу")
 }
@@ -159,13 +178,14 @@ func cmdJoin(ctx context.Context, args []string) error {
 		"записать и расшифровать, показать расшифровку и остановиться (Claude не нужен)")
 	useCaptions := fs.Bool("captions", false,
 		"взять текст из субтитров Meet вместо whisper")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(rest) < 1 {
 		return fmt.Errorf("нужна ссылка на созвон: steno join https://meet.google.com/abc-defg-hij")
 	}
-	meetURL := fs.Arg(0)
+	meetURL := rest[0]
 
 	cfg, st, err := open(*cfgPath)
 	if err != nil {
@@ -252,6 +272,12 @@ func transcribeOnly(ctx context.Context, cfg *Config, st *Store, id string) erro
 	}
 	segs, err := transcribeMeeting(ctx, cfg, m)
 	if err != nil {
+		_ = st.SetStatus(id, "failed", err.Error())
+		return err
+	}
+	if err := checkTranscript(segs); err != nil {
+		// Платить Claude за расшифровку из одной тишины незачем, а главное —
+		// молчаливый пустой follow-up выглядит как настоящий.
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
 	}
@@ -439,7 +465,7 @@ func cmdBot(ctx context.Context, args []string) error {
 		"печатать, что на странице похоже на субтитры")
 	captionLang := fs.String("caption-language", "",
 		"язык субтитров Meet — он же язык распознавания")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if *meetURL == "" {
@@ -490,10 +516,11 @@ func cmdProcess(ctx context.Context, args []string) error {
 		"только расшифровать и показать — Claude не нужен")
 	useCaptions := fs.Bool("captions", false,
 		"взять текст из субтитров Meet вместо whisper")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(rest) < 1 {
 		return fmt.Errorf("нужен id созвона")
 	}
 	cfg, st, err := open(*cfgPath)
@@ -505,9 +532,9 @@ func cmdProcess(ctx context.Context, args []string) error {
 		cfg.Transcribe.Source = "captions"
 	}
 	if *noFollowup {
-		return transcribeOnly(ctx, cfg, st, fs.Arg(0))
+		return transcribeOnly(ctx, cfg, st, rest[0])
 	}
-	return processMeeting(ctx, cfg, st, fs.Arg(0), *noPublish)
+	return processMeeting(ctx, cfg, st, rest[0], *noPublish)
 }
 
 func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPublish bool) error {
@@ -617,10 +644,11 @@ func namedCount(segs []Segment) int {
 func cmdPublish(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("publish", flag.ExitOnError)
 	cfgPath := setupFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(rest) < 1 {
 		return fmt.Errorf("нужен id созвона")
 	}
 	cfg, st, err := open(*cfgPath)
@@ -628,7 +656,7 @@ func cmdPublish(ctx context.Context, args []string) error {
 		return err
 	}
 	defer st.Close()
-	id := fs.Arg(0)
+	id := rest[0]
 	m, err := st.Meeting(id)
 	if err != nil {
 		return err
@@ -653,10 +681,11 @@ func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
 	cfgPath := setupFlags(fs)
 	asJSON := fs.Bool("json", false, "выдать JSON")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(rest) < 1 {
 		return fmt.Errorf("нужен id созвона")
 	}
 	_, st, err := open(*cfgPath)
@@ -664,7 +693,7 @@ func cmdShow(args []string) error {
 		return err
 	}
 	defer st.Close()
-	id := fs.Arg(0)
+	id := rest[0]
 	m, err := st.Meeting(id)
 	if err != nil {
 		return err
@@ -693,7 +722,8 @@ func cmdContext(ctx context.Context, args []string) error {
 	cfgPath := setupFlags(fs)
 	force := fs.Bool("force", false, "пересобрать, даже если материал не менялся")
 	show := fs.Bool("show", false, "показать готовые справки, не пересобирая")
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
 	cfg, st, err := open(*cfgPath)
@@ -706,7 +736,7 @@ func cmdContext(ctx context.Context, args []string) error {
 		return fmt.Errorf("нет ни одного проекта — заведи в панели или в конфиге")
 	}
 
-	only := fs.Arg(0)
+	only := rest[0]
 	var total float64
 	for _, p := range projects {
 		if only != "" && !strings.EqualFold(p.Name, only) {
@@ -774,7 +804,8 @@ func sourcesSummary(p Project) string {
 func cmdProjects(args []string) error {
 	fs := newFlagSet("projects")
 	cfgPath := setupFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
 	_, st, err := open(*cfgPath)
@@ -783,8 +814,8 @@ func cmdProjects(args []string) error {
 	}
 	defer st.Close()
 
-	names := []string{fs.Arg(0)}
-	if fs.NArg() == 0 {
+	names := []string{rest[0]}
+	if len(rest) == 0 {
 		if names, err = st.KnownProjects(); err != nil {
 			return err
 		}
@@ -831,12 +862,13 @@ func cmdProjects(args []string) error {
 func cmdCost(args []string) error {
 	fs := newFlagSet("cost")
 	cfgPath := setupFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
 	days := 30
-	if fs.NArg() > 0 {
-		n, err := strconv.Atoi(fs.Arg(0))
+	if len(rest) > 0 {
+		n, err := strconv.Atoi(rest[0])
 		if err != nil || n <= 0 {
 			return fmt.Errorf("сколько дней? нужно число")
 		}
@@ -868,10 +900,11 @@ func cmdCost(args []string) error {
 func cmdTranscript(args []string) error {
 	fs := newFlagSet("transcript")
 	cfgPath := setupFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	rest, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(rest) < 1 {
 		return fmt.Errorf("нужен id созвона")
 	}
 	_, st, err := open(*cfgPath)
@@ -879,12 +912,12 @@ func cmdTranscript(args []string) error {
 		return err
 	}
 	defer st.Close()
-	segs, err := st.Segments(fs.Arg(0))
+	segs, err := st.Segments(rest[0])
 	if err != nil {
 		return err
 	}
 	if len(segs) == 0 {
-		return fmt.Errorf("расшифровки для %s ещё нет", fs.Arg(0))
+		return fmt.Errorf("расшифровки для %s ещё нет", rest[0])
 	}
 	fmt.Print(renderTranscript(segs))
 	return nil
@@ -893,7 +926,7 @@ func cmdTranscript(args []string) error {
 func cmdList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	cfgPath := setupFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	_, st, err := open(*cfgPath)
@@ -923,7 +956,7 @@ func cmdList(args []string) error {
 func cmdServe(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	cfgPath := setupFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	cfg, st, err := open(*cfgPath)
@@ -1004,7 +1037,7 @@ func cmdServe(ctx context.Context, args []string) error {
 func cmdPrune(args []string) error {
 	fs := flag.NewFlagSet("prune", flag.ExitOnError)
 	cfgPath := setupFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	cfg, st, err := open(*cfgPath)

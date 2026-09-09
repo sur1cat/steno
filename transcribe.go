@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -204,4 +205,37 @@ func tail(s string, n int) string {
 		return s
 	}
 	return "…" + string(r[len(r)-n:])
+}
+
+// Пометки, которыми движки расшифровки обозначают отсутствие речи. Они не
+// текст, и принимать их за расшифровку нельзя.
+var noSpeechMarkers = regexp.MustCompile(`(?i)^[\[\(](blank_?audio|silence|music|музыка|тишина|inaudible|неразборчиво|звук[^\]\)]*)[\]\)]$`)
+
+// checkTranscript ловит вырожденную расшифровку до того, как за неё заплатят.
+//
+// Настоящий случай: whisper определяет язык по первым тридцати секундам, а
+// запись созвона начинается с тишины — бот заходит раньше людей. Определился
+// не тот язык, и весь разговор вышел пятнадцатью строками [BLANK_AUDIO].
+// Формально это валидный JSON и нулевой код возврата: без проверки сервис
+// отдал бы это Claude и выдал пустой follow-up как настоящий.
+func checkTranscript(segs []Segment) error {
+	const minChars = 80
+	chars, real := 0, 0
+	for _, s := range segs {
+		t := strings.TrimSpace(s.Text)
+		if t == "" || noSpeechMarkers.MatchString(t) {
+			continue
+		}
+		real++
+		chars += len([]rune(t))
+	}
+	if real == 0 {
+		return fmt.Errorf("в расшифровке нет речи — %d строк, и все пустые или «нет звука». "+
+			"Обычно это значит, что определился не тот язык или запись почти вся тишина", len(segs))
+	}
+	if chars < minChars {
+		return fmt.Errorf("расшифровка почти пустая: %d значимых строк, %d символов. "+
+			"Проверь запись и язык распознавания", real, chars)
+	}
+	return nil
 }
