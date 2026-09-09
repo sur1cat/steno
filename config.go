@@ -303,7 +303,7 @@ func defaultConfig() *Config {
 	var c Config
 	c.DataDir = "./data"
 	c.Bot.DisplayName = "Steno · идёт запись"
-	c.Bot.Image = "steno-bot:latest"
+	c.Bot.Image = defaultBotImage()
 	c.Bot.AdmissionTimeout = Duration(5 * time.Minute)
 	c.Bot.EmptyFor = Duration(2 * time.Minute)
 	c.Bot.MaxDuration = Duration(4 * time.Hour)

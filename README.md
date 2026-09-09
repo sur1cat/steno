@@ -70,6 +70,11 @@ make build && ./steno setup
 and is not kept in the repository, so a binary produced that way comes up with
 no panel at all — a working install by every appearance, until you open it.
 
+The bot needs Docker. steno pulls the container — Chromium under a virtual
+display, PulseAudio, ffmpeg — before the first call, matching its own version.
+Ahead of time, or to build your own: `docker pull ghcr.io/sur1cat/steno-bot`
+or `make bot-image`.
+
 `setup` asks one question at a time, checks each answer, and writes the config.
 It starts by asking how you will use it — one person, a small team, or six
 concurrent calls — and sets the concurrency limits and model effort from that.

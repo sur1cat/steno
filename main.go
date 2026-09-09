@@ -35,6 +35,7 @@ const usage = `steno — заметки и follow-up с созвонов.
   steno list                 последние созвоны
   steno prune                удалить старые записи по срокам из конфига
   steno doctor               проверить, чего не хватает для запуска
+  steno version              версия и какой образ бота ей соответствует
   steno cost [дней]          сколько потрачено на follow-up
   steno projects [проект]    что открыто по проектам
   steno projects add <имя>   завести проект
@@ -82,6 +83,8 @@ func main() {
 		err = cmdList(args)
 	case "doctor":
 		err = cmdDoctor(args)
+	case "version", "--version", "-v":
+		err = cmdVersion()
 	case "cost":
 		err = cmdCost(args)
 	case "projects":
@@ -414,6 +417,9 @@ func runBotInDocker(ctx context.Context, cfg *Config, meetingID, meetURL, outDir
 	}
 	abs, err := filepath.Abs(outDir)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureBotImage(ctx, cfg.Bot.Image, log.Default()); err != nil {
 		return nil, err
 	}
 	// Имя и метка нужны, чтобы контейнер можно было найти и погасить снаружи:
@@ -1269,5 +1275,33 @@ func (l *stringList) Set(v string) error {
 	if v = strings.TrimSpace(v); v != "" {
 		*l = append(*l, v)
 	}
+	return nil
+}
+
+// ensureBotImage подтягивает образ бота, если его нет.
+//
+// Раньше человеку говорили «нет образа → make bot-image», а это значило
+// склонировать репозиторий и собрать гигабайт у себя — последнее место в
+// установке, где требовались исходники. Образ той же версии лежит в реестре,
+// и притащить его steno может сам.
+//
+// Локально собранный образ (steno-bot:latest) не трогаем: у него нет реестра,
+// откуда тянуть, и попытка скачивания только запутает сообщением об ошибке.
+func ensureBotImage(ctx context.Context, image string, log *log.Logger) error {
+	if err := exec.CommandContext(ctx, "docker", "image", "inspect", image).Run(); err == nil {
+		return nil
+	}
+	if !strings.Contains(image, "/") {
+		return fmt.Errorf("нет образа %s — он собирается из исходников:\n"+
+			"  git clone https://github.com/sur1cat/steno && cd steno && make bot-image", image)
+	}
+	log.Printf("образа %s нет, скачиваю (около гигабайта, один раз)", image)
+	cmd := exec.CommandContext(ctx, "docker", "pull", image)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("не скачался образ %s: %s\n"+
+			"  можно собрать самому: git clone https://github.com/sur1cat/steno && cd steno && make bot-image",
+			image, tail(string(out), 300))
+	}
+	log.Printf("образ %s готов", image)
 	return nil
 }

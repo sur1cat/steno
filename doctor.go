@@ -122,10 +122,20 @@ func checkBot(cfg *Config) check {
 			[]string{"→ поставь Docker Desktop или задай bot.local = true"}, true}
 	}
 	out, err := exec.Command("docker", "image", "inspect", cfg.Bot.Image, "--format", "{{.Id}}").Output()
-	if err != nil || len(out) == 0 {
+	if err != nil {
+		// Отсутствие образа из реестра — не поломка: steno скачает его сам перед
+		// первым созвоном. Пугать этим человека, который только что поставил
+		// steno, незачем — раньше здесь стояло «✗» и требование склонировать
+		// репозиторий и собрать гигабайт руками.
+		if strings.Contains(cfg.Bot.Image, "/") {
+			return check{"бот (docker)", "ok",
+				"образа " + cfg.Bot.Image + " нет — скачается перед первым созвоном",
+				[]string{"→ можно заранее:  docker pull " + cfg.Bot.Image}, false}
+		}
 		return check{"бот (docker)", "fail", "нет образа " + cfg.Bot.Image,
 			[]string{"→ make bot-image"}, true}
 	}
+	_ = out
 	return check{"бот (docker)", "ok", "образ " + cfg.Bot.Image + " на месте", nil, true}
 }
 

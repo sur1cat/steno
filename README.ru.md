@@ -126,12 +126,20 @@ steno setup
 ```
 git clone https://github.com/sur1cat/steno && cd steno
 make build       # панель (нужен node) + бинарник steno
-make bot-image   # образ бота: Chromium + PulseAudio + ffmpeg
 make test
 ```
 
 Node нужен только на сборке: панель — приложение на React, и её бандл вшит в
 бинарник. В проде остаётся один файл, ставится копированием.
+
+Боту нужен Docker. Сам контейнер — Chromium под виртуальным дисплеем,
+PulseAudio и ffmpeg — steno скачает перед первым созвоном той же версии, что и
+он сам. Заранее или без доступа к сети:
+
+```
+docker pull ghcr.io/sur1cat/steno-bot        # готовый
+make bot-image                               # или собрать свой
+```
 
 `go install` намеренно не предлагается. Собранный фронт — производное от
 исходников, в репозитории его нет, и бинарник, поставленный так, поднимается

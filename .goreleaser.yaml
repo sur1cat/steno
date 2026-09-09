@@ -94,9 +94,8 @@ brews:
 
         steno setup
 
-      Боту нужен контейнер с Chromium, PulseAudio и ffmpeg:
-
-        git clone https://github.com/sur1cat/steno && cd steno && make bot-image
+      Боту нужен Docker: контейнер с Chromium и звуком steno скачает сам перед
+      первым созвоном. Заранее — docker pull ghcr.io/sur1cat/steno-bot
 
       Для распознавания на своей машине (не нужно с Groq и с субтитрами):
 

@@ -41,6 +41,10 @@ test-js:
 	node jitsi_test.mjs
 
 # Образ бота: Chromium + PulseAudio + ffmpeg + этот же бинарник.
+#
+# Запасной путь. Готовый образ каждой версии лежит в ghcr.io, и steno тянет его
+# сам перед первым созвоном; собирать руками нужно только тому, кто правит
+# самого бота или сидит там, откуда ghcr.io недоступен.
 bot-image:
 	docker build -f docker/Dockerfile -t steno-bot:latest .
 
