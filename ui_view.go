@@ -38,8 +38,17 @@ var (
 	uiAccent   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	uiBold     = lipgloss.NewStyle().Bold(true)
 	uiHeadName = lipgloss.NewStyle().Bold(true).Reverse(true)
-	uiTabOn    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Underline(true)
-	uiTabOff   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	// Вкладки. Выбранная — заливкой, а не подчёркиванием: подчёркнутый текст в
+	// ряду такого же текста глаз находит не сразу, а залитый блок читается как
+	// нажатая кнопка с одного взгляда. Цвет фона берётся из палитры терминала
+	// (Reverse), чтобы не спорить с темой человека.
+	uiTabOn = lipgloss.NewStyle().Bold(true).Reverse(true)
+	// Соседняя вкладка не серая, а обычного цвета: серым помечено то, что
+	// сейчас недоступно, и вкладки в этот ряд не входят — на них можно перейти.
+	uiTabOff = lipgloss.NewStyle()
+	// Номер вкладки — подсказка, а не название. Приглушён, чтобы в ряду читались
+	// слова, а цифры находились, когда их ищут.
+	uiTabNum   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	uiSelected = lipgloss.NewStyle().Reverse(true)
 	uiErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	uiOKStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
@@ -703,14 +712,18 @@ func (m *uiModel) placeName() string {
 func (m *uiModel) tabBar() string {
 	left := " "
 	for i := uiTab(0); i < tabCount; i++ {
-		title := fmt.Sprintf(" %d %s ", i+1, uiTabTitles[i])
 		switch {
 		case i == m.tab && m.screen() == scrList:
-			left += uiTabOn.Render(title)
+			// Выбранная и мы в ней: залитый блок. Номер внутри блока не глушим —
+			// на залитом фоне приглушение выглядит грязью, а не подсказкой.
+			left += uiTabOn.Render(fmt.Sprintf(" %d %s ", i+1, uiTabTitles[i]))
 		case i == m.tab:
-			left += uiAccent.Render(title)
+			// Выбранная, но человек ушёл вглубь — в карточку, форму, справку.
+			// Рамка вместо заливки: место помнится, но сейчас оно не здесь.
+			left += uiAccent.Render(fmt.Sprintf("[%d %s]", i+1, uiTabTitles[i]))
 		default:
-			left += uiTabOff.Render(title)
+			left += uiTabNum.Render(fmt.Sprintf(" %d ", i+1)) +
+				uiTabOff.Render(uiTabTitles[i]) + " "
 		}
 		left += " "
 	}
