@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check } from "lucide-react";
+import { Check, TriangleAlert } from "lucide-react";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
@@ -54,27 +55,25 @@ export function GoogleConnect({ hint }: { hint?: string }) {
     );
   }
 
-  const { ready, connected, account, why } = q.data;
+  const { ready, connected, account, why, severity } = q.data;
 
-  // `why` — готовая фраза сервера, и по ней самой не видно, тревога это или
-  // наоборот. «Доступ выдан не весь… подключи ещё раз» и «доступ уже выдан
-  // ключом организации — подключать ничего не нужно» приходят одним и тем же
-  // полем, и красить их по словам внутри значило бы гадать: одна опечатка на
-  // стороне сервера — и спокойное состояние выглядит поломкой.
+  // Цвет и кнопки — две независимые вещи, и выводить одно из другого нельзя.
   //
-  // Поэтому текст показывается ровным, а тревогу выражает действие: доступ
-  // получен, но неполный, и переспросить согласие можно кнопкой — тогда рядом
-  // появляется «Подключить ещё раз». Там, где нажимать нечего (доступ пришёл
-  // ключом организации), не появляется ничего лишнего.
+  // Цвет решает severity, и только он. Ни `ready`, ни `connected`, ни тем
+  // более слова внутри `why` для этого не годятся: ключ организации уживается
+  // с заведённым входом по кнопке, а подключённый аккаунт переживает смену
+  // client secret и остаётся connected при ready:false. Обе «очевидные»
+  // зависимости бэкенд проверил и опроверг конкретными сценариями.
   //
-  // ВРЕМЕННО, И ВОТ ПОЧЕМУ. Строка ниже опирается на невысказанный уговор:
-  // что «доступ выдан не весь» приходит с ready=true (кнопка есть, согласие
-  // можно переспросить), а «выдан ключом организации» — с ready=false
-  // (нажимать нечего). На сегодняшних пяти состояниях это так, но в ответе
-  // сервера этого не написано, и шестое состояние сломает раскладку молча.
-  // Бэкенд заводит для этого severity: "info" | "warn" — как приедет, сюда
-  // приходит `why_severity === "warn"`, а этот вывод из ready удаляется.
-  const needsRedo = connected && ready && why !== "";
+  // Кнопки решает то, чем человек в этом состоянии может распорядиться:
+  // согласие спрашивается входом по кнопке, поэтому «Подключить» живёт при
+  // ready; а снять уже лежащий токен можно и без него, поэтому «Отключить»
+  // живёт при connected. Из этого следует состояние без единой кнопки —
+  // тревога есть, нажать нечего (вход не настроен), — и оно правильное:
+  // выдуманная кнопка привела бы прямиком в ошибку.
+  const warn = severity === "warn";
+  const needsRedo = connected && warn;
+  const alarm = "text-amber-600 dark:text-amber-400";
 
   return (
     <>
@@ -85,9 +84,12 @@ export function GoogleConnect({ hint }: { hint?: string }) {
               нечем» — выдумка панели поверх его слов. */}
           {(connected || ready) && (
             <div className="flex min-w-0 items-center gap-2 text-sm">
-              {connected && !needsRedo && (
-                <Check className="h-4 w-4 shrink-0 text-primary" />
-              )}
+              {connected &&
+                (warn ? (
+                  <TriangleAlert className={cn("h-4 w-4 shrink-0", alarm)} />
+                ) : (
+                  <Check className="h-4 w-4 shrink-0 text-primary" />
+                ))}
               <span className="min-w-0">
                 {connected ? (
                   <>
@@ -103,39 +105,47 @@ export function GoogleConnect({ hint }: { hint?: string }) {
             </div>
           )}
 
-          {/* ready=false — кнопки нет вовсе: нажимать её было бы некуда, а
-              объяснение придёт в `why` строкой ниже. */}
-          {ready && (
-            <div className="flex flex-wrap items-center gap-2">
-              {(!connected || needsRedo) && (
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  isLoading={connect.isPending}
-                  onClick={() => connect.mutate()}
-                >
-                  {needsRedo ? "Подключить ещё раз" : "Подключить Google"}
-                </Button>
-              )}
-              {connected && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setConfirming(true)}
-                >
-                  Отключить
-                </Button>
-              )}
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* «Подключить» — только при заведённом входе по кнопке: без него
+                она ведёт прямиком в ошибку. */}
+            {ready && (!connected || needsRedo) && (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                isLoading={connect.isPending}
+                onClick={() => connect.mutate()}
+              >
+                {needsRedo ? "Подключить ещё раз" : "Подключить Google"}
+              </Button>
+            )}
+            {/* «Отключить» — при подключённом, независимо от ready: убрать
+                лежащий токен можно и тогда, когда переспросить согласие уже
+                нечем, и это единственное, что человеку остаётся. */}
+            {connected && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirming(true)}
+              >
+                Отключить
+              </Button>
+            )}
+          </div>
         </div>
 
-        {/* Текст сервера показываем как есть: он уже написан для человека, и
-            дописывать к нему нечего — в том числе цветом. */}
+        {/* Текст сервера показываем как есть — цвет берём из severity, а не из
+            слов внутри. */}
         {why && (
-          <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">{why}</p>
+          <p
+            className={cn(
+              "mt-2 text-xs leading-relaxed",
+              warn ? alarm : "text-[var(--muted-foreground)]",
+            )}
+          >
+            {why}
+          </p>
         )}
         {!why && hint && (
           <p className="mt-2 text-xs leading-relaxed text-[var(--muted-foreground)]">{hint}</p>

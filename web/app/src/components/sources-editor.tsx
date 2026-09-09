@@ -1,7 +1,9 @@
-import { Plus, X } from "lucide-react";
+import { useState } from "react";
+import { FolderSearch, Plus, X } from "lucide-react";
 import type { Source, SourceKind } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { SelectMenu } from "@/components/ui/select-menu";
+import { FolderPicker } from "@/components/folder-picker";
 
 // Источники, из которых собирается справка о проекте.
 //
@@ -45,6 +47,10 @@ export function SourcesEditor({
   value: Source[];
   onChange: (next: Source[]) => void;
 }) {
+  // Какой из источников сейчас выбирают мышью. Индекс, а не булево: строк
+  // может быть несколько, и открытое окно относится к одной из них.
+  const [browsing, setBrowsing] = useState<number | null>(null);
+
   const patch = (i: number, next: Partial<Source>) =>
     onChange(value.map((s, idx) => (idx === i ? { ...s, ...next } : s)));
 
@@ -61,14 +67,30 @@ export function SourcesEditor({
             className="w-52 shrink-0"
           />
           <div className="min-w-0 flex-1">
-            <input
-              value={s.value}
-              onChange={(e) => patch(i, { value: e.target.value })}
-              placeholder={kindOf(s.kind).placeholder}
-              autoComplete="off"
-              spellCheck={false}
-              className="h-10 w-full rounded-xl border-0 bg-[var(--muted)] px-3 text-sm placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                value={s.value}
+                onChange={(e) => patch(i, { value: e.target.value })}
+                placeholder={kindOf(s.kind).placeholder}
+                autoComplete="off"
+                spellCheck={false}
+                className="h-10 min-w-0 flex-1 rounded-xl border-0 bg-[var(--muted)] px-3 text-sm placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              {/* Путь набирают не по памяти, а узнают, увидев. Поле рядом
+                  остаётся: обзор ходит по машине, где стоит steno, а панель
+                  могли открыть с другого компьютера. */}
+              {s.kind === "path" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2 px-3"
+                  onClick={() => setBrowsing(i)}
+                >
+                  <FolderSearch className="h-4 w-4" />
+                  Выбрать
+                </Button>
+              )}
+            </div>
             <p className="mt-1 text-xs text-[var(--muted-foreground)]">{kindOf(s.kind).hint}</p>
           </div>
           <button
@@ -91,6 +113,16 @@ export function SourcesEditor({
         <Plus className="h-4 w-4" />
         добавить источник
       </Button>
+
+      <FolderPicker
+        open={browsing !== null}
+        onClose={() => setBrowsing(null)}
+        startAt={browsing !== null ? value[browsing]?.value : ""}
+        onPick={(p) => {
+          if (browsing !== null) patch(browsing, { value: p });
+          setBrowsing(null);
+        }}
+      />
     </div>
   );
 }

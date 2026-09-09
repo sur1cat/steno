@@ -171,6 +171,21 @@ export interface ProjectItem {
   note: string;
 }
 
+/** Папка на машине, где стоит steno. Файлов обзор не отдаёт вовсе. */
+export interface BrowseDir {
+  name: string;
+  path: string;
+  /** Внутри лежит .git — то, что человек глазами и ищет. */
+  isRepo: boolean;
+}
+
+export interface BrowsePage {
+  path: string;
+  /** Пусто — выше идти некуда, это домашний каталог. */
+  parent: string;
+  dirs: BrowseDir[] | null;
+}
+
 export type SourceKind = "repo" | "path" | "url" | "text";
 
 export interface Source {
@@ -236,6 +251,17 @@ export interface GoogleStatus {
   account: string;
   /** Готовый текст для человека. Показывать как есть, ничего не дописывая. */
   why: string;
+  /**
+   * Какого рода это сообщение: «info» — объясняем, всё в порядке; «warn» —
+   * что-то не работает. Приходит всегда.
+   *
+   * Отдельным полем, потому что по остальным трём не вычисляется — и это
+   * проверено, а не предположено: ключ организации уживается с заведённым
+   * входом по кнопке (ready:true), а подключённый аккаунт переживает смену
+   * client secret и остаётся connected при ready:false. Красить по `ready`
+   * или по `connected` — значит поставить тревогу не туда.
+   */
+  severity: "info" | "warn";
 }
 
 export interface ScheduleEntry {
@@ -349,6 +375,10 @@ export const api = {
     post<{ status: string }>(`/api/projects/${encodeURIComponent(name)}/context`),
 
   settings: () => get<Settings>("/api/settings"),
+
+  // Обзор папок — на машине, где стоит сам steno, а не там, где открыт браузер.
+  // Пустой path — домашний каталог.
+  browse: (path: string) => get<BrowsePage>(`/api/browse?path=${encodeURIComponent(path)}`),
 
   googleStatus: () => get<GoogleStatus>("/api/google/status"),
   // Возвращает адрес согласия Google. Уводить туда надо эту же вкладку:
