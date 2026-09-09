@@ -904,7 +904,7 @@ func cmdCost(args []string) error {
 		}
 		days = n
 	}
-	_, st, err := open(*cfgPath)
+	cfg, st, err := open(*cfgPath)
 	if err != nil {
 		return err
 	}
@@ -922,8 +922,19 @@ func cmdCost(args []string) error {
 	fmt.Printf("за %d дней: %d follow-up, $%.2f\n", days, n, usd)
 	fmt.Printf("  токенов: вход %d, выход %d\n", in, out)
 	fmt.Printf("  в среднем: $%.3f за созвон\n", usd/float64(n))
-	fmt.Printf("\nВыход дороже входа в пять раз, и при effort=high основная его часть —\n")
-	fmt.Printf("рассуждение модели, а не сам follow-up. Дорого — сначала claude.effort.\n")
+	// Про effort говорим тот, что стоит на самом деле: совет «снизь high» на
+	// установке с medium читается как «инструмент не смотрит на конфиг».
+	eff := cfg.Claude.Effort
+	if eff == "" {
+		eff = "high"
+	}
+	fmt.Printf("\nВыход дороже входа в пять раз, и при effort=%s основная его часть —\n", eff)
+	if eff == "low" {
+		fmt.Printf("рассуждение модели, а не сам follow-up. Ниже уже не опустить —\n")
+		fmt.Printf("дальше только модель подешевле в claude.model.\n")
+	} else {
+		fmt.Printf("рассуждение модели, а не сам follow-up. Дорого — сначала claude.effort.\n")
+	}
 	return nil
 }
 
