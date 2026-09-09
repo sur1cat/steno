@@ -56,7 +56,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     to: "/settings",
     label: "Настройки",
-    about: "Проекты, каналы, секреты",
+    about: "Проекты и каналы",
     icon: Settings,
   },
 ];
