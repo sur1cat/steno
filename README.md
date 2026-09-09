@@ -54,9 +54,21 @@ follow-up looks like — is yours to decide.
 ## Quick start
 
 ```
-brew install --HEAD sur1cat/tap/steno   # or: go install github.com/sur1cat/steno@latest
+brew install sur1cat/tap/steno
 steno setup
 ```
+
+On Linux, or to build it yourself — Go and Node are needed, and the panel is
+compiled into the binary:
+
+```
+git clone https://github.com/sur1cat/steno && cd steno
+make build && ./steno setup
+```
+
+`go install` is deliberately not offered. The panel bundle is a build artifact
+and is not kept in the repository, so a binary produced that way comes up with
+no panel at all — a working install by every appearance, until you open it.
 
 `setup` asks one question at a time, checks each answer, and writes the config.
 It starts by asking how you will use it — one person, a small team, or six

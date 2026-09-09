@@ -1,0 +1,99 @@
+version: 2
+project_name: steno
+
+# Панель собирается до Go: бандл фронта попадает внутрь бинарника через
+# go:embed, и без этого шага в релиз уехал бы бинарник с пустой панелью — ровно
+# то, из-за чего `go install` и оказался нерабочим.
+before:
+  hooks:
+    - go mod tidy
+    - sh -c 'cd web/app && npm ci --no-audit --no-fund && npx vite build'
+
+builds:
+  - id: steno
+    main: .
+    binary: steno
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    # Windows нет намеренно: бот запускается в контейнере Linux, а адаптеры
+    # расшифровки — sh-скрипты. Обещать сборку, которой нечем пользоваться,
+    # хуже, чем её не давать.
+    goos:   [linux, darwin]
+    goarch: [amd64, arm64]
+
+# Адаптеры кладутся рядом с бинарником: расшифровка — внешняя команда, и без
+# них steno умеет только субтитры площадки.
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - adapters/**
+      - README.md
+      - README.ru.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+
+release:
+  draft: false
+  prerelease: auto
+
+# Раньше здесь была секция brews. Она объявлена устаревшей: goreleaser собирал
+# формулу, которая делает вид, что собирает из исходников, хотя ставит готовый
+# бинарник. Casks для этого и предназначены.
+#
+# Плата за переход — casks работают только на macOS. Для Linux остаётся архив
+# из релиза и сборка из исходников; на сервере brew всё равно почти никто не
+# держит, а бот там и так запускается контейнером.
+homebrew_casks:
+  - name: steno
+    repository:
+      owner: sur1cat
+      name: homebrew-tap
+      branch: main
+      # Токен с правом записи в репозиторий тапа. Обычный GITHUB_TOKEN заперт
+      # в этом репозитории и в чужой запушить не может.
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/sur1cat/steno"
+    description: "Meeting notes and follow-ups: a bot joins your calls, records, transcribes, publishes"
+    license: MIT
+    commit_author:
+      name: goreleaser
+      email: noreply@github.com
+    commit_msg_template: "steno {{ .Tag }}"
+    # ffmpeg нужен всегда — им пишется звук и готовится аудио. whisper-cpp и jq
+    # только тем, кто распознаёт локально, поэтому они в подсказке, а не здесь:
+    # тянуть их тому, кто выбрал Groq или субтитры, незачем.
+    dependencies:
+      - formula: ffmpeg
+    # Бинарник не подписан и не нотаризован, поэтому macOS вешает на скачанное
+    # карантин и отказывается запускать. Без этого первая же команда упирается
+    # в «steno нельзя открыть, разработчик не может быть проверен».
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr",
+                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/steno"]
+          end
+    caveats: |
+      Настройка одной командой — она спросит всё нужное и проверит по ходу:
+
+        steno setup
+
+      Боту нужен контейнер с Chromium, PulseAudio и ffmpeg:
+
+        git clone https://github.com/sur1cat/steno && cd steno && make bot-image
+
+      Для распознавания на своей машине (не нужно с Groq и с субтитрами):
+
+        brew install whisper-cpp jq
