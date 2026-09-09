@@ -29,7 +29,7 @@ bot: пишу звук в data/recordings/2026-09-08-1432-a1b2/audio.ogg
 bot: запись окончена: остался один, 47m12s, участников 5
 расшифровываю data/recordings/2026-09-08-1432-a1b2/audio.ogg
 реплик: 412, из них с именем: 397
-делаю follow-up (claude-opus-5)
+делаю follow-up (claude-sonnet-5)
 задач: 6, решений: 3, открытых вопросов: 2
 google_docs: https://docs.google.com/document/d/1AbC.../edit
 slack: https://team.slack.com/archives/C01234/p1757...

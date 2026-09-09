@@ -19,11 +19,11 @@ bot: muted mic and camera
 bot: in the call
 bot: recording to data/recordings/2026-09-09-1100-a1b2/audio.ogg
 bot: done — everyone left, 47m12s, 5 participants
-transcribing (large-v3-turbo)
+transcribing (large-v3-q5_0)
 412 lines, 397 with a speaker name
-writing follow-up (claude-opus-5)
+writing follow-up (claude-sonnet-5)
 6 tasks, 3 decisions, 2 open questions
-spend: 31k in, 9k out — $0.38
+spend: 2 in, 3.7k out, cache 12k/10k — $0.12
 google_docs: https://docs.google.com/document/d/1AbC.../edit
 slack: https://team.slack.com/archives/C01234/p1757...
 ```
@@ -181,10 +181,15 @@ sits idle 97% of the time.
 | whisper on your own hardware | free, needs a GPU or patience |
 | Google Meet captions | free, lower quality |
 
-**The follow-up.** Roughly $0.40 per hour-long call on `claude-opus-5`. Note
-that with adaptive thinking most of that is the model's reasoning, not the
-answer — so `claude.effort` is the first lever if it gets expensive. `steno cost`
-reports measured token counts, not estimates.
+**The follow-up.** Around $0.12 for a short call on the default
+`claude-sonnet-5` at `effort: low`; roughly three times that on `claude-opus-5`.
+
+The default is low deliberately, and it is measured. One marked-up meeting was
+run through ten combinations of model and effort: all ten pulled out the same
+five assignments with the right owners and the right dates. Effort added no
+task — only time and money, up to 23 minutes and $1.39 against 40 seconds and
+$0.12 on the same text. Raise it for sharper wording in the risks, not for
+fuller lists. `steno cost` reports measured tokens, not estimates.
 
 ## Transcription options
 
