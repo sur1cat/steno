@@ -15,8 +15,9 @@ import (
 // серое на сером.
 
 // uiChromeLines — сколько строк занимает обвязка: имя и разделы (2), пустая
-// строка, заголовки колонок, снизу состояние и подсказка (2).
-const uiChromeLines = 6
+// строка, верх рамки, строка заголовков внутри неё, низ рамки, снизу состояние
+// и подсказка (2).
+const uiChromeLines = 8
 
 // uiProseWidth — предел ширины для сплошного текста. На широком окне строка в
 // двести колонок нечитаема: глаз теряет начало следующей, пока доходит до конца
@@ -58,8 +59,10 @@ var (
 	uiCursorMark = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 
 	// Нижняя полоса подсказок. Приглушённая: это опора, а не то, что читают.
-	uiHintBar = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Reverse(true)
-	uiHintKey = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Reverse(true).Bold(true)
+	uiHintKey = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+
+	// Рамка поля. Тускло: она задаёт границы, а не привлекает внимание.
+	uiFrame = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )
 
 // --- строковые мелочи --------------------------------------------------------
@@ -522,23 +525,132 @@ func (m *uiModel) View() string {
 		h = uiChromeLines + 1
 	}
 	lines := make([]string, 0, h)
-	lines = append(lines, m.titleBar(), m.tabBar(), "", m.contextLine())
+	lines = append(lines, m.titleBar(), m.tabBar(), "")
 
+	// Поле в рамке. Без неё пустота ничем не ограничена и читается как ничто:
+	// на сорока четырёх строках с одним созвоном человек видел содержимое в
+	// пять строк и провал в тридцать восемь под ним.
+	room := h - len(lines) - 2 // снизу состояние и подсказка
 	body := m.content()
-	inner := h - uiChromeLines
-	for i := 0; i < inner; i++ {
-		if i < len(body) {
-			lines = append(lines, body[i])
-		} else {
-			lines = append(lines, "")
+	head := m.contextLine()
+	listH := min(len(body)+2+btoi(head != ""), room)
+
+	// Нижняя панель забирает всё, что списку не понадобилось, и растягивается
+	// до низа: недотянутая до края панель оставляет под собой тот же провал,
+	// ради которого всё и затевалось. Если список занимает экран сам — панели
+	// нет, и это правильно: место уходит строкам.
+	var below []string
+	if free := room - listH - 1; free >= uiPreviewMin {
+		if p := m.preview(m.boxWidth() - 6); len(p) > 0 {
+			inner := free - 2
+			for i, l := range p {
+				if l != "" {
+					p[i] = "  " + l
+				}
+			}
+			cut := len(p) > inner
+			for len(p) < inner {
+				p = append(p, "")
+			}
+			p = p[:inner]
+			if cut && inner > 0 {
+				p[inner-1] = uiDim.Render("  … enter — целиком")
+			}
+			below = append([]string{""}, m.box(m.previewTitle(), "", p)...)
 		}
 	}
-	lines = append(lines, m.statusLine(), m.hintLine())
 
+	if keep := room - len(below) - 2 - btoi(head != ""); keep >= 0 && keep < len(body) {
+		body = body[:keep]
+	}
+	lines = append(lines, m.box(m.boxTitle(), head, body)...)
+	lines = append(lines, below...)
+
+	for len(lines) < h-2 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, m.statusLine(), m.hintLine())
 	for i, l := range lines {
 		lines[i] = uiTrunc(l, m.w)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines[:h], "\n")
+}
+
+// uiPreviewMin — меньше этого нижнюю панель показывать незачем: в трёх строках
+// сути не расскажешь, а место у списка она отнимет.
+const uiPreviewMin = 6
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// box — рамка вокруг поля. Высота по содержимому, а не во весь экран: коробка,
+// растянутая на сорок строк ради одной, — та же пустота, только обведённая.
+// Подсказка идёт сразу под рамкой, и всё вместе читается одним блоком.
+func (m *uiModel) box(title, head string, body []string) []string {
+	inner := m.boxWidth() - 2
+	edge := func(left, right string, fill string) string {
+		return uiFrame.Render(left + strings.Repeat(fill, inner) + right)
+	}
+	row := func(s string) string {
+		return uiFrame.Render("│") + uiFit(s, inner) + uiFrame.Render("│")
+	}
+
+	top := edge("╭", "╮", "─")
+	if title != "" {
+		t := uiFit("─ "+title+" ", inner)
+		if ansi.StringWidth(title)+4 <= inner {
+			t = "─ " + uiBold.Render(title) + " " +
+				strings.Repeat("─", inner-ansi.StringWidth(title)-3)
+		}
+		top = uiFrame.Render("╭") + t + uiFrame.Render("╮")
+	}
+
+	out := []string{" " + top}
+	if head != "" {
+		out = append(out, " "+row(head))
+	}
+	for _, l := range body {
+		out = append(out, " "+row(l))
+	}
+	return append(out, " "+edge("╰", "╯", "─"))
+}
+
+// boxWidth — внешняя ширина рамки вместе с краями: по самому широкому, что
+// внутри. Рамка во всё окно ради одной короткой строки — та же пустота, только
+// обведённая.
+func (m *uiModel) boxWidth() int {
+	w := m.rowWidth()
+	if t := ansi.StringWidth(m.boxTitle()) + 6; t > w {
+		w = t
+	}
+	if h := ansi.StringWidth(ansi.Strip(m.contextLine())); h > w {
+		w = h
+	}
+	for _, l := range m.content() {
+		if n := ansi.StringWidth(l); n > w {
+			w = n
+		}
+	}
+	// Но и в обтяжку рамку делать нельзя: коробка в шестьдесят колонок посреди
+	// стосемидесятиколоночного окна — это ровно то «всё маленькое», с которого
+	// начался разговор. Панель занимает две трети окна, а колонки внутри
+	// по-прежнему держатся содержимого.
+	w = max(w+2, m.w*2/3)
+	return max(min(w, min(m.w-2, 152)), 40)
+}
+
+func (m *uiModel) boxTitle() string {
+	if m.screen() != scrList {
+		return m.placeName()
+	}
+	if n := m.rowCount(); n > 0 {
+		return fmt.Sprintf("%s · %d", uiTabTitles[m.tab], n)
+	}
+	return uiTabTitles[m.tab]
 }
 
 // titleBar — где я нахожусь и сколько тут всего. Полоса во всю ширину: на
@@ -728,7 +840,7 @@ func uiFlex(total int, fixed ...int) int {
 // колонках между текстом задачи и её сроком получается сотня пробелов, и строка
 // перестаёт читаться как одна строка. Дальше предела таблица просто кончается —
 // так же, как кончается страница.
-func (m *uiModel) tableWidth() int { return min(m.w, 150) }
+func (m *uiModel) tableWidth() int { return min(m.w-4, 150) }
 
 // uiNatural — ширина колонки по самому длинному значению в ней: не уже
 // заголовка и не шире отведённого. Колонка, растянутая на пол-экрана ради двух
@@ -1388,18 +1500,12 @@ func (m *uiModel) filterSummary() string {
 // одной обёрткой поверх готовой строки: внутри уже есть свои сбросы цвета, и
 // обёртка гасла на первом же из них — полоса обрывалась на середине экрана.
 func (m *uiModel) hintLine() string {
-	line := m.hints()
-	if gap := m.w - ansi.StringWidth(line); gap > 0 {
-		line += uiHintBar.Render(strings.Repeat(" ", gap))
-	}
-	return uiTrunc(line, m.w)
+	return uiTrunc(" "+m.hints(), m.w)
 }
 
 func (m *uiModel) hints() string {
-	key := func(k, what string) string { return uiHintKey.Render(k) + uiHintBar.Render(" "+what) }
-	join := func(parts ...string) string {
-		return uiHintBar.Render(" ") + strings.Join(parts, uiHintBar.Render(" · "))
-	}
+	key := func(k, what string) string { return uiHintKey.Render(k) + uiDim.Render(" "+what) }
+	join := func(parts ...string) string { return " " + strings.Join(parts, uiDim.Render(" · ")) }
 
 	switch m.screen() {
 	case scrHelp:
@@ -1527,5 +1633,255 @@ func uiHelpBody(w int) []string {
 	out = append(out, "")
 	out = append(out, uiWrapLines("  ", uiDim.Render(
 		"Всё это работает без запущенного serve: интерфейс читает ту же базу, что и панель."), w)...)
+	return out
+}
+
+// --- нижняя панель ------------------------------------------------------------
+
+// Список на высоком экране занимает несколько строк из сорока, и всё остальное
+// раньше было пустотой: человек видел содержимое в пять строк и провал в
+// тридцать восемь под ним. Нижняя панель показывает суть выделенной строки —
+// место занято тем, ради чего в список и смотрят.
+
+// previewTitle — заголовок нижней панели по текущему разделу.
+func (m *uiModel) previewTitle() string {
+	switch m.tab {
+	case tabMeetings:
+		return "Созвон"
+	case tabTasks:
+		return "Пункт"
+	case tabProjects:
+		return "Проект"
+	case tabSearch:
+		return "Найдено"
+	case tabChannels:
+		return "Канал"
+	}
+	return ""
+}
+
+// preview — строки нижней панели. Пусто, если выделять нечего.
+func (m *uiModel) preview(w int) []string {
+	if m.screen() != scrList || m.rowCount() == 0 {
+		return nil
+	}
+	switch m.tab {
+	case tabMeetings:
+		return m.previewMeeting(w)
+	case tabTasks:
+		return m.previewItem(w)
+	case tabProjects:
+		return m.previewProject(w)
+	case tabSearch:
+		return m.previewHit(w)
+	case tabChannels:
+		return m.previewChannel(w)
+	}
+	return nil
+}
+
+func (m *uiModel) previewMeeting(w int) []string {
+	r, ok := m.selectedMeeting()
+	if !ok {
+		return nil
+	}
+	m.loadPeek(r.ID)
+	var out []string
+	add := func(s string) { out = append(out, s) }
+
+	when := r.StartedAt.Format("02.01.2006 15:04")
+	if r.Duration > 0 {
+		when += " · " + uiDur(r.Duration)
+	}
+	add(uiDim.Render(when + " · " + uiStatusWord(r.Status)))
+	if len(r.Participants) > 0 {
+		out = append(out, uiWrapLines(uiDim.Render("участники: "),
+			strings.Join(r.Participants, ", "), w)...)
+	}
+
+	f := m.peek
+	if f == nil {
+		add("")
+		out = append(out, uiWrapLines("", "Follow-up ещё нет: созвон записан, но не разобран. "+
+			"Разобрать:  steno process "+r.ID, w)...)
+		return out
+	}
+	if t := strings.TrimSpace(f.Title); t != "" {
+		add("")
+		out = append(out, uiWrapLines("", uiBold.Render(t), w)...)
+	}
+	for _, s := range f.TLDR {
+		out = append(out, uiWrapLines("  • ", s, w)...)
+	}
+	// Место есть — показываем разбор, а не пересказ о нём. Лишнее обрежет
+	// раскладка, и она же скажет, что обрезала.
+	sect := func(title string, items []string) {
+		if len(items) == 0 {
+			return
+		}
+		add("")
+		add(uiSection.Render(title))
+		for _, it := range items {
+			out = append(out, uiWrapLines("  • ", it, w)...)
+		}
+	}
+	var tasks []string
+	for _, a := range f.ActionItems {
+		t := a.What
+		var meta []string
+		if a.Owner != "" {
+			meta = append(meta, a.Owner)
+		}
+		if a.Due != "" {
+			meta = append(meta, "срок "+a.Due)
+		}
+		if len(meta) > 0 {
+			t += uiDim.Render("  (" + strings.Join(meta, " · ") + ")")
+		}
+		tasks = append(tasks, t)
+	}
+	sect("Задачи", tasks)
+	var decisions []string
+	for _, d := range f.Decisions {
+		decisions = append(decisions, d.What)
+	}
+	sect("Решения", decisions)
+	var questions []string
+	for _, q := range f.OpenQuestions {
+		questions = append(questions, q.Question)
+	}
+	sect("Открытые вопросы", questions)
+	sect("Риски", f.Risks)
+	return out
+}
+
+// loadPeek подтягивает follow-up выделенного созвона. Один запрос на смену
+// строки, а не на каждый кадр.
+func (m *uiModel) loadPeek(id string) {
+	if m.peekID == id {
+		return
+	}
+	m.peekID, m.peekTags = id, nil
+	m.peek, _ = m.st.Followup(id)
+	if m.peek == nil {
+		return
+	}
+	count := func(n int, one, few, many string) {
+		if n > 0 {
+			m.peekTags = append(m.peekTags, plural(n, one, few, many))
+		}
+	}
+	count(len(m.peek.ActionItems), "задача", "задачи", "задач")
+	count(len(m.peek.Decisions), "решение", "решения", "решений")
+	count(len(m.peek.OpenQuestions), "вопрос", "вопроса", "вопросов")
+	count(len(m.peek.Risks), "риск", "риска", "рисков")
+}
+
+func (m *uiModel) previewItem(w int) []string {
+	it, ok := m.selectedItem()
+	if !ok {
+		return nil
+	}
+	var out []string
+	out = append(out, uiWrapLines("", uiBold.Render(it.Text), w)...)
+	out = append(out, "")
+
+	meta := uiKindWord(it.Kind)
+	if it.Owner != "" {
+		meta += " · " + it.Owner
+	}
+	if it.Due != "" {
+		meta += " · срок " + it.Due
+	}
+	if it.Project != "" {
+		meta += " · " + it.Project
+	}
+	out = append(out, uiDim.Render("  "+meta))
+	if it.Status != "open" {
+		tail := "закрыт: " + it.Status
+		if it.Note != "" {
+			tail += " — " + it.Note
+		}
+		out = append(out, uiWrapLines(uiDim.Render("  "), tail, w)...)
+	}
+	if it.Quote != "" {
+		out = append(out, "")
+		out = append(out, uiWrapLines(uiDim.Render("  из разговора: "), "«"+it.Quote+"»", w)...)
+	}
+	out = append(out, "", uiDim.Render("  enter — созвон, на котором это появилось"))
+	return out
+}
+
+func (m *uiModel) previewProject(w int) []string {
+	p, ok := m.selectedProject()
+	if !ok {
+		return nil
+	}
+	var out []string
+	if p.About != "" {
+		out = append(out, uiWrapLines("", p.About, w)...)
+	} else {
+		out = append(out, uiDim.Render("описания нет — e добавит"))
+	}
+	out = append(out, "")
+	if len(p.Aliases) > 0 {
+		out = append(out, uiWrapLines(uiDim.Render("  зовут ещё: "), strings.Join(p.Aliases, ", "), w)...)
+	}
+	if len(p.Sources) == 0 {
+		out = append(out, uiDim.Render("  источников нет — без них справку по коду собрать не из чего"))
+	} else {
+		for _, src := range p.Sources {
+			out = append(out, uiWrapLines(uiDim.Render("  "+uiFit(uiSourceKindTitle(src.Kind), 14)),
+				src.Value, w)...)
+		}
+	}
+	out = append(out, "")
+	if p.ContextAt.IsZero() {
+		out = append(out, uiDim.Render("  справка не собрана — s соберёт"))
+	} else {
+		out = append(out, uiDim.Render("  справка собрана "+p.ContextAt.Format("02.01.2006")))
+	}
+	return out
+}
+
+func (m *uiModel) previewHit(w int) []string {
+	if m.cursor[tabSearch] < 0 || m.cursor[tabSearch] >= len(m.hits) {
+		return nil
+	}
+	h := m.hits[m.cursor[tabSearch]]
+	var out []string
+	out = append(out, uiWrapLines("", uiHighlight(strings.ReplaceAll(h.Snippet, "\n", " ")), w)...)
+	out = append(out, "")
+	where := time.Unix(h.StartedAt, 0).Format("02.01.2006 15:04")
+	if h.Title != "" {
+		where = h.Title + " · " + where
+	}
+	if h.Speaker != "" {
+		where = h.Speaker + " · " + where
+	}
+	out = append(out, uiDim.Render("  "+where))
+	out = append(out, "", uiDim.Render("  enter — открыть на этом месте"))
+	return out
+}
+
+func (m *uiModel) previewChannel(w int) []string {
+	c, ok := m.selectedChannel()
+	if !ok {
+		return nil
+	}
+	var out []string
+	out = append(out, uiWrapLines("", c.About, w)...)
+	out = append(out, "")
+	state := uiDim.Render("  выключен")
+	if c.Enabled {
+		state = uiOKStyle.Render("  включён")
+	}
+	out = append(out, state+uiDim.Render(" · "+uiChannelWhat(c)))
+	if s := strings.TrimSpace(c.Summary); s != "" {
+		out = append(out, uiDim.Render("  настроено: "+s))
+	} else {
+		out = append(out, uiDim.Render("  ещё не настроено"))
+	}
+	out = append(out, "", uiDim.Render("  enter — настроить, space — включить или выключить"))
 	return out
 }

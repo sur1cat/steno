@@ -164,6 +164,13 @@ type uiModel struct {
 	bodyOff  int
 	segLines []int // на какой строке расшифровки начинается сегмент
 
+	// Follow-up выделенного созвона — для нижней панели. Помним, чей именно:
+	// панель перерисовывается на каждый кадр, а ходить в базу на каждый кадр
+	// незачем.
+	peekID   string
+	peek     *Followup
+	peekTags []string
+
 	form     *uiForm
 	chanForm *uiChanForm
 	picker   *uiPicker

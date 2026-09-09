@@ -2064,20 +2064,21 @@ func TestUIBarsPaintedToTheEdge(t *testing.T) {
 	m := uiTestModel(t, uiSeed(t))
 	for _, w := range []int{80, 120, 160} {
 		m.Update(tea.WindowSizeMsg{Width: w, Height: 24})
-		for _, c := range []struct {
-			name string
-			line string
-		}{
-			{"шапка", m.titleBar()},
-			{"подсказка", m.hintLine()},
-		} {
-			if n := ansi.StringWidth(c.line); n != w {
-				t.Errorf("ширина %d: %s занимает %d колонок", w, c.name, n)
-			}
-			// Сброс цвета, за которым идёт пробел, — это незакрашенный хвост.
-			if i := strings.Index(c.line, "\x1b[0m "); i >= 0 {
-				t.Errorf("ширина %d: %s не закрашена с позиции %d:\n%q", w, c.name, i, c.line)
-			}
+		// Подсказка снизу полосой больше не является: она идёт сразу под рамкой
+		// поля и читается вместе с ним одним блоком. Раньше она была прибита к
+		// нижнему краю, и между ней и содержимым зияли сорок пустых строк —
+		// человек так и сказал: «глаза не знают куда смотреть». От неё теперь
+		// требуется не ширина во весь экран, а то, чтобы она в него помещалась.
+		title := m.titleBar()
+		if n := ansi.StringWidth(title); n != w {
+			t.Errorf("ширина %d: шапка занимает %d колонок", w, n)
+		}
+		// Сброс цвета, за которым идёт пробел, — это незакрашенный хвост.
+		if i := strings.Index(title, "\x1b[0m "); i >= 0 {
+			t.Errorf("ширина %d: шапка не закрашена с позиции %d:\n%q", w, i, title)
+		}
+		if n := ansi.StringWidth(m.hintLine()); n > w {
+			t.Errorf("ширина %d: подсказка не влезает, занимает %d колонок", w, n)
 		}
 	}
 }
