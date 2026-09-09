@@ -1,21 +1,21 @@
 # steno
 
-A bot joins your calls, records them, transcribes, and sends out a structured
-follow-up — to Google Docs, Slack and Telegram. Decisions and action items are
-attributed to your projects and outlive the individual meeting.
+**Your repository teaches it your team's vocabulary. Commits close the tasks
+nobody mentioned on the call.**
 
-One Go binary. Recordings and transcripts stay on your server.
+A bot joins your meetings, records them, transcribes, and writes a follow-up —
+decisions, action items and open questions, attributed to your projects and
+outliving the individual meeting. One Go binary. Recordings and transcripts stay
+on your machine.
 
 *[Русская версия](README.ru.md)*
 
 ```
-$ steno serve
-calendar: watching 12 calendars, polling every 2m0s
-mail: watching invitations to steno@company.com
+$ steno start
 telegram: listening for meeting links
-panel: listening on :8422
+panel: listening on 127.0.0.1:8422
+
 joining "Release planning" (reason: calendar, owner@company.com)
-bot: muted mic and camera
 bot: in the call
 bot: recording to data/recordings/2026-09-09-1100-a1b2/audio.ogg
 bot: done — everyone left, 47m12s, 5 participants
@@ -24,8 +24,14 @@ transcribing (large-v3-q5_0)
 writing follow-up (claude-sonnet-5)
 6 tasks, 3 decisions, 2 open questions
 spend: 2 in, 3.7k out, cache 12k/10k — $0.12
-google_docs: https://docs.google.com/document/d/1AbC.../edit
-slack: https://team.slack.com/archives/C01234/p1757...
+telegram: sent
+```
+
+Everything above happens without you. Or ask for it by hand:
+
+```
+steno join https://meet.google.com/abc-defg-hij   # one call, right now
+steno ui                                          # everything, in the terminal
 ```
 
 ## Why this and not Otter, Fireflies or Fathom
@@ -53,13 +59,34 @@ follow-up looks like — is yours to decide.
 
 ## Quick start
 
+Docker must be running — the bot joins the call inside a container. Everything
+else steno handles.
+
 ```
 brew install sur1cat/tap/steno
-steno setup
+steno setup          # asks one thing at a time, checks each answer
+steno start          # runs in the background; steno stop to end it
 ```
 
-On Linux, or to build it yourself — Go and Node are needed, and the panel is
-compiled into the binary:
+`setup` creates its own directory (`~/steno` by default) and writes the config
+there — nothing to prepare beforehand. It opens by asking how you will use this
+— one person, a small team, or six concurrent calls — and sets the concurrency
+limits and model effort from that answer. Secrets are typed without echo into a
+`.env` with mode 0600, never into the config: the config is meant to live in a
+repository, tokens are not.
+
+Then check it and you are done:
+
+```
+steno doctor         # says what is missing and how to fix it
+```
+
+The bot's container — Chromium under a virtual display, PulseAudio, ffmpeg —
+is pulled before the first call, matching steno's own version. Ahead of time:
+`docker pull ghcr.io/sur1cat/steno-bot`. To build it yourself: `make bot-image`.
+
+On Linux, or to build steno from source — Go and Node are needed, because the
+panel is compiled into the binary:
 
 ```
 git clone https://github.com/sur1cat/steno && cd steno
@@ -70,18 +97,18 @@ make build && ./steno setup
 and is not kept in the repository, so a binary produced that way comes up with
 no panel at all — a working install by every appearance, until you open it.
 
-The bot needs Docker. steno pulls the container — Chromium under a virtual
-display, PulseAudio, ffmpeg — before the first call, matching its own version.
-Ahead of time, or to build your own: `docker pull ghcr.io/sur1cat/steno-bot`
-or `make bot-image`.
+### Three ways to use it
 
-`setup` asks one question at a time, checks each answer, and writes the config.
-It starts by asking how you will use it — one person, a small team, or six
-concurrent calls — and sets the concurrency limits and model effort from that.
+**In the terminal.** `steno ui` — a full-screen view of meetings, follow-ups,
+tasks with filters, projects, search and channel settings. No service required.
 
-Secrets are typed without echo and written to a `.env` file with mode 0600,
-never into the config: the config is meant to live in a repository, tokens are
-not.
+**In the browser.** `http://127.0.0.1:8422` while `steno start` is running.
+
+**In the menu bar** (macOS, built separately, not part of the brew install):
+
+```
+cd bar && ./build.sh && open build/StenoBar.app
+```
 
 ### Two ways to pay for Claude
 
@@ -112,13 +139,6 @@ One honest note about the subscription path: Claude Code sends its own system
 prompt with every call, so a follow-up costs somewhat more in tokens than the
 same request through the API. It comes out of a plan rather than a card, which
 is the whole point, but `steno cost` reports what was actually spent either way.
-
-Then:
-
-```
-steno doctor    # says what is missing and how to fix it
-steno serve
-```
 
 To try it on a real call without setting up anything at all:
 
@@ -237,13 +257,36 @@ follow-up is still produced from what was captured. Put a line about recording
 in the calendar invitation: some jurisdictions require consent from every party,
 not just the organiser.
 
-## Status
+## What works, and what does not yet
 
-Working and verified on real calls: joining, muting, recording, speaker names
-from captions, caption language switching, search, projects, the panel.
+Honest list. Everything here was checked on real calls unless marked otherwise.
 
-Not yet exercised end to end in production: the calendar, mail and Slack
-sources, and Google Docs publishing. The React panel is being finished.
+**Works.** Joining a Google Meet call and recording it; transcription with
+whisper locally or through Groq; the follow-up with tasks, decisions, open
+questions and risks; per-project attribution; project primers built from a
+repository; Telegram in and out; the panel; `steno ui`; background mode with
+autostart; the menu bar app.
+
+**Works, with a caveat you should know.** Speaker names come from the meeting
+platform's captions. If Meet is set to a different language than people are
+speaking, it produces almost no captions — a few words in several minutes — and
+names get thin. steno then falls back to the active-speaker tile and to the
+participant list, and says in the log how much it actually captured. Setting the
+caption language cannot be automated reliably: Google removed the dedicated
+control and does not document the current one. Set it once by hand in the bot's
+account (⋮ → Settings → Captions → meeting language); Meet remembers it.
+
+**Built but not yet run against the real thing.** Jitsi Meet — the DOM handling
+comes from Jitsi's own end-to-end tests, but no bot has joined a live Jitsi call
+yet. Calendar, bot mailbox and Slack sources. Google Docs publishing. Daily
+commit-to-task matching.
+
+**Deliberately not built.** Microsoft Teams: meeting policy can put a CAPTCHA in
+front of anonymous participants, precisely to keep bots like this out, and you
+cannot tell in advance whether it is on. Zoom: joining by link depends on a
+setting many organisations disable, and everything else needs their SDK. A
+platform that is claimed but does not work is worse than one that is missing —
+you find out on the call.
 
 ## License
 
