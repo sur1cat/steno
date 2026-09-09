@@ -116,6 +116,8 @@ func (p *Panel) handler() http.Handler {
 	mux.Handle("POST /settings/projects", p.guard(p.projectSave))
 	mux.Handle("POST /settings/projects/{name}/delete", p.guard(p.projectDelete))
 	mux.Handle("POST /settings/projects/{name}/context", p.guard(p.projectContext))
+	mux.Handle("POST /items/{id}/reopen", p.guard(p.reopenItem))
+	mux.Handle("POST /items/{id}/close", p.guard(p.closeItemByHand))
 	return mux
 }
 

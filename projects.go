@@ -136,6 +136,14 @@ func (s *Store) CloseItem(id, status, note, meetingID string) error {
 	return err
 }
 
+// ReopenItem возвращает задачу в работу. Нужен, когда коммит закрыл её
+// ошибочно: без этого ошибка автоматики была бы необратимой.
+func (s *Store) ReopenItem(id string) error {
+	_, err := s.db.Exec(`UPDATE project_items SET status='open', closed_in='', note='',
+		updated_at=? WHERE id=?`, time.Now().Unix(), id)
+	return err
+}
+
 // KnownProjects — проекты, по которым что-то накопилось. Нужен панели: там
 // показываются те, где есть содержимое, а не весь список из конфига.
 func (s *Store) KnownProjects() ([]string, error) {

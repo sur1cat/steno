@@ -143,6 +143,26 @@ type Config struct {
 	// вытащит, что относилось к чему.
 	Projects []Project `json:"projects"`
 
+	// Периодическая сверка с репозиториями проектов. Разово склонированный
+	// репозиторий устаревает за неделю, и бот начинает рассуждать о проекте
+	// по прошлогоднему коду. Заодно по новым коммитам видно, какие задачи
+	// закрылись, — а иначе задача, сделанная тихо, висит вечно.
+	Sync struct {
+		Enabled bool `json:"enabled"`
+		// Раз в сутки: чаще незачем, а каждая сверка — это поход в Claude по
+		// каждому проекту, где что-то поменялось.
+		Every Duration `json:"every"`
+		// Пересобирать справку, если накопилось столько коммитов или прошло
+		// столько времени. Каждый коммит — не повод платить за справку заново.
+		RebuildAfterCommits int      `json:"rebuild_after_commits"`
+		RebuildAfter        Duration `json:"rebuild_after"`
+		// Закрывать задачу автоматически, если модель уверена. Ниже порога —
+		// только сообщение, без закрытия.
+		AutoClose bool `json:"auto_close"`
+		// Куда сообщать о закрытых коммитами задачах.
+		Notify bool `json:"notify"`
+	} `json:"sync"`
+
 	// Веб-панель: список созвонов, поиск по всем расшифровкам, плеер с
 	// таймкодами, страница «кто что должен».
 	Panel struct {
@@ -259,6 +279,12 @@ func defaultConfig() *Config {
 	c.Gmail.PollEvery = Duration(45 * time.Second)
 	c.Retention.Recordings = Duration(30 * 24 * time.Hour)
 	c.Retention.Events = Duration(7 * 24 * time.Hour)
+	c.Sync.Enabled = true
+	c.Sync.Every = Duration(24 * time.Hour)
+	c.Sync.RebuildAfterCommits = 30
+	c.Sync.RebuildAfter = Duration(7 * 24 * time.Hour)
+	c.Sync.AutoClose = true
+	c.Sync.Notify = true
 	c.Panel.Addr = ":8080"
 	c.Panel.PasswordEnv = "STENO_PANEL_PASSWORD"
 	c.HTTP.Addr = ":8787"

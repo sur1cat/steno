@@ -952,6 +952,9 @@ func cmdServe(ctx context.Context, args []string) error {
 	}
 	// Панель — не источник созвонов, но живёт по тем же правилам: своя
 	// горутина, своя остановка по контексту.
+	if cfg.Sync.Enabled {
+		sources = append(sources, &syncer{cfg: cfg, st: st, log: lg})
+	}
 	if cfg.Panel.Enabled {
 		p, err := newPanel(cfg, st, lg)
 		if err != nil {

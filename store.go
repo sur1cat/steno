@@ -83,6 +83,17 @@ CREATE TABLE IF NOT EXISTS project_items (
 
 CREATE INDEX IF NOT EXISTS project_items_state ON project_items(project, kind, status);
 
+-- Докуда репозиторий проекта был прочитан в прошлый раз. Без этого каждая
+-- синхронизация заново разбирала бы всю историю, а новые коммиты — те самые,
+-- по которым видно, что задача закрыта, — было бы не отличить от старых.
+CREATE TABLE IF NOT EXISTS repo_state (
+  project   TEXT NOT NULL,
+  source    TEXT NOT NULL,
+  head      TEXT NOT NULL DEFAULT '',
+  synced_at INTEGER NOT NULL,
+  PRIMARY KEY (project, source)
+);
+
 -- Проекты живут в базе, а не в конфиге: их заводит и правит человек в панели,
 -- а не разработчик в JSON с перезапуском сервиса. Из конфига они переезжают
 -- один раз при первом запуске.

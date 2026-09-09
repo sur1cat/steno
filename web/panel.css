@@ -252,3 +252,10 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2
 .actions button.danger:hover { border-color: var(--alarm); }
 
 .primer { white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+
+form.inline { display: inline; }
+button.link {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--accent);
+}
+button.link:hover { text-decoration: underline; }

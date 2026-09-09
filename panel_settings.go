@@ -181,6 +181,36 @@ func (p *Panel) projectContext(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings/projects/"+name+"?building=1", http.StatusSeeOther)
 }
 
+// Задачу можно закрыть и вернуть руками. Без этого закрыть её можно было
+// только упомянув на созвоне: сделал тихо — висит вечно. А закрытую по коммиту
+// ошибочно — вернуть было нечем вовсе.
+func (p *Panel) closeItemByHand(w http.ResponseWriter, r *http.Request) {
+	if err := p.st.CloseItem(r.PathValue("id"), "done", "закрыто руками", ""); err != nil {
+		p.fail(w, err)
+		return
+	}
+	back(w, r)
+}
+
+func (p *Panel) reopenItem(w http.ResponseWriter, r *http.Request) {
+	if err := p.st.ReopenItem(r.PathValue("id")); err != nil {
+		p.fail(w, err)
+		return
+	}
+	back(w, r)
+}
+
+func back(w http.ResponseWriter, r *http.Request) {
+	to := safeNext(r.FormValue("back"))
+	if to == "/" {
+		to = r.Referer()
+		if !strings.HasPrefix(to, "/") {
+			to = "/projects"
+		}
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
 // --- разбор формы -----------------------------------------------------------
 
 func splitList(s string) []string {

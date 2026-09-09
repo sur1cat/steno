@@ -50,6 +50,7 @@ if [ -z "${WHISPER_MODEL:-}" ] || [ ! -f "$WHISPER_MODEL" ]; then
   exit 1
 fi
 MODEL="$WHISPER_MODEL"
+echo "whisper: модель $(basename "$MODEL")" >&2
 
 THREADS="${WHISPER_THREADS:-$( (nproc 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4) )}"
 
@@ -58,7 +59,10 @@ THREADS="${WHISPER_THREADS:-$( (nproc 2>/dev/null || sysctl -n hw.physicalcpu 2>
 VAD_ARGS=()
 if [ -z "${WHISPER_VAD_MODEL:-}" ]; then
   for v in "$MODEL_DIR"/ggml-silero-*.bin; do
-    [ -f "$v" ] && WHISPER_VAD_MODEL="$v" && break
+    if [ -f "$v" ]; then
+      WHISPER_VAD_MODEL="$v"
+      break
+    fi
   done
 fi
 if [ -n "${WHISPER_VAD_MODEL:-}" ] && [ -f "$WHISPER_VAD_MODEL" ]; then

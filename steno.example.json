@@ -37,6 +37,14 @@
       "about": "выкаты, мониторинг, очереди"
     }
   ],
+  "sync": {
+    "enabled": true,
+    "every": "24h",
+    "rebuild_after_commits": 30,
+    "rebuild_after": "7d",
+    "auto_close": true,
+    "notify": true
+  },
   "calendar": {
     "enabled": true,
     "credentials_file": "./secrets/google-service-account.json",

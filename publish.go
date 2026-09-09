@@ -414,6 +414,53 @@ func redact(err error, secrets ...string) error {
 
 // chunk режет по символам, а не по байтам: в кириллице символ — два байта, и
 // байтовый разрез разваливает букву пополам.
+// sendTelegramText и sendSlackText — простая отправка текста. Публикация
+// follow-up для сводок не годится: там разметка, ссылки и деление на части под
+// конкретный созвон.
+func sendTelegramText(ctx context.Context, cfg *Config, chatID, text string) error {
+	token, err := secret(cfg.Telegram.TokenEnv, "Telegram")
+	if err != nil {
+		return err
+	}
+	for _, part := range chunk(text, 3900) {
+		body, _ := json.Marshal(map[string]any{
+			"chat_id": chatID, "text": part,
+			"link_preview_options": map[string]any{"is_disabled": true},
+		})
+		req, err := http.NewRequestWithContext(ctx, "POST",
+			"https://api.telegram.org/bot"+token+"/sendMessage", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := pubClient.Do(req)
+		if err != nil {
+			return redact(err, token)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var out struct {
+			OK          bool   `json:"ok"`
+			Description string `json:"description"`
+		}
+		_ = json.Unmarshal(raw, &out)
+		if !out.OK {
+			return fmt.Errorf("telegram: %s", firstNonEmpty(out.Description, tail(string(raw), 200)))
+		}
+	}
+	return nil
+}
+
+func sendSlackText(ctx context.Context, cfg *Config, channel, text string) error {
+	token, err := secret(cfg.Slack.TokenEnv, "Slack")
+	if err != nil {
+		return err
+	}
+	sc := &slackClient{token: token}
+	_, err = sc.post(ctx, channel, slackEsc(text), "")
+	return err
+}
+
 func chunk(s string, n int) []string {
 	var out []string
 	for {
