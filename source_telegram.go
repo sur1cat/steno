@@ -99,6 +99,13 @@ func (s *telegramSource) Run(ctx context.Context) error {
 			text := firstNonEmpty(u.Message.Text, u.Message.Caption)
 			meetURL := findMeetURL(text)
 			if meetURL == "" {
+				// Просто болтовня в чате — молчим. А вот ссылка на площадку,
+				// которую мы не умеем, молчания не заслуживает: тишина
+				// неотличима от «бот сломался», и человек выясняет это на
+				// живом созвоне, когда бот не пришёл.
+				if hint := linkHint(text); hint != "" {
+					s.reply(ctx, client, token, chat, hint+".")
+				}
 				continue
 			}
 			who := firstNonEmpty(u.Message.From.FirstName, u.Message.From.Username, "кто-то")

@@ -72,7 +72,14 @@ func (s *httpSource) Run(ctx context.Context) error {
 		}
 		meetURL, title, reply := parseJoinRequest(r, body, via)
 		if meetURL == "" {
-			http.Error(w, "не нашёл ссылку на Meet в запросе", http.StatusBadRequest)
+			// Отказ должен называть причину: «не умею Zoom» и «ссылки в
+			// запросе вообще нет» чинятся по-разному. Ссылка в форме приезжает
+			// закодированной, поэтому подсказку ищем и в раскодированном теле.
+			hint := string(body)
+			if un, err := url.QueryUnescape(hint); err == nil {
+				hint += " " + un
+			}
+			http.Error(w, meetingLinkError(hint).Error(), http.StatusBadRequest)
 			return
 		}
 		m := &Meeting{

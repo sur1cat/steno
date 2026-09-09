@@ -158,6 +158,8 @@ func askViaCLI(ctx context.Context, cfg *Config, system, user string,
 	text := res.Text
 	if schema != nil {
 		text = extractJSON(text)
+	} else {
+		text = stripPreamble(text)
 	}
 	// Цену CLI считает сам и отдаёт в ответе — это точнее наших таблиц, где
 	// цена подписочных моделей вообще не прописана.
@@ -203,4 +205,30 @@ func extractJSON(s string) string {
 		return s[start : end+1]
 	}
 	return s
+}
+
+// stripPreamble срезает реплику о ходе работы, если CLI начал ответ с неё.
+//
+// `claude -p --permission-mode plan` иногда открывает ответ рассуждением о
+// самом задании («План здесь не требуется, пишу сразу») и отбивает его чертой.
+// У запросов со схемой это незаметно — оттуда всё равно вырезается JSON. А вот
+// справка о проекте схемы не имеет и уходит в промпт каждого созвона целиком,
+// так что вводная реплика поехала бы в каждый follow-up.
+//
+// Режем осторожно: только если до черты остался небольшой кусок. Длинный текст
+// перед чертой — это уже содержание, и терять его нельзя.
+func stripPreamble(s string) string {
+	t := strings.TrimSpace(s)
+	i := strings.Index(t, "\n---")
+	if i < 0 || i > 400 {
+		return t
+	}
+	head := t[:i]
+	// Настоящая справка не говорит о себе в первом лице и не поминает задание.
+	if !strings.Contains(head, "\n\n") &&
+		(strings.Contains(head, "задач") || strings.Contains(head, "План") ||
+			strings.Contains(head, "пишу") || strings.Contains(head, "Сейчас")) {
+		return strings.TrimSpace(strings.TrimLeft(t[i+4:], "-\n"))
+	}
+	return t
 }

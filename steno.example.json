@@ -46,12 +46,17 @@
     "auto_close": true,
     "notify": true
   },
+  "//google": "Два пути в Google. Ключ service-account ниже читает календари всех сотрудников, но требует своего домена и админки. Кнопка «Подключить Google» в панели — для одного человека: он соглашается один раз, дальше steno видит ровно то, что видит он. Client id заводится через `steno setup`, секрет уезжает в .env.",
+  "google": {
+    "client_id": "",
+    "client_secret_env": "GOOGLE_CLIENT_SECRET"
+  },
   "calendar": {
     "enabled": true,
     "credentials_file": "./secrets/google-service-account.json",
     "calendars": [
-      "ivan@example.com",
-      "anna@example.com"
+      "name@example.com",
+      "team@example.com"
     ],
     "poll_every": "2m",
     "join_before": "1m",

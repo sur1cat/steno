@@ -33,9 +33,12 @@ panel-dev:
 test:
 	go test ./...
 
-# Разбор DOM субтитров Meet на синтетическом дереве. Нужен только node.
+# Разбор DOM площадок на синтетическом дереве. Нужен только node; настоящий
+# браузер не поднимается. Эти же файлы гоняет `go test` (TestPageScriptsOnFixtures),
+# отдельная цель нужна, чтобы видеть их вывод целиком.
 test-js:
 	node meet_test.mjs
+	node jitsi_test.mjs
 
 # Образ бота: Chromium + PulseAudio + ffmpeg + этот же бинарник.
 bot-image:

@@ -1,5 +1,12 @@
 package main
 
+// Бот: заходит в созвон, пишет звук, снимает субтитры, уходит.
+//
+// Площадку он не различает. Всё, что от неё зависит, лежит за интерфейсом
+// Platform (platform.go): опознание ссылки, скрипт страницы, включение
+// субтитров, выбор языка распознавания. Со страницей бот разговаривает через
+// window.__steno — договор один и тот же у meet.js и у jitsi.js.
+
 import (
 	"context"
 	"encoding/json"
@@ -21,6 +28,10 @@ type BotOptions struct {
 	AudioSource string // монитор PulseAudio-синка, куда играет Chromium
 	Selectors   *Selectors
 
+	// Площадка. Пусто — определяется по ссылке; заполняется в тестах и там,
+	// где она уже известна.
+	Platform Platform
+
 	AdmissionTimeout time.Duration
 	EmptyFor         time.Duration
 	MaxDuration      time.Duration
@@ -29,7 +40,7 @@ type BotOptions struct {
 	// гостем и хосту придётся впускать его вручную.
 	UserDataDir string
 	Headless    bool
-	// Язык субтитров Meet — он же язык распознавания.
+	// Язык субтитров площадки — он же язык распознавания.
 	CaptionLanguage string
 	// Печатать в лог, что на странице похоже на область субтитров. Чинить их
 	// съём вслепую, тратя на попытку по заходу в живой звонок, нельзя.
@@ -44,25 +55,47 @@ type BotResult struct {
 	Started      time.Time
 	Ended        time.Time
 	LeftReason   string
+	// Площадка, на которой шла запись, и что вышло с субтитрами. Второе —
+	// отдельное поле, а не «реплик получилось ноль»: ноль бывает и у
+	// молчаливого созвона, а «имён не будет» и «съём субтитров сломался» —
+	// это разные новости.
+	Platform string       `json:"platform,omitempty"`
+	Captions CaptionState `json:"captions,omitempty"`
 }
 
 // pollState — то, что страница отдаёт на каждом опросе.
 type pollState struct {
-	InCall       bool          `json:"inCall"`
-	Left         bool          `json:"left"`
-	CaptionsOn   bool          `json:"captionsOn"`
+	InCall     bool `json:"inCall"`
+	Left       bool `json:"left"`
+	CaptionsOn bool `json:"captionsOn"`
+	// CaptionsUnavailable — страница сама знает, что субтитров не будет.
+	// У Jitsi это видно по config.js сервера, у Meet такого признака нет.
+	CaptionsUnavailable bool `json:"captionsUnavailable"`
+	// MuteState — "muted" | "live" | "unknown". Отдельно от muteSelf(),
+	// потому что «ничего не нажал» и «уже выключено» — разные вещи, а на
+	// разнице держится единственная защита от бота с живым микрофоном.
+	MuteState    string        `json:"muteState"`
 	Participants []string      `json:"participants"`
 	Lines        []CaptionLine `json:"lines"`
 }
 
+// Часть методов есть не у всех площадок — спрашиваем их через opt(), иначе
+// один отсутствующий метод ронял бы весь опрос и бот выходил бы из звонка с
+// «страница не отвечает».
 const pollJS = `(() => {
-  if (!window.__steno) return {inCall:false,left:false,captionsOn:false,participants:[],lines:[]};
-  const c = window.__steno.captions();
+  const s = window.__steno;
+  if (!s) return {inCall:false,left:false,captionsOn:false,captionsUnavailable:false,
+                  muteState:"unknown",participants:[],lines:[]};
+  const opt = (name, fallback) =>
+    typeof s[name] === "function" ? s[name]() : fallback;
+  const c = s.captions();
   return {
-    inCall: window.__steno.inCall(),
-    left: window.__steno.left(),
-    captionsOn: c.ok,
-    participants: window.__steno.participants(),
+    inCall: s.inCall(),
+    left: s.left(),
+    captionsOn: c.ok || opt("captionsOn", false),
+    captionsUnavailable: opt("captionsUnavailable", false),
+    muteState: opt("muteState", "unknown"),
+    participants: s.participants(),
     lines: c.lines,
   };
 })()`
@@ -76,7 +109,23 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 		return nil, err
 	}
 
-	boot, err := o.Selectors.bootstrapJS()
+	// Адреса своих серверов Jitsi приезжают в selectors.json — внутри
+	// контейнера это единственное, что бот про них знает: конфига сервиса там
+	// нет. Регистрируем до опознания ссылки, иначе своя площадка не найдётся.
+	if o.Selectors != nil {
+		registerJitsiHosts(o.Selectors.Jitsi.Hosts)
+	}
+	plat := o.Platform
+	if plat == nil {
+		p, err := platformOf(o.MeetURL)
+		if err != nil {
+			return nil, err
+		}
+		plat = p
+	}
+	lg.Printf("площадка: %s (субтитры: %s)", plat.Title(), plat.Captions())
+
+	boot, err := plat.BootstrapJS(o.Selectors)
 	if err != nil {
 		return nil, err
 	}
@@ -115,13 +164,14 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx)
 	defer cancelBrowser()
 
-	// Скрипт ставим до навигации, чтобы он пережил внутренние переходы Meet.
+	// Скрипт ставим до навигации, чтобы он пережил внутренние переходы страницы.
 	inject := chromedp.ActionFunc(func(ctx context.Context) error {
 		_, err := page.AddScriptToEvaluateOnNewDocument(boot).Do(ctx)
 		return err
 	})
-	if err := chromedp.Run(browserCtx, inject, chromedp.Navigate(o.MeetURL)); err != nil {
-		return nil, fmt.Errorf("открыть %s: %w", o.MeetURL, err)
+	openURL := plat.NavigateURL(o.MeetURL)
+	if err := chromedp.Run(browserCtx, inject, chromedp.Navigate(openURL)); err != nil {
+		return nil, fmt.Errorf("открыть %s: %w", openURL, err)
 	}
 	var scriptErr string
 	_ = chromedp.Run(browserCtx, chromedp.Evaluate(
@@ -130,12 +180,12 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 		return nil, fmt.Errorf("скрипт страницы не запустился: %s (проверь selectors.json)", scriptErr)
 	}
 
-	if err := enterGreenRoom(browserCtx, o, lg); err != nil {
+	if err := enterGreenRoom(browserCtx, o, plat, lg); err != nil {
 		return nil, err
 	}
 
 	lg.Printf("жду, пока впустят (до %s)", o.AdmissionTimeout)
-	if err := waitAdmission(browserCtx, o.AdmissionTimeout); err != nil {
+	if err := waitAdmission(browserCtx, o.AdmissionTimeout, lg); err != nil {
 		return nil, err
 	}
 	lg.Printf("в звонке")
@@ -151,14 +201,15 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 	}
 	lg.Printf("пишу звук в %s", audioPath)
 
-	// Субтитры — единственный источник имён говорящих. «c» их переключает, а
-	// не включает, поэтому жмём только когда области нет, и проверяем результат.
-	enableCaptions(browserCtx, lg)
+	// Субтитры — единственный источник имён говорящих. Включение у всех
+	// площадок это тумблер, а не выключатель, поэтому жмём только когда
+	// области нет, и проверяем результат.
+	enableCaptions(browserCtx, plat, lg)
 	if o.CaptionLanguage != "" {
-		setCaptionLanguage(browserCtx, o.Selectors, o.CaptionLanguage, lg)
+		plat.SetCaptionLanguage(browserCtx, o.Selectors, o.CaptionLanguage, lg)
 	}
 
-	res, err := recordLoop(browserCtx, o, rec, lg)
+	res, err := recordLoop(browserCtx, o, plat, rec, lg)
 	stopErr := rec.Stop()
 	if err != nil {
 		return nil, err
@@ -172,7 +223,7 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 
 // enterGreenRoom проходит экран перед входом: имя (если зашли гостем),
 // выключение микрофона и камеры, кнопка входа.
-func enterGreenRoom(ctx context.Context, o BotOptions, lg *log.Logger) error {
+func enterGreenRoom(ctx context.Context, o BotOptions, plat Platform, lg *log.Logger) error {
 	deadline := time.Now().Add(90 * time.Second)
 	named, muted := false, false
 	for time.Now().Before(deadline) {
@@ -180,6 +231,13 @@ func enterGreenRoom(ctx context.Context, o BotOptions, lg *log.Logger) error {
 		inCall := false
 		if err := chromedp.Run(ctx, chromedp.Evaluate(pollJS, &st)); err == nil {
 			inCall = st.InCall
+			// Страница умеет ответить прямо: «микрофон и камера выключены».
+			// Meet так не умеет, там признак только один — нажатая кнопка.
+			if st.MuteState == "muted" {
+				muted = true
+			} else if st.MuteState == "live" {
+				muted = false
+			}
 		}
 		// Если бота впустили сразу (аккаунт в том же Workspace или
 		// переподключение), комнаты ожидания не было — но заглушить себя всё
@@ -187,6 +245,9 @@ func enterGreenRoom(ctx context.Context, o BotOptions, lg *log.Logger) error {
 		// с включённым микрофоном.
 		if inCall {
 			if n := muteSelf(ctx, lg); n > 0 || muted {
+				return nil
+			}
+			if confirmMuted(ctx) {
 				return nil
 			}
 			lg.Printf("ВНИМАНИЕ: не нашёл кнопок микрофона и камеры — бот может быть не заглушён")
@@ -207,7 +268,7 @@ func enterGreenRoom(ctx context.Context, o BotOptions, lg *log.Logger) error {
 		var joined bool
 		if err := chromedp.Run(ctx, chromedp.Evaluate(
 			"window.__steno ? window.__steno.clickJoin() : false", &joined)); err == nil && joined {
-			if !muted {
+			if !muted && !confirmMuted(ctx) {
 				// Под --local микрофон и камера настоящие, а не виртуальные:
 				// молча войти незаглушённым означает вести чужой созвон с
 				// живого микрофона оператора.
@@ -218,23 +279,46 @@ func enterGreenRoom(ctx context.Context, o BotOptions, lg *log.Logger) error {
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("не нашёл кнопку входа за 90 с — скорее всего изменилась вёрстка Meet, проверь joinButtonTexts в selectors.json")
+	return fmt.Errorf("не нашёл кнопку входа за 90 с — скорее всего изменилась вёрстка %s, "+
+		"проверь selectors.json", plat.Title())
+}
+
+// confirmMuted спрашивает страницу напрямую. Отдельно от muteSelf(), потому
+// что «кнопок не нашлось» — это не «микрофон включён»: у Jitsi бот входит уже
+// немым по настройке в ссылке, и нажимать там нечего.
+func confirmMuted(ctx context.Context) bool {
+	var state string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`window.__steno && window.__steno.muteState ? window.__steno.muteState() : "unknown"`,
+		&state)); err != nil {
+		return false
+	}
+	return state == "muted"
 }
 
 // enableCaptions добивается того, чтобы область субтитров появилась. Если
-// аккаунт бота уже включал их раньше, Meet помнит настройку — и одно слепое
-// нажатие «c» их бы выключило.
-func enableCaptions(ctx context.Context, lg *log.Logger) {
+// аккаунт бота уже включал их раньше, площадка помнит настройку — и одно
+// слепое переключение их бы выключило.
+func enableCaptions(ctx context.Context, plat Platform, lg *log.Logger) {
 	for i := 0; i < 5; i++ {
 		var st pollState
-		if err := chromedp.Run(ctx, chromedp.Evaluate(pollJS, &st)); err == nil && st.CaptionsOn {
-			if i > 0 {
-				lg.Printf("субтитры включены")
+		if err := chromedp.Run(ctx, chromedp.Evaluate(pollJS, &st)); err == nil {
+			if st.CaptionsOn {
+				if i > 0 {
+					lg.Printf("субтитры включены")
+				}
+				return
 			}
-			return
+			// Страница знает, что субтитров не будет: на публичном meet.jit.si
+			// они выключены на сервере. Жать там нечего, и пять слепых
+			// нажатий подряд — это пять случайных кнопок в чужом созвоне.
+			if st.CaptionsUnavailable {
+				lg.Printf("субтитры на этом сервере выключены — расшифровка будет по звуку, без имён")
+				return
+			}
 		}
-		if err := chromedp.Run(ctx, chromedp.KeyEvent("c")); err != nil {
-			lg.Printf("не удалось нажать «c» для субтитров: %v", err)
+		if err := plat.ToggleCaptions(ctx); err != nil {
+			lg.Printf("не удалось переключить субтитры: %v", err)
 			return
 		}
 		time.Sleep(1500 * time.Millisecond)
@@ -243,8 +327,8 @@ func enableCaptions(ctx context.Context, lg *log.Logger) {
 }
 
 // muteSelf возвращает, сколько кнопок удалось выключить. Ноль — это не «всё
-// уже выключено», а «не нашёл»: включённость определяется атрибутом
-// data-is-muted, и если Meet его переименует, бот войдёт с живым микрофоном.
+// уже выключено», а «не нашёл»: у Meet включённость определяется атрибутом
+// data-is-muted, и если его переименуют, бот войдёт с живым микрофоном.
 func muteSelf(ctx context.Context, lg *log.Logger) int {
 	var muted int
 	if err := chromedp.Run(ctx, chromedp.Evaluate(
@@ -257,8 +341,9 @@ func muteSelf(ctx context.Context, lg *log.Logger) int {
 	return muted
 }
 
-func waitAdmission(ctx context.Context, timeout time.Duration) error {
+func waitAdmission(ctx context.Context, timeout time.Duration, lg *log.Logger) error {
 	deadline := time.Now().Add(timeout)
+	knocked := false
 	for time.Now().Before(deadline) {
 		var st pollState
 		if err := chromedp.Run(ctx, chromedp.Evaluate(pollJS, &st)); err == nil {
@@ -269,12 +354,25 @@ func waitAdmission(ctx context.Context, timeout time.Duration) error {
 				return fmt.Errorf("бота не впустили в звонок")
 			}
 		}
+		// У некоторых площадок между экраном перед входом и звонком есть ещё
+		// одна комната ожидания со своей кнопкой «попроситься». Пока её не
+		// нажать, хост заявки не увидит, и бот простоит здесь весь таймаут, а
+		// потом уйдёт с «хост не впустил» — хотя его никто и не звал.
+		// Метода может не быть: у Meet такого экрана нет.
+		var asked bool
+		_ = chromedp.Run(ctx, chromedp.Evaluate(
+			`window.__steno && window.__steno.reknock ? window.__steno.reknock() : false`,
+			&asked))
+		if asked && !knocked {
+			knocked = true
+			lg.Printf("попросился в звонок из комнаты ожидания")
+		}
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("хост не впустил бота за %s", timeout)
 }
 
-func recordLoop(ctx context.Context, o BotOptions, rec *Recorder, lg *log.Logger) (*BotResult, error) {
+func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder, lg *log.Logger) (*BotResult, error) {
 	capPath := filepath.Join(o.OutDir, "captions.jsonl")
 	capFile, err := os.Create(capPath)
 	if err != nil {
@@ -290,6 +388,12 @@ func recordLoop(ctx context.Context, o BotOptions, rec *Recorder, lg *log.Logger
 	lastCaptionTry := time.Time{}
 	lastDebug := time.Time{}
 	reason := "звонок закончился"
+	// Что вышло с субтитрами. Ответ собирается по ходу записи: «ни разу не
+	// видели» и «страница сказала, что их нет» — разные новости, и человеку
+	// нужна вторая, а не «реплик 0».
+	sawCaptions := false
+	pageSaysNone := plat.Captions() == CaptionsNever
+	toldAboutNone := false
 	// Плитки участников на один такт пропадают при внутреннем переходе Meet и
 	// при переподключении WebRTC. Выход по одному замеру обрезал бы час
 	// разговора на двенадцатой минуте, и снаружи это выглядело бы как
@@ -338,15 +442,29 @@ func recordLoop(ctx context.Context, o BotOptions, rec *Recorder, lg *log.Logger
 			lastDebug = time.Now()
 			dumpCaptionDOM(ctx, lg)
 		}
-		if !st.CaptionsOn && rec.Elapsed() > 30*time.Second && time.Since(lastCaptionTry) > time.Minute {
+		if st.CaptionsUnavailable {
+			pageSaysNone = true
+		}
+		if st.CaptionsOn {
+			sawCaptions = true
+		}
+		switch {
+		case st.CaptionsOn:
+			warnedNoCaptions = false
+		case pageSaysNone:
+			// Возвращать нечего. Один раз сказать — и больше не дёргать
+			// страницу: иначе бот всю запись жмёт кнопки, которых нет.
+			if !toldAboutNone {
+				lg.Printf("субтитров на этой площадке нет — расшифровка будет по звуку, без имён")
+				toldAboutNone = true
+			}
+		case rec.Elapsed() > 30*time.Second && time.Since(lastCaptionTry) > time.Minute:
 			if !warnedNoCaptions {
 				lg.Printf("субтитры пропали — пробую вернуть")
 				warnedNoCaptions = true
 			}
 			lastCaptionTry = time.Now()
-			enableCaptions(ctx, lg)
-		} else if st.CaptionsOn {
-			warnedNoCaptions = false
+			enableCaptions(ctx, plat, lg)
 		}
 
 		if st.Left || !st.InCall {
@@ -384,8 +502,10 @@ func recordLoop(ctx context.Context, o BotOptions, rec *Recorder, lg *log.Logger
 	}
 	sort.Strings(people)
 
+	capState := captionOutcome(sawCaptions, pageSaysNone)
 	lg.Printf("запись окончена: %s, %s, участников %d",
 		reason, rec.Elapsed().Round(time.Second), len(people))
+	lg.Printf("субтитры: %s", capState.Explain(plat))
 
 	return &BotResult{
 		CaptionsPath: capPath,
@@ -393,53 +513,23 @@ func recordLoop(ctx context.Context, o BotOptions, rec *Recorder, lg *log.Logger
 		Started:      rec.Started,
 		Ended:        time.Now(),
 		LeftReason:   reason,
+		Platform:     plat.ID(),
+		Captions:     capState,
 	}, nil
 }
 
-// setCaptionLanguage переключает язык субтитров. Без этого Meet распознаёт
-// речь языком по умолчанию — обычно английским, — и русский разговор приходит
-// набором похоже звучащих английских слов. Имена говорящих при этом остаются
-// верными, поэтому в связке с whisper это не смертельно; смертельно, когда
-// текст берётся прямо из субтитров.
-func setCaptionLanguage(ctx context.Context, sel *Selectors, lang string, lg *log.Logger) {
-	names := sel.CaptionLanguages[lang]
-	if len(names) == 0 {
-		names = []string{lang} // код не из таблицы — пробуем как есть
+// captionOutcome — итог по субтитрам. Отдельной функцией, чтобы у него был
+// тест: разница между «их и не могло быть» и «сломались» решает, чинить
+// вёрстку или нет.
+func captionOutcome(sawCaptions, pageSaysNone bool) CaptionState {
+	switch {
+	case sawCaptions:
+		return CaptionsWorked
+	case pageSaysNone:
+		return CaptionsNone
+	default:
+		return CaptionsFailed
 	}
-
-	var opened bool
-	if err := chromedp.Run(ctx, chromedp.Evaluate(
-		"window.__steno ? window.__steno.openCaptionSettings() : false", &opened)); err != nil || !opened {
-		lg.Printf("не нашёл настройки субтитров — язык остаётся тем, что стоит в Meet")
-		return
-	}
-	time.Sleep(1500 * time.Millisecond) // диалог рисуется не мгновенно
-
-	var res struct {
-		OK      bool     `json:"ok"`
-		Picked  string   `json:"picked"`
-		How     string   `json:"how"`
-		Combos  []string `json:"combos"`
-		Options []string `json:"options"`
-	}
-	js := fmt.Sprintf("window.__steno ? window.__steno.pickCaptionLanguage(%s) : {ok:false}",
-		mustJSON(names))
-	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &res)); err != nil {
-		lg.Printf("выбор языка субтитров: %v", err)
-	} else if res.OK {
-		lg.Printf("язык субтитров: %s", res.Picked)
-	} else {
-		lg.Printf("не нашёл %v среди языков субтитров; выпадашки: %v; варианты: %v",
-			names, res.Combos, res.Options)
-	}
-
-	var closed bool
-	_ = chromedp.Run(ctx, chromedp.Evaluate(
-		"window.__steno ? window.__steno.closeDialog() : false", &closed))
-	if !closed {
-		_ = chromedp.Run(ctx, chromedp.KeyEvent("\u001b")) // Escape
-	}
-	time.Sleep(700 * time.Millisecond)
 }
 
 // dumpCaptionDOM печатает всё, что на странице похоже на субтитры: подписи

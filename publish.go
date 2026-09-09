@@ -125,7 +125,7 @@ func publishGoogleDoc(ctx context.Context, cfg *Config, m *Meeting, f *Followup,
 	if len(scopes) == 0 {
 		scopes = []string{drive.DriveScope}
 	}
-	opt, err := googleClient(ctx, cfg.GoogleDocs.CredentialsFile, cfg.GoogleDocs.Subject, scopes...)
+	opt, err := googleClient(ctx, cfg, cfg.GoogleDocs.CredentialsFile, cfg.GoogleDocs.Subject, scopes...)
 	if err != nil {
 		return "", err
 	}

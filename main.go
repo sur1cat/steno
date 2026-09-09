@@ -37,6 +37,13 @@ const usage = `steno — заметки и follow-up с созвонов.
   steno doctor               проверить, чего не хватает для запуска
   steno cost [дней]          сколько потрачено на follow-up
   steno projects [проект]    что открыто по проектам
+  steno projects add <имя>   завести проект
+                             --repo <url>   репозиторий (можно несколько)
+                             --path <dir>   каталог с кодом на этой машине
+                             --url <адрес>  сайт или документ
+                             --about "…"    одна строка, что это за проект
+                             --alias a,b    как называют вслух
+  steno projects rm <имя>    убрать проект из реестра
   steno context [проект]     собрать справки о проектах по коду и сайтам
   steno bot --url <u>        сам бот; запускается внутри контейнера
 
@@ -158,6 +165,9 @@ func open(configPath string) (*Config, *Store, error) {
 		return nil, nil, err
 	}
 	resizeTranscribeQueue(cfg.Transcribe.MaxConcurrent)
+	// Адреса своих серверов Jitsi живут в selectors.json — там же, где
+	// остальная вёрстка, и оттуда же едут внутрь контейнера бота.
+	applyPlatformConfig(cfg, log.Default())
 	if n, err := importProjects(st, cfg); err != nil {
 		st.Close()
 		return nil, nil, fmt.Errorf("перенос проектов из конфига: %w", err)
@@ -205,15 +215,24 @@ func cmdJoin(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(rest) < 1 {
-		return fmt.Errorf("нужна ссылка на созвон: steno join https://meet.google.com/abc-defg-hij")
+		return fmt.Errorf("нужна ссылка на созвон (%s): steno join https://meet.google.com/abc-defg-hij",
+			supportedPlatforms())
 	}
-	meetURL := rest[0]
-
 	cfg, st, err := open(*cfgPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
+
+	// Ссылку приводим к канонической здесь же — уже после open(), потому что
+	// адреса своих серверов Jitsi приезжают из конфига. Без этого `steno join
+	// meet.google.com/abc-defg-hij` уходил в браузер как есть, без схемы, а
+	// ссылка чужой площадки доезжала до запуска Chromium и падала там — вместо
+	// того чтобы сразу получить объяснение.
+	meetURL := findMeetURL(rest[0])
+	if meetURL == "" {
+		return meetingLinkError(rest[0])
+	}
 
 	m := &Meeting{
 		ID:        newID(time.Now()),
@@ -276,8 +295,12 @@ func recordOnce(ctx context.Context, cfg *Config, st *Store, m *Meeting) error {
 		log.Printf("  %s — %d реплик", orDash(who), n)
 	}
 	if len(utts) == 0 {
-		log.Printf("субтитры пусты: либо не включились, либо в Meet сменилась вёрстка — " +
-			"смотри selectors.json и captionRegionLabels")
+		// Что именно случилось, бот уже сказал строкой «субтитры: …» — она
+		// различает «площадка их не отдаёт» и «должны были быть, но не
+		// включились». Повторять здесь догадку про Meet нельзя: у Jitsi
+		// пустые субтитры это норма, а не поломка вёрстки.
+		log.Printf("субтитров нет — расшифровка пойдёт по звуку, без имён говорящих; " +
+			"причину смотри выше, в строке бота «субтитры: …»")
 	}
 	return nil
 }
@@ -832,6 +855,19 @@ func sourcesSummary(p Project) string {
 }
 
 func cmdProjects(args []string) error {
+	// Завести проект можно было только панелью или правкой конфига, хотя
+	// остальное в steno делается и тем и другим. Нашлось это прогоном с нуля:
+	// `steno context` на свежей установке отправлял «заведи в панели», то есть
+	// человек, ставивший всё из терминала, упирался в веб-интерфейс.
+	if len(args) > 0 {
+		switch args[0] {
+		case "add":
+			return cmdProjectAdd(args[1:])
+		case "rm":
+			return cmdProjectRm(args[1:])
+		}
+	}
+
 	fs := newFlagSet("projects")
 	cfgPath := setupFlags(fs)
 	rest, err := parseArgs(fs, args)
@@ -844,14 +880,34 @@ func cmdProjects(args []string) error {
 	}
 	defer st.Close()
 
-	names := []string{rest[0]}
-	if len(rest) == 0 {
+	// Порядок важен: без проверки `rest[0]` вычислялся раньше неё, и `steno
+	// projects` без аргументов — то есть ровно та форма, что напечатана в
+	// справке, — падал паникой на любой свежей установке.
+	names := rest[:min(len(rest), 1)]
+	if len(names) == 0 {
+		// Заведённые проекты и проекты, по которым что-то накопилось, — разные
+		// списки: первый созвон случается позже, чем заводят проект. Раньше
+		// показывался только второй, и человек, только что заведший два
+		// проекта, читал «ничего не накопилось» как «проектов нет».
 		if names, err = st.KnownProjects(); err != nil {
 			return err
 		}
+		seen := map[string]bool{}
+		for _, n := range names {
+			seen[n] = true
+		}
+		registered, err := st.Projects()
+		if err != nil {
+			return err
+		}
+		for _, pr := range registered {
+			if !seen[pr.Name] {
+				names = append(names, pr.Name)
+			}
+		}
 	}
 	if len(names) == 0 || names[0] == "" {
-		fmt.Println("по проектам пока ничего не накопилось")
+		fmt.Println("проектов нет. Завести:  steno projects add <название> --path ~/code/…")
 		return nil
 	}
 	kinds := []struct {
@@ -980,7 +1036,11 @@ func cmdList(args []string) error {
 		return err
 	}
 	defer rows.Close()
+	// Пустой вывод человек читает как «команда не сработала», а не как «созвонов
+	// нет»: соседние `projects` и `cost` на пустой установке говорят словами.
+	n := 0
 	for rows.Next() {
+		n++
 		var id, title, status string
 		var started int64
 		if err := rows.Scan(&id, &title, &started, &status); err != nil {
@@ -989,7 +1049,13 @@ func cmdList(args []string) error {
 		fmt.Printf("%-22s %-11s %s  %s\n", id, status,
 			time.Unix(started, 0).Format("02.01 15:04"), orDash(title))
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if n == 0 {
+		fmt.Println("созвонов пока нет")
+	}
+	return nil
 }
 
 // --- serve -----------------------------------------------------------------
@@ -1112,4 +1178,93 @@ func cmdPrune(args []string) error {
 type source interface {
 	Name() string
 	Run(ctx context.Context) error
+}
+
+// cmdProjectAdd заводит проект из терминала. Источники повторяются: один
+// проект — это обычно и репозиторий, и сайт, и пара слов о том, что это.
+func cmdProjectAdd(args []string) error {
+	fs := newFlagSet("projects add")
+	cfgPath := setupFlags(fs)
+	var about, aliases string
+	var repos, paths, urls stringList
+	fs.StringVar(&about, "about", "", "одна строка о том, что это за проект")
+	fs.StringVar(&aliases, "alias", "", "как называют вслух, через запятую")
+	fs.Var(&repos, "repo", "ссылка на репозиторий (можно несколько раз)")
+	fs.Var(&paths, "path", "каталог с кодом на этой машине (можно несколько раз)")
+	fs.Var(&urls, "url", "адрес сайта или документа (можно несколько раз)")
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSpace(strings.Join(rest, " "))
+	if name == "" {
+		return fmt.Errorf("как назвать проект? steno projects add <название> [--repo …] [--about …]")
+	}
+
+	var sources []Source
+	for _, v := range repos {
+		sources = append(sources, Source{Kind: "repo", Value: v})
+	}
+	for _, v := range paths {
+		sources = append(sources, Source{Kind: "path", Value: expandHome(v)})
+	}
+	for _, v := range urls {
+		sources = append(sources, Source{Kind: "url", Value: v})
+	}
+
+	_, st, err := open(*cfgPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.SaveProject(Project{
+		Name: name, About: strings.TrimSpace(about),
+		Aliases: commaList(aliases), Sources: sources,
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("проект «%s» заведён\n", name)
+	if len(sources) == 0 {
+		fmt.Println("источников нет — справку собрать не из чего.")
+		fmt.Println("  steno projects add " + name + " --repo git@github.com:…  или --path ~/code/…")
+		return nil
+	}
+	fmt.Println("собрать справку по коду:  steno context " + name)
+	return nil
+}
+
+func cmdProjectRm(args []string) error {
+	fs := newFlagSet("projects rm")
+	cfgPath := setupFlags(fs)
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	name := strings.TrimSpace(strings.Join(rest, " "))
+	if name == "" {
+		return fmt.Errorf("какой проект удалить? steno projects rm <название>")
+	}
+	_, st, err := open(*cfgPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.DeleteProject(name); err != nil {
+		return err
+	}
+	// Задачи и решения остаются: они принадлежат созвонам, а не проекту, и
+	// молча уносить их вместе с записью в реестре — потеря без предупреждения.
+	fmt.Printf("проект «%s» удалён; задачи и решения по нему остались\n", name)
+	return nil
+}
+
+// stringList — флаг, который можно повторять: --repo A --repo B.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ", ") }
+func (l *stringList) Set(v string) error {
+	if v = strings.TrimSpace(v); v != "" {
+		*l = append(*l, v)
+	}
+	return nil
 }

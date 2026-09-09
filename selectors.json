@@ -62,5 +62,47 @@
       "Español",
       "Spanish"
     ]
+  },
+  "jitsi": {
+    "hosts": [],
+    "liveMicLabels": [
+      "mute microphone",
+      "выключить микрофон",
+      "mikrofon stummschalten"
+    ],
+    "liveCamLabels": [
+      "stop camera",
+      "выключить камеру",
+      "остановить камеру",
+      "kamera stoppen"
+    ],
+    "mutedMicLabels": [
+      "unmute microphone",
+      "включить микрофон",
+      "stummschaltung aufheben"
+    ],
+    "mutedCamLabels": [
+      "start camera",
+      "включить камеру",
+      "kamera starten"
+    ],
+    "moreActionsLabels": [
+      "more actions",
+      "другие действия",
+      "weitere aktionen"
+    ],
+    "captionButtonLabels": [
+      "subtitles",
+      "closed captions",
+      "субтитры",
+      "untertitel"
+    ],
+    "leftMeetingTexts": [
+      "kicked you out of the meeting",
+      "you were kicked out of the meeting",
+      "вас удалили из конференции",
+      "вас исключили из конференции",
+      "thank you for using"
+    ]
   }
 }

@@ -12,14 +12,14 @@ func lines(pairs ...string) []CaptionLine {
 
 func TestGrowingLineIsOneUtterance(t *testing.T) {
 	var tr CaptionTracker
-	if got := tr.Update(lines("Аня", "давайте"), 1); len(got) != 0 {
+	if got := tr.Update(lines("Участник А", "давайте"), 1); len(got) != 0 {
 		t.Fatalf("рано закрыли реплику: %v", got)
 	}
-	if got := tr.Update(lines("Аня", "давайте начнём с"), 2); len(got) != 0 {
+	if got := tr.Update(lines("Участник А", "давайте начнём с"), 2); len(got) != 0 {
 		t.Fatalf("рано закрыли реплику: %v", got)
 	}
-	done := tr.Update(lines("Боря", "секунду"), 3)
-	if len(done) != 1 || done[0].Text != "давайте начнём с" || done[0].Speaker != "Аня" {
+	done := tr.Update(lines("Участник Б", "секунду"), 3)
+	if len(done) != 1 || done[0].Text != "давайте начнём с" || done[0].Speaker != "Участник А" {
 		t.Fatalf("ожидали одну реплику Ани целиком, получили %+v", done)
 	}
 	if done[0].Start != 1 || done[0].End != 3 {
@@ -31,8 +31,8 @@ func TestGrowingLineIsOneUtterance(t *testing.T) {
 // префикса при этом может почти не быть — реплика всё равно та же.
 func TestRewriteKeepsSameUtterance(t *testing.T) {
 	var tr CaptionTracker
-	tr.Update(lines("Аня", "привет всем"), 1)
-	if got := tr.Update(lines("Аня", "Привет, всем коллегам"), 2); len(got) != 0 {
+	tr.Update(lines("Участник А", "привет всем"), 1)
+	if got := tr.Update(lines("Участник А", "Привет, всем коллегам"), 2); len(got) != 0 {
 		t.Fatalf("переписанную строку приняли за новую реплику: %v", got)
 	}
 	done := tr.Flush(3)
@@ -45,9 +45,9 @@ func TestRewriteKeepsSameUtterance(t *testing.T) {
 // реплики, а не одна.
 func TestTwoVisibleLinesFromSameSpeaker(t *testing.T) {
 	var tr CaptionTracker
-	tr.Update(lines("Аня", "первая мысль про сроки"), 1)
-	tr.Update(lines("Аня", "первая мысль про сроки", "Аня", "и ещё одно"), 2)
-	done := tr.Update(lines("Аня", "и ещё одно замечание"), 3)
+	tr.Update(lines("Участник А", "первая мысль про сроки"), 1)
+	tr.Update(lines("Участник А", "первая мысль про сроки", "Участник А", "и ещё одно"), 2)
+	done := tr.Update(lines("Участник А", "и ещё одно замечание"), 3)
 	if len(done) != 1 || done[0].Text != "первая мысль про сроки" {
 		t.Fatalf("ожидали закрытие первой реплики, получили %+v", done)
 	}
@@ -70,11 +70,11 @@ func TestFlushEmpty(t *testing.T) {
 // слова соседу — с дословной цитатой, будто всё проверено.
 func TestEmptyLineDoesNotDestroyUtterance(t *testing.T) {
 	var tr CaptionTracker
-	tr.Update(lines("Аня", "важное решение по релизу"), 1)
-	if got := tr.Update(lines("Аня", ""), 2); len(got) != 0 {
+	tr.Update(lines("Участник А", "важное решение по релизу"), 1)
+	if got := tr.Update(lines("Участник А", ""), 2); len(got) != 0 {
 		t.Fatalf("пустая строка закрыла реплику: %+v", got)
 	}
-	tr.Update(lines("Аня", "важное решение по релизу в пятницу"), 3)
+	tr.Update(lines("Участник А", "важное решение по релизу в пятницу"), 3)
 
 	done := tr.Flush(4)
 	if len(done) != 1 {
@@ -83,7 +83,7 @@ func TestEmptyLineDoesNotDestroyUtterance(t *testing.T) {
 	if done[0].Text != "важное решение по релизу в пятницу" {
 		t.Fatalf("текст реплики: %q", done[0].Text)
 	}
-	if done[0].Speaker != "Аня" {
+	if done[0].Speaker != "Участник А" {
 		t.Fatalf("имя потерялось: %q", done[0].Speaker)
 	}
 }
@@ -91,7 +91,7 @@ func TestEmptyLineDoesNotDestroyUtterance(t *testing.T) {
 // Новый говорящий, у которого ещё нет слов, не должен создавать пустую реплику.
 func TestEmptyLineFromNewSpeakerIsIgnored(t *testing.T) {
 	var tr CaptionTracker
-	tr.Update(lines("Боря", ""), 1)
+	tr.Update(lines("Участник Б", ""), 1)
 	if got := tr.Flush(2); len(got) != 0 {
 		t.Fatalf("создали реплику из пустоты: %+v", got)
 	}
@@ -103,8 +103,8 @@ func TestEmptyLineFromNewSpeakerIsIgnored(t *testing.T) {
 // сегменты whisper при выравнивании.
 func TestConsecutiveUtterancesFromSameSpeakerDoNotMerge(t *testing.T) {
 	var tr CaptionTracker
-	tr.Update(lines("Аня", "хорошо, договорились по срокам"), 10)
-	done := tr.Update(lines("Аня", "теперь давайте про бюджет"), 11.5)
+	tr.Update(lines("Участник А", "хорошо, договорились по срокам"), 10)
+	done := tr.Update(lines("Участник А", "теперь давайте про бюджет"), 11.5)
 	if len(done) != 1 || done[0].Text != "хорошо, договорились по срокам" {
 		t.Fatalf("первая реплика не закрылась: %+v", done)
 	}
@@ -149,21 +149,21 @@ func TestSameUtterance(t *testing.T) {
 // самого выхода из звонка, а при падении бота потерять всё.
 func TestLongMonologueIsWrittenInPieces(t *testing.T) {
 	var tr CaptionTracker
-	tr.Update(lines("Аня", "тени высохли на пол"), 10)
+	tr.Update(lines("Участник А", "тени высохли на пол"), 10)
 	// Речь идёт — текст растёт, отдавать пока нечего.
-	if got := tr.Update(lines("Аня", "тени высохли на пол и вся в них"), 12); len(got) != 0 {
+	if got := tr.Update(lines("Участник А", "тени высохли на пол и вся в них"), 12); len(got) != 0 {
 		t.Fatalf("отдали кусок посреди фразы: %+v", got)
 	}
 	// Пауза: тот же текст держится дольше idleFinalize.
-	if got := tr.Update(lines("Аня", "тени высохли на пол и вся в них"), 17); len(got) != 1 {
+	if got := tr.Update(lines("Участник А", "тени высохли на пол и вся в них"), 17); len(got) != 1 {
 		t.Fatalf("после паузы кусок не отдан: %+v", got)
 	} else if got[0].Text != "тени высохли на пол и вся в них" {
 		t.Fatalf("отдали %q", got[0].Text)
 	}
 
 	// Человек продолжил ту же строку — отдать надо только новое, без повтора.
-	tr.Update(lines("Аня", "тени высохли на пол и вся в них вечное если знаешь"), 20)
-	done := tr.Update(lines("Аня", "тени высохли на пол и вся в них вечное если знаешь"), 25)
+	tr.Update(lines("Участник А", "тени высохли на пол и вся в них вечное если знаешь"), 20)
+	done := tr.Update(lines("Участник А", "тени высохли на пол и вся в них вечное если знаешь"), 25)
 	if len(done) != 1 {
 		t.Fatalf("продолжение не отдано: %+v", done)
 	}
@@ -182,8 +182,8 @@ func TestLongMonologueIsWrittenInPieces(t *testing.T) {
 // Пауза короче порога — ещё не конец фразы.
 func TestShortPauseDoesNotSplit(t *testing.T) {
 	var tr CaptionTracker
-	tr.Update(lines("Аня", "давайте начнём"), 10)
-	if got := tr.Update(lines("Аня", "давайте начнём"), 12); len(got) != 0 {
+	tr.Update(lines("Участник А", "давайте начнём"), 10)
+	if got := tr.Update(lines("Участник А", "давайте начнём"), 12); len(got) != 0 {
 		t.Fatalf("разрезали фразу на двухсекундной паузе: %+v", got)
 	}
 }

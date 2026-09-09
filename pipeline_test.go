@@ -28,8 +28,8 @@ func TestPipelineWithoutClaude(t *testing.T) {
 
 	captions := filepath.Join(dir, "captions.jsonl")
 	mustWrite(t, captions, strings.Join([]string{
-		`{"speaker":"Аня","text":"давайте начнём","start":1.5,"end":5.5}`,
-		`{"speaker":"Боря","text":"я закончу миграцию","start":6.5,"end":11.0}`,
+		`{"speaker":"Участник А","text":"давайте начнём","start":1.5,"end":5.5}`,
+		`{"speaker":"Участник Б","text":"я закончу миграцию","start":6.5,"end":11.0}`,
 	}, "\n"))
 
 	cfg := defaultConfig()
@@ -49,7 +49,7 @@ func TestPipelineWithoutClaude(t *testing.T) {
 		StartedAt:    time.Date(2026, 9, 8, 11, 0, 0, 0, time.UTC),
 		AudioPath:    whisper,
 		CaptionsPath: captions,
-		Participants: []string{"Аня", "Боря"},
+		Participants: []string{"Участник А", "Участник Б"},
 		Status:       "recorded",
 	}
 	if err := st.CreateMeeting(m); err != nil {
@@ -69,7 +69,7 @@ func TestPipelineWithoutClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	segs = alignSpeakers(segs, utts)
-	if segs[0].Speaker != "Аня" || segs[1].Speaker != "Боря" {
+	if segs[0].Speaker != "Участник А" || segs[1].Speaker != "Участник Б" {
 		t.Fatalf("имена не легли на сегменты: %+v", segs)
 	}
 	// Реплика через десять минут после последних субтитров не должна получить
@@ -85,7 +85,7 @@ func TestPipelineWithoutClaude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(back) != 3 || back[1].Speaker != "Боря" {
+	if len(back) != 3 || back[1].Speaker != "Участник Б" {
 		t.Fatalf("из базы вернулось не то: %+v", back)
 	}
 
@@ -93,12 +93,12 @@ func TestPipelineWithoutClaude(t *testing.T) {
 		Title: "Планёрка по релизу",
 		TLDR:  []string{"Релиз сдвинули на пятницу"},
 		ActionItems: []ActionItem{
-			{Owner: "Боря", What: "закончить миграцию", Due: "2026-09-11",
+			{Owner: "Участник Б", What: "закончить миграцию", Due: "2026-09-11",
 				Quote: "я закончу миграцию к пятнице", At: 5},
 			{Owner: "не назначен", What: "обновить changelog", At: 120},
 		},
 		Decisions:     []Decision{{What: "релиз в пятницу", Why: "миграция не успевает раньше", At: 5}},
-		OpenQuestions: []OpenQuestion{{Question: "кто пишет changelog", WaitingOn: "Аня", At: 130}},
+		OpenQuestions: []OpenQuestion{{Question: "кто пишет changelog", WaitingOn: "Участник А", At: 130}},
 	}
 	if err := st.SaveFollowup(m.ID, "test", f); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestPipelineWithoutClaude(t *testing.T) {
 	html := renderHTML(m, f, segs)
 	for _, want := range []string{
 		"Планёрка по релизу", "2026-09-11", "закончить миграцию",
-		"«я закончу миграцию к пятнице»", "Аня: давайте начнём с релиза",
+		"«я закончу миграцию к пятнице»", "Участник А: давайте начнём с релиза",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в HTML нет %q", want)
@@ -118,7 +118,7 @@ func TestPipelineWithoutClaude(t *testing.T) {
 	}
 
 	slack := renderSlack(m, f, "https://docs.google.com/d/1")
-	if !strings.Contains(slack, "*Боря* — закончить миграцию") {
+	if !strings.Contains(slack, "*Участник Б* — закончить миграцию") {
 		t.Errorf("Slack без владельца задачи:\n%s", slack)
 	}
 	if !strings.Contains(slack, "https://docs.google.com/d/1") {
@@ -130,12 +130,12 @@ func TestPipelineWithoutClaude(t *testing.T) {
 	if strings.Contains(plain, "<") {
 		t.Errorf("в выводе для терминала осталась разметка:\n%s", plain)
 	}
-	if !strings.Contains(plain, "[00:00:05] Боря — закончить миграцию (2026-09-11)") {
+	if !strings.Contains(plain, "[00:00:05] Участник Б — закончить миграцию (2026-09-11)") {
 		t.Errorf("задача отрендерилась не так:\n%s", plain)
 	}
 
 	tg := renderTelegram(m, f, "https://docs.google.com/d/1")
-	if !strings.Contains(tg, "<b>Боря</b>") || !strings.Contains(tg, "срок не назван") {
+	if !strings.Contains(tg, "<b>Участник Б</b>") || !strings.Contains(tg, "срок не назван") {
 		t.Errorf("Telegram отрендерился не так:\n%s", tg)
 	}
 }
@@ -233,7 +233,7 @@ func TestConcurrentWritesFromTwoProcesses(t *testing.T) {
 	segs := make([]Segment, 300)
 	for i := range segs {
 		segs[i] = Segment{Start: float64(i), End: float64(i) + 1,
-			Speaker: "Аня", Text: "реплика номер такой-то, подлиннее для веса"}
+			Speaker: "Участник А", Text: "реплика номер такой-то, подлиннее для веса"}
 	}
 
 	errs := make(chan error, 8)
@@ -283,7 +283,7 @@ func TestConcurrentWritesDoNotFail(t *testing.T) {
 			segs := make([]Segment, 200)
 			for j := range segs {
 				segs[j] = Segment{Start: float64(j), End: float64(j) + 1,
-					Speaker: "Аня", Text: "реплика номер такой-то"}
+					Speaker: "Участник А", Text: "реплика номер такой-то"}
 			}
 			errs <- st.SaveSegments(id, segs)
 			_, err := st.MarkEventSeen("key-"+id, id)
@@ -325,7 +325,7 @@ func TestPruneKeepsTranscript(t *testing.T) {
 	if err := st.CreateMeeting(m); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SaveSegments(m.ID, []Segment{{Start: 0, End: 2, Speaker: "Аня", Text: "решили"}}); err != nil {
+	if err := st.SaveSegments(m.ID, []Segment{{Start: 0, End: 2, Speaker: "Участник А", Text: "решили"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.MarkEventSeen("stale", m.ID); err != nil {

@@ -77,7 +77,7 @@ func (s *calendarSource) service(ctx context.Context, subject string) (*calendar
 	if svc, ok := s.svcs[subject]; ok {
 		return svc, nil
 	}
-	opt, err := googleClient(ctx,
+	opt, err := googleClient(ctx, s.cfg,
 		credentialsFile(s.cfg.Calendar.CredentialsFile, s.cfg.GoogleDocs.CredentialsFile),
 		subject, calendar.CalendarReadonlyScope)
 	if err != nil {

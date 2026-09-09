@@ -42,17 +42,17 @@ var setupProfiles = []setupProfile{
 	{
 		Key: "personal", Name: "Для себя",
 		About:                 "Один человек, свои созвоны. Записи и расшифровки на своей машине.",
-		MaxConcurrentMeetings: 1, MaxConcurrentWhisper: 1, Effort: "medium",
+		MaxConcurrentMeetings: 1, MaxConcurrentWhisper: 1, Effort: "low",
 	},
 	{
 		Key: "team", Name: "Небольшая команда",
 		About:                 "Несколько созвонов в неделю, редко больше одного разом.",
-		MaxConcurrentMeetings: 2, MaxConcurrentWhisper: 1, Effort: "high",
+		MaxConcurrentMeetings: 2, MaxConcurrentWhisper: 1, Effort: "low",
 	},
 	{
 		Key: "big", Name: "Большая команда",
 		About:                 "Пять-шесть созвонов параллельно, отдельный сервер, GPU или Groq.",
-		MaxConcurrentMeetings: 6, MaxConcurrentWhisper: 2, Effort: "high",
+		MaxConcurrentMeetings: 6, MaxConcurrentWhisper: 2, Effort: "low",
 	},
 }
 
@@ -271,8 +271,8 @@ func (s *setupState) askClaude(ctx context.Context) error {
 		"claude-sonnet-5 " + dim("дешевле в два с половиной раза, для планёрок обычно хватает"),
 	}, 0)
 	s.cfg.Claude.Model = []string{"claude-opus-5", "claude-sonnet-5"}[i]
-	fmt.Println(dim("  Усилие: " + s.cfg.Claude.Effort + " — при нём основная часть счёта уходит на"))
-	fmt.Println(dim("  рассуждение модели. Если станет дорого, снижай его первым."))
+	fmt.Println(dim("  Усилие: " + s.cfg.Claude.Effort + ". Выше поднимать смысла нет: на замерах"))
+	fmt.Println(dim("  усилие не добавило ни одной задачи, только время и расход."))
 	return nil
 }
 
@@ -285,14 +285,12 @@ func (s *setupState) askSources(ctx context.Context) error {
 	if s.confirm("Ходить по календарям команды?", false) {
 		s.cfg.Calendar.Enabled = true
 		s.cfg.Calendar.Calendars = commaList(s.ask("Чьи календари, через запятую", ""))
-		s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
+		s.askGoogleAccess()
 	}
 	if s.confirm("Приходить, когда бота добавляют в звонок по почте?", false) {
 		s.cfg.Gmail.Enabled = true
 		s.cfg.Gmail.Account = s.ask("Почта аккаунта бота", "")
-		if s.cfg.GoogleDocs.CredentialsFile == "" {
-			s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
-		}
+		s.askGoogleAccess()
 	}
 	if s.confirm("Принимать ссылки в Telegram?", true) {
 		s.cfg.Telegram.Listen = true
@@ -330,11 +328,13 @@ func (s *setupState) askTargets(ctx context.Context) error {
 	}
 	if s.confirm("Публиковать в Google Docs?", false) {
 		s.cfg.GoogleDocs.Enabled = true
-		if s.cfg.GoogleDocs.CredentialsFile == "" {
-			s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
+		s.askGoogleAccess()
+		// От чужого имени умеет только ключ организации. По кнопке документы
+		// создаются от того, кто её нажал, и спрашивать тут нечего.
+		if s.cfg.GoogleDocs.CredentialsFile != "" {
+			s.cfg.GoogleDocs.Subject = s.ask("От чьего имени создавать документы", "")
 		}
-		s.cfg.GoogleDocs.Subject = s.ask("От чьего имени создавать документы", "")
-		s.cfg.GoogleDocs.FolderID = s.ask("ID папки Drive (пусто — корень)", "")
+		s.cfg.GoogleDocs.FolderID = s.ask("Папка на Drive: хвост адреса после /folders/ (пусто — корень)", "")
 		s.cfg.GoogleDocs.ProjectDocs = s.confirm("Вести отдельный документ на каждый проект?", true)
 	}
 	if s.confirm("Публиковать в Slack?", false) {
@@ -417,7 +417,7 @@ func (s *setupState) write(configPath string) error {
 	fmt.Println()
 	fmt.Println(dim("Проверить на живом созвоне, ничего больше не настраивая:"))
 	fmt.Printf("  steno join --no-followup --captions %s\n",
-		dim("https://meet.google.com/…"))
+		dim("https://meet.google.com/… или https://meet.jit.si/…"))
 	return nil
 }
 
@@ -498,6 +498,45 @@ func (s *setupState) choose(question string, options []string, def int) int {
 			return n - 1
 		}
 	}
+}
+
+// askGoogleAccess спрашивает, каким путём steno попадёт в Google, и спрашивает
+// один раз: календарь, почта и Google Docs ходят туда одним и тем же способом.
+//
+// Путей два, и выбор между ними не про удобство, а про то, чей это Google.
+// Ключ service-account читает календари всех сотрудников, никого не спрашивая,
+// — но за ним стоят проект в Google Cloud, три включённых API и админка домена.
+// У человека, который ставит steno себе, ничего этого нет и быть не может, и
+// упереться в это на первом же шаге значит не поставить steno вовсе.
+func (s *setupState) askGoogleAccess() {
+	if s.cfg.Google.ClientID != "" || s.cfg.GoogleDocs.CredentialsFile != "" {
+		return // уже спрашивали
+	}
+	i := s.choose("Как steno попадёт в Google?", []string{
+		"По кнопке в панели " +
+			dim("человек соглашается один раз; steno видит ровно то, что видит он"),
+		"Ключом организации " +
+			dim("файл service-account: видит календари всех, нужен свой домен и админка"),
+	}, 0)
+	if i == 1 {
+		s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
+		return
+	}
+	// Адрес страницы, а не путь по меню: меню Google переставляет пункты
+	// чаще, чем меняет адреса, и человек, который ищет «Credentials» глазами,
+	// натыкается на переименованный раздел.
+	fmt.Println(dim("  Открой https://console.cloud.google.com/apis/credentials"))
+	fmt.Println(dim("  → Create credentials → OAuth client ID → тип Desktop app."))
+	fmt.Println(dim("  Google покажет две строки — скопируй их сюда."))
+	s.cfg.Google.ClientID = s.ask("Client ID", "")
+	if sec := s.askSecret("Client secret", ""); sec != "" {
+		s.env["GOOGLE_CLIENT_SECRET"] = sec
+	}
+	if s.cfg.Google.ClientID == "" {
+		fmt.Println(warn("без этого кнопка в панели не появится"))
+		return
+	}
+	fmt.Println(ok("осталось нажать «Подключить Google» в настройках панели"))
 }
 
 func (s *setupState) askGoogleKey() string {

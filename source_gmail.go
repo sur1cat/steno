@@ -64,7 +64,7 @@ func (s *gmailSource) service(ctx context.Context) (*gmail.Service, error) {
 	if s.svc != nil {
 		return s.svc, nil
 	}
-	opt, err := googleClient(ctx,
+	opt, err := googleClient(ctx, s.cfg,
 		credentialsFile(s.cfg.Gmail.CredentialsFile, s.cfg.GoogleDocs.CredentialsFile),
 		s.cfg.Gmail.Account, gmail.GmailReadonlyScope)
 	if err != nil {
@@ -116,6 +116,12 @@ func (s *gmailSource) consider(ctx context.Context, key string, msg *gmail.Messa
 	body := msg.Snippet + "\n" + messageText(msg.Payload)
 	meetURL := findMeetURL(body)
 	if meetURL == "" {
+		// Письмо со ссылкой на неподдержанную площадку не должно уходить в
+		// тишину: снаружи это выглядит как «бот проигнорировал приглашение»,
+		// и разбираются с этим уже на созвоне, куда он не пришёл.
+		if hint := linkHint(body); hint != "" {
+			s.log.Printf("почта: «%s» — %s", orDash(subject), hint)
+		}
 		s.skip(key)
 		return
 	}

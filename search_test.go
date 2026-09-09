@@ -18,9 +18,9 @@ func TestSearchAttributesToRightSpeaker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.SaveSegments("s1", []Segment{
-		{Start: 10, End: 14, Speaker: "Аня", Text: "какие есть возражения"},
-		{Start: 20, End: 26, Speaker: "Боря", Text: "я закончу миграцию к четвергу"},
-		{Start: 30, End: 34, Speaker: "Вика", Text: "тогда письмо перепишу завтра"},
+		{Start: 10, End: 14, Speaker: "Участник А", Text: "какие есть возражения"},
+		{Start: 20, End: 26, Speaker: "Участник Б", Text: "я закончу миграцию к четвергу"},
+		{Start: 30, End: 34, Speaker: "Участник В", Text: "тогда письмо перепишу завтра"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestSearchAttributesToRightSpeaker(t *testing.T) {
 			continue
 		}
 		found = true
-		if h.Speaker != "Боря" {
+		if h.Speaker != "Участник Б" {
 			t.Errorf("слова Бори приписаны %q", h.Speaker)
 		}
 		if h.At != 20 {

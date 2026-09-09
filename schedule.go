@@ -238,7 +238,14 @@ func (s *schedulePoller) entry(calID string, ev *calendar.Event) (ScheduleEntry,
 	e.MeetURL = meetLink(ev)
 	switch {
 	case e.MeetURL == "":
-		e.Skip = "нет ссылки на Meet"
+		// Отдельно называем узнанную, но неподдержанную площадку: «нет ссылки»
+		// и «встреча в Zoom» — это разные причины не пойти, и вторая видна в
+		// расписании как повод позвать людей в другую комнату.
+		if hint := linkHint(eventLinkText(ev)); hint != "" {
+			e.Skip = hint
+		} else {
+			e.Skip = "нет ссылки на созвон"
+		}
 	case skipMarked(ev, s.cfg.Calendar.SkipMarkers):
 		e.Skip = "стоит метка «не записывать»"
 	case len(e.Attendees) < s.cfg.Calendar.MinAttendees:
@@ -258,12 +265,25 @@ func (s *schedulePoller) entry(calID string, ev *calendar.Event) (ScheduleEntry,
 
 // --- приглашение из панели --------------------------------------------------
 
+// eventLinkText — всё, где у события календаря может лежать ссылка на созвон.
+// Нужен, только чтобы объяснить человеку, почему бот не пойдёт: сам поход
+// решается строгой проверкой в meetLink.
+func eventLinkText(ev *calendar.Event) string {
+	parts := []string{ev.HangoutLink, ev.Location, ev.Description}
+	if ev.ConferenceData != nil {
+		for _, ep := range ev.ConferenceData.EntryPoints {
+			parts = append(parts, ep.Uri)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 // inviteToCall заводит бота на созвон по ссылке. Тот же путь, что у Telegram и
 // HTTP, только повод — кнопка в панели.
 func inviteToCall(ctx context.Context, d *Dispatcher, meetURL, title, why string) (string, StartResult, error) {
 	u := findMeetURL(meetURL)
 	if u == "" {
-		return "", StartError, fmt.Errorf("это не похоже на ссылку Google Meet")
+		return "", StartError, meetingLinkError(meetURL)
 	}
 	m := &Meeting{
 		ID:        newID(time.Now()),

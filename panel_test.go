@@ -9,6 +9,10 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -44,13 +48,13 @@ func seedOne(t *testing.T, st *Store) {
 	m := &Meeting{ID: "m1", Title: "Планёрка по релизу",
 		MeetURL:   "https://meet.google.com/abc-defg-hij",
 		StartedAt: time.Now().Add(-2 * time.Hour), Status: "published",
-		Participants: []string{"Аня", "Боря"}}
+		Participants: []string{"Участник А", "Участник Б"}}
 	if err := st.CreateMeeting(m); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SaveSegments("m1", []Segment{
-		{Start: 10, End: 15, Speaker: "Аня", Text: "что там с миграцией схемы"},
-		{Start: 20, End: 28, Speaker: "Боря", Text: "закончу к четвергу, прогоню на стейджинге"},
+		{Start: 10, End: 15, Speaker: "Участник А", Text: "что там с миграцией схемы"},
+		{Start: 20, End: 28, Speaker: "Участник Б", Text: "закончу к четвергу, прогоню на стейджинге"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +62,7 @@ func seedOne(t *testing.T, st *Store) {
 		Title: "Релиз сдвинули",
 		TLDR:  []string{"Релиз переносится на пятницу"},
 		ActionItems: []ActionItem{
-			{Owner: "Боря", What: "закончить миграцию", Due: "2020-01-01", At: 20},
+			{Owner: "Участник Б", What: "закончить миграцию", Due: "2020-01-01", At: 20},
 			{Owner: "не назначен", What: "решить про дежурство", At: 30},
 		},
 	}); err != nil {
@@ -95,6 +99,25 @@ func (a *apiClient) do(method, path string, body any) (int, []byte) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, b
+}
+
+// noRedirect возвращает код и адрес перенаправления, не ходя по нему: у ручек,
+// которые отвечают редиректом, проверять надо именно его.
+func (a *apiClient) noRedirect(method, path string) (int, string) {
+	a.t.Helper()
+	c := *a.c
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	req, err := http.NewRequest(method, a.url+path, nil)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, resp.Header.Get("Location")
 }
 
 // get разбирает ответ в v и валит тест на любом коде, кроме 200: страницы,
@@ -240,7 +263,7 @@ func TestPanelSearch(t *testing.T) {
 	}
 	found, speaker := false, false
 	for _, h := range res.Hits {
-		if h.Speaker == "Аня" {
+		if h.Speaker == "Участник А" {
 			speaker = true
 		}
 		for _, p := range h.Parts {
@@ -285,8 +308,8 @@ func TestPanelTasks(t *testing.T) {
 			Owner string `json:"owner"`
 		} `json:"tasks"`
 	}
-	a.get("/api/tasks?owner="+"%D0%91%D0%BE%D1%80%D1%8F", &mine) // Боря
-	if len(mine.Tasks) != 1 || mine.Tasks[0].Owner != "Боря" {
+	a.get("/api/tasks?owner="+"%D0%A3%D1%87%D0%B0%D1%81%D1%82%D0%BD%D0%B8%D0%BA%20%D0%91", &mine) // Участник Б
+	if len(mine.Tasks) != 1 || mine.Tasks[0].Owner != "Участник Б" {
 		t.Errorf("фильтр по человеку: %+v", mine.Tasks)
 	}
 }
@@ -402,21 +425,80 @@ func TestPanelCloseAndReopenItem(t *testing.T) {
 
 // --- настройки --------------------------------------------------------------
 
-// Панель не должна показывать значения секретов — только факт, задан ли.
-func TestPanelSettingsHidesSecretValues(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-очень-секретный-ключ")
-	srv, _, _ := testPanel(t)
+// Секретов в панели нет вовсе — ни значений, ни имён переменных, в которых они
+// лежат. Проверяем по настоящему телу ответа, а не по типам: поле легко вернуть
+// одной строчкой в map[string]any, и никакая структура этого не заметит.
+//
+// Имя переменной — не безобидная мелочь. Человеку из отдела продаж оно не
+// говорит ничего и починить он по нему ничего не может, зато любому, кто
+// заглянул через плечо, оно показывает, что и где искать.
+func TestPanelSettingsHasNoSecrets(t *testing.T) {
+	for env, val := range map[string]string{
+		"ANTHROPIC_API_KEY":    "sk-ant-очень-секретный-ключ",
+		"SLACK_BOT_TOKEN":      "xoxb-секрет",
+		"SLACK_SIGNING_SECRET": "подпись-секрет",
+		"TELEGRAM_BOT_TOKEN":   "телеграм-секрет",
+		"STENO_HTTP_TOKEN":     "http-секрет",
+		"GOOGLE_CLIENT_SECRET": "google-секрет",
+	} {
+		t.Setenv(env, val)
+	}
+	srv, st, p := testPanel(t)
 	a := login(t, srv, "тайна")
+
+	// Каналы едут в том же ответе, поэтому проверяем и их: перенесём настройки
+	// из конфига, чтобы в ответе лежали не пустые заготовки.
+	if _, err := importChannels(st, p.cfg); err != nil {
+		t.Fatal(err)
+	}
+	// А это — установка, обновившаяся со старой версии: в базе лежат значения
+	// полей, которых в форме больше нет. Отдавать их панели нельзя ровно тем,
+	// что человек их там увидит.
+	if err := st.SaveChannel("google_docs", true, map[string]string{
+		"folder_id":        "1AbCпапка",
+		"credentials_file": "/секреты/ключ-организации.json",
+		"subject":          "notes@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	_, raw := a.do("GET", "/api/settings", nil)
 	body := string(raw)
-	if strings.Contains(body, "sk-ant-очень-секретный-ключ") {
-		t.Fatal("панель отдала значение секрета")
+	for _, secret := range []string{"sk-ant-очень-секретный-ключ", "xoxb-секрет",
+		"подпись-секрет", "телеграм-секрет", "http-секрет", "google-секрет", "тайна"} {
+		if strings.Contains(body, secret) {
+			t.Errorf("панель отдала значение секрета %q", secret)
+		}
 	}
-	if !strings.Contains(body, "ANTHROPIC_API_KEY") || !strings.Contains(body, `"set":true`) {
-		t.Error("панель не показала, что ключ настроен")
+	for _, env := range []string{"ANTHROPIC_API_KEY", "STENO_PANEL_PASSWORD",
+		"SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "TELEGRAM_BOT_TOKEN",
+		"STENO_HTTP_TOKEN", "GOOGLE_CLIENT_SECRET"} {
+		if strings.Contains(body, env) {
+			t.Errorf("панель отдала имя переменной окружения %s", env)
+		}
+	}
+	// И ловушка на будущее: любое ИМЯ_ВОТ_ТАКОГО_ВИДА в ответе — это почти
+	// наверняка вернувшаяся переменная окружения, даже если её ещё не завели.
+	if m := envNameRe.FindString(body); m != "" {
+		t.Errorf("в ответе завелось что-то похожее на переменную окружения: %s", m)
+	}
+	// Убранные из формы поля не должны доезжать до панели даже из базы.
+	for _, hidden := range []string{"/секреты/ключ-организации.json", "notes@example.com",
+		"credentials_file", "subject"} {
+		if strings.Contains(body, hidden) {
+			t.Errorf("панель отдала убранное поле %q", hidden)
+		}
+	}
+	if !strings.Contains(body, "1AbCпапка") {
+		t.Error("вместе с убранными полями пропали и настоящие")
+	}
+	// Кнопку «Подключить Google» панель рисует по полю канала, а не по секрету.
+	if !strings.Contains(body, `"kind":"google"`) {
+		t.Error("панели нечем нарисовать подключение к Google")
 	}
 }
+
+var envNameRe = regexp.MustCompile(`[A-Z][A-Z0-9]*(_[A-Z0-9]+)+`)
 
 // Каналы живут в базе и правятся в панели. Проверяем всю дорогу: перенос из
 // конфига, правку через API и то, что сервис берёт настройку из базы.
@@ -486,6 +568,175 @@ func TestPanelChannels(t *testing.T) {
 	}
 }
 
+// Поля, которых в форме больше нет, панель не показывает — но и не теряет. У
+// компании в них лежит путь к ключу организации: потерять его, правя соседнюю
+// галочку, значит остаться без Google после первой же правки в панели.
+func TestPanelKeepsHiddenChannelFields(t *testing.T) {
+	srv, st, p := testPanel(t)
+	a := login(t, srv, "тайна")
+
+	p.cfg.GoogleDocs.Enabled = true
+	p.cfg.GoogleDocs.CredentialsFile = "/секреты/ключ-организации.json"
+	p.cfg.GoogleDocs.Subject = "notes@example.com"
+	if _, err := importChannels(st, p.cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Так это лежит у тех, кто задал путь через панель прошлой версии.
+	if err := st.SaveChannel("google_docs", true, map[string]string{
+		"folder_id":        "1AbCпапка",
+		"credentials_file": "/секреты/другой-ключ.json",
+		"subject":          "notes@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Человек меняет папку — единственное, что он в этой форме видит.
+	if code, body := a.do("POST", "/api/channels/google_docs", map[string]any{
+		"enabled": true,
+		"values":  map[string]string{"folder_id": "1XyZновая", "project_docs": "1"},
+	}); code != 200 {
+		t.Fatalf("сохранение канала: %d %s", code, body)
+	}
+
+	live := activeChannels(st, p.cfg)
+	if live.GoogleDocs.FolderID != "1XyZновая" {
+		t.Errorf("папка не сохранилась: %q", live.GoogleDocs.FolderID)
+	}
+	if live.GoogleDocs.CredentialsFile != "/секреты/другой-ключ.json" {
+		t.Errorf("ключ организации потерян при правке соседнего поля: %q",
+			live.GoogleDocs.CredentialsFile)
+	}
+	if live.GoogleDocs.Subject != "notes@example.com" {
+		t.Errorf("«от чьего имени» потеряно: %q", live.GoogleDocs.Subject)
+	}
+}
+
+// --- выбор папки --------------------------------------------------------------
+
+// fakeHome собирает домашний каталог, в котором есть всё, что панель обязана
+// различать: репозиторий, скрытая папка, скрытый репозиторий, файл, ссылка
+// наружу и папка, куда не пускают.
+func fakeHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	for _, d := range []string{"work", "work/payments", "work/payments/.git",
+		".dotfiles", ".dotfiles/.git", ".cache"} {
+		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, "work", "заметки.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc", filepath.Join(home, "наружу")); err != nil {
+		t.Fatal(err)
+	}
+	closed := filepath.Join(home, "закрытая")
+	if err := os.Mkdir(closed, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	// Иначе уборка после теста споткнётся о собственную же папку.
+	t.Cleanup(func() { os.Chmod(closed, 0o755) })
+	t.Setenv("HOME", home)
+	real, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+type browseAnswer struct {
+	Path   string `json:"path"`
+	Parent string `json:"parent"`
+	Dirs   []struct {
+		Name   string `json:"name"`
+		Path   string `json:"path"`
+		IsRepo bool   `json:"isRepo"`
+	} `json:"dirs"`
+}
+
+func (b browseAnswer) names() []string {
+	var out []string
+	for _, d := range b.Dirs {
+		out = append(out, d.Name)
+	}
+	return out
+}
+
+func TestPanelBrowse(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("под root права на каталоги ничего не значат")
+	}
+	home := fakeHome(t)
+	srv, _, _ := testPanel(t)
+	a := login(t, srv, "тайна")
+
+	var top browseAnswer
+	a.get("/api/browse", &top)
+	if top.Path != home {
+		t.Errorf("пустой путь привёл не домой: %q, ждали %q", top.Path, home)
+	}
+	if top.Parent != "" {
+		t.Errorf("выше дома есть куда идти: %q", top.Parent)
+	}
+	got := strings.Join(top.names(), " ")
+	if !strings.Contains(got, "work") {
+		t.Errorf("обычная папка не показана: %v", top.names())
+	}
+	// Скрытая папка, которая сама и есть репозиторий, — то, что человек ищет.
+	if !strings.Contains(got, ".dotfiles") {
+		t.Errorf("скрытый репозиторий не показан: %v", top.names())
+	}
+	for _, hidden := range []string{".cache", "закрытая", "наружу", "заметки.txt"} {
+		if strings.Contains(got, hidden) {
+			t.Errorf("показано лишнее (%s): %v", hidden, top.names())
+		}
+	}
+
+	var work browseAnswer
+	a.get("/api/browse?path="+url.QueryEscape(filepath.Join(home, "work")), &work)
+	if work.Parent != home {
+		t.Errorf("наверх ведёт не домой: %q", work.Parent)
+	}
+	if len(work.Dirs) != 1 || work.Dirs[0].Name != "payments" || !work.Dirs[0].IsRepo {
+		t.Fatalf("репозиторий не отмечен: %+v", work.Dirs)
+	}
+	if work.Dirs[0].Path != filepath.Join(home, "work", "payments") {
+		t.Errorf("путь папки: %q", work.Dirs[0].Path)
+	}
+}
+
+// Наружу из дома — никак. Панель может стоять и на сервере компании, и обзор
+// всей файловой системы там означает /etc через браузер.
+func TestPanelBrowseStaysHome(t *testing.T) {
+	home := fakeHome(t)
+	srv, _, _ := testPanel(t)
+	a := login(t, srv, "тайна")
+
+	for _, path := range []string{
+		"/etc",
+		"..",
+		"../../..",
+		filepath.Join(home, ".."),
+		filepath.Join(home, "work", "..", "..", "etc"),
+		// Ссылка наружу выглядит как обычная папка внутри дома и прошла бы
+		// любую проверку по строке.
+		filepath.Join(home, "наружу"),
+		filepath.Dir(home),
+	} {
+		code, body := a.do("GET", "/api/browse?path="+url.QueryEscape(path), nil)
+		if code != 400 {
+			t.Errorf("выпустило наружу по пути %q: код %d, тело %s", path, code, body)
+		}
+	}
+	// А внутри дома всё по-прежнему открывается, в том числе «..» обратно в дом.
+	var back browseAnswer
+	a.get("/api/browse?path="+url.QueryEscape(filepath.Join(home, "work", "..")), &back)
+	if back.Path != home {
+		t.Errorf("путь внутри дома не открылся: %q", back.Path)
+	}
+}
+
 // --- расписание и приглашение -----------------------------------------------
 
 func TestPanelSchedule(t *testing.T) {
@@ -494,15 +745,15 @@ func TestPanelSchedule(t *testing.T) {
 
 	soon := time.Now().Add(2 * time.Hour)
 	if err := st.SaveScheduled(ScheduleEntry{
-		Key: "k1", CalendarID: "ivan@example.com", Title: "Планёрка",
+		Key: "k1", CalendarID: "user@example.com", Title: "Планёрка",
 		MeetURL: "https://meet.google.com/abc-defg-hij", StartsAt: soon,
-		Attendees: []string{"Иван", "Аня"},
+		Attendees: []string{"Участник Б", "Участник А"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SaveScheduled(ScheduleEntry{
 		Key: "k2", Title: "Один на один", StartsAt: soon.Add(time.Hour),
-		Attendees: []string{"Иван"}, Skip: "участников 1, нужно хотя бы 2",
+		Attendees: []string{"Участник Б"}, Skip: "участников 1, нужно хотя бы 2",
 	}); err != nil {
 		t.Fatal(err)
 	}

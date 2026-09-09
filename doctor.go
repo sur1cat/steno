@@ -41,8 +41,10 @@ func cmdDoctor(args []string) error {
 	var cs []check
 	cs = append(cs, checkData(cfg))
 	cs = append(cs, checkBot(cfg))
+	cs = append(cs, checkPlatforms(cfg))
 	cs = append(cs, checkTranscribe(cfg))
 	cs = append(cs, checkClaude(cfg))
+	cs = append(cs, checkGoogle(cfg))
 	cs = append(cs, checkSources(cfg)...)
 	cs = append(cs, checkTargets(cfg)...)
 	cs = append(cs, checkPanel(cfg))
@@ -121,19 +123,19 @@ func checkBot(cfg *Config) check {
 func checkTranscribe(cfg *Config) check {
 	if cfg.Transcribe.Source == "captions" {
 		return check{"расшифровка", "ok",
-			"из субтитров Meet — ставить ничего не нужно",
+			"из субтитров площадки — ставить ничего не нужно",
 			[]string{"качество ниже whisper; для продакшена смени transcribe.source на command"}, false}
 	}
 	if len(cfg.Transcribe.Cmd) == 0 {
 		return check{"расшифровка", "fail", "не задан transcribe.cmd",
-			[]string{`→ или поставь "source": "captions", чтобы взять текст из субтитров Meet`}, false}
+			[]string{`→ или поставь "source": "captions", чтобы взять текст из субтитров площадки`}, false}
 	}
 	bin := cfg.Transcribe.Cmd[0]
 	if _, err := exec.LookPath(bin); err != nil {
 		return check{"расшифровка", "fail", "не запускается " + bin,
 			[]string{
 				"→ " + err.Error(),
-				`→ или поставь "source": "captions" — текст возьмётся из субтитров Meet`,
+				`→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`,
 			}, false}
 	}
 	// Найти файл мало. Адаптеру нужна модель на полгигабайта, и без неё он
@@ -149,7 +151,7 @@ func checkTranscribe(cfg *Config) check {
 		for _, l := range lastLines(err.Error(), 5) {
 			fix = append(fix, "→ "+l)
 		}
-		fix = append(fix, `→ или поставь "source": "captions" — текст возьмётся из субтитров Meet`)
+		fix = append(fix, `→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`)
 		return check{"расшифровка", "fail", "адаптер не отработал", fix, false}
 	}
 	return check{"расшифровка", "ok", out, nil, false}
@@ -249,17 +251,83 @@ func checkClaude(cfg *Config) check {
 		cfg.Claude.Model + ", effort " + orDash(cfg.Claude.Effort) + " · " + how, nil, false}
 }
 
+// checkGoogle — одной строкой: чем steno входит в Google и от чьего имени.
+// Дальше по списку календарь, почта и Docs повторяют это каждый по-своему, но
+// причина у них общая, и искать её в трёх строках не надо.
+func checkGoogle(cfg *Config) check {
+	key := credentialsFile(cfg.Calendar.CredentialsFile, cfg.GoogleDocs.CredentialsFile)
+	if t, err := loadGoogleToken(cfg); err == nil {
+		note := "подключён как " + t.Account
+		var fix []string
+		if missing := missingScopes(t.Scopes, googleScopes); len(missing) > 0 {
+			note += "; доступ выдан не весь"
+			fix = append(fix, "→ не хватает доступа к "+strings.Join(humanScopes(missing), " и "))
+			fix = append(fix, "→ подключи ещё раз в настройках панели")
+		}
+		if key != "" {
+			fix = append(fix, "→ ключ организации при этом не используется: "+
+				"подключённый аккаунт главнее")
+		}
+		return check{"Google", "ok", note, fix, false}
+	}
+	if key != "" {
+		return check{"Google", "ok", "доступ ключом организации", nil, false}
+	}
+	if !cfg.Calendar.Enabled && !cfg.Gmail.Enabled && !cfg.GoogleDocs.Enabled {
+		return check{"Google", "off", "не подключён, и никому не нужен", nil, false}
+	}
+	fix := []string{"→ панель, «Настройки» → «Подключить Google»"}
+	if !googleOAuthReady(cfg) {
+		fix = append(fix, "→ кнопки там пока нет: `steno setup` спросит client id и секрет")
+	}
+	return check{"Google", "fail", "не подключён", fix, false}
+}
+
+// checkGoogleAccess — доступ для одного канала: сначала подключённый аккаунт,
+// потом ключ организации. Проверять только ключ нельзя с тех пор, как появилась
+// кнопка: doctor рапортовал бы «нет ключа» на рабочей установке.
+//
+// subject — от чьего имени канал ходит. По кнопке steno умеет работать только
+// от подключившегося, и несовпадение здесь значит, что канал не заработает
+// вовсе: сказать об этом надо здесь, а не молчать до первого созвона.
+func checkGoogleAccess(cfg *Config, name, keyFile, subject string) check {
+	if t, err := loadGoogleToken(cfg); err == nil {
+		if subject != "" && !strings.EqualFold(subject, t.Account) {
+			return check{name, "fail", "нужен доступ от имени " + subject, []string{
+				"→ steno подключён как " + t.Account + " и работает только от него",
+				"→ либо поправь адрес, либо переходи на ключ организации",
+			}, false}
+		}
+		return check{name, "ok", "от имени " + t.Account, nil, false}
+	}
+	return checkGoogleKey(name, keyFile)
+}
+
 func checkSources(cfg *Config) []check {
 	var cs []check
 	if cfg.Calendar.Enabled {
-		c := checkGoogleKey("календарь",
-			credentialsFile(cfg.Calendar.CredentialsFile, cfg.GoogleDocs.CredentialsFile))
+		c := checkGoogleAccess(cfg, "календарь",
+			credentialsFile(cfg.Calendar.CredentialsFile, cfg.GoogleDocs.CredentialsFile), "")
 		if c.state == "ok" {
-			if len(cfg.Calendar.Calendars) == 0 {
+			switch {
+			case len(cfg.Calendar.Calendars) == 0:
 				c = check{"календарь", "fail", "не указан ни один календарь",
-					[]string{"→ calendar.calendars: [\"ivan@example.com\", ...]"}, false}
-			} else {
-				c.note = fmt.Sprintf("%d календарей, ключ читается", len(cfg.Calendar.Calendars))
+					[]string{"→ панель, «Каналы» → «Календарь» → «Чьи календари смотреть»"}, false}
+			default:
+				c.note = fmt.Sprintf("%d календарей, %s", len(cfg.Calendar.Calendars), c.note)
+				// По кнопке steno видит только свой календарь. Чужой в списке
+				// будет молча пропускаться на каждом опросе — и человек узнает
+				// об этом, когда бот не придёт на чужую встречу.
+				if t, err := loadGoogleToken(cfg); err == nil {
+					if foreign := notMine(cfg.Calendar.Calendars, t.Account); len(foreign) > 0 {
+						c.state = "fail"
+						c.note = "чужие календари так не открыть: " + strings.Join(foreign, ", ")
+						c.fix = []string{
+							"→ steno подключён как " + t.Account + " и видит только его встречи",
+							"→ либо убери чужие из списка, либо переходи на ключ организации",
+						}
+					}
+				}
 			}
 		}
 		cs = append(cs, c)
@@ -268,10 +336,12 @@ func checkSources(cfg *Config) []check {
 	}
 
 	if cfg.Gmail.Enabled {
-		c := checkGoogleKey("почта бота",
-			credentialsFile(cfg.Gmail.CredentialsFile, cfg.GoogleDocs.CredentialsFile))
+		c := checkGoogleAccess(cfg, "почта бота",
+			credentialsFile(cfg.Gmail.CredentialsFile, cfg.GoogleDocs.CredentialsFile),
+			cfg.Gmail.Account)
 		if c.state == "ok" && cfg.Gmail.Account == "" {
-			c = check{"почта бота", "fail", "не указан gmail.account", nil, false}
+			c = check{"почта бота", "fail", "не указан ящик бота",
+				[]string{"→ панель, «Каналы» → «Почта бота» → «Ящик бота»"}, false}
 		}
 		cs = append(cs, c)
 	} else {
@@ -306,7 +376,8 @@ func checkSources(cfg *Config) []check {
 func checkTargets(cfg *Config) []check {
 	var cs []check
 	if cfg.GoogleDocs.Enabled {
-		c := checkGoogleKey("Google Docs", cfg.GoogleDocs.CredentialsFile)
+		c := checkGoogleAccess(cfg, "Google Docs", cfg.GoogleDocs.CredentialsFile,
+			cfg.GoogleDocs.Subject)
 		if c.state == "ok" && cfg.GoogleDocs.FolderID == "" {
 			c.note += "; папка не указана — документы лягут в корень Drive"
 		}
@@ -361,7 +432,10 @@ func checkEnv(name, env string) check {
 // Самая частая ошибка здесь — скачать не тот JSON из консоли Google.
 func checkGoogleKey(name, path string) check {
 	if path == "" {
-		return check{name, "fail", "не указан файл ключа service-account", nil, false}
+		return check{name, "fail", "нет доступа в Google", []string{
+			"→ панель, «Настройки» → «Подключить Google»",
+			"→ либо ключ организации в google_docs.credentials_file",
+		}, false}
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -381,6 +455,20 @@ func checkGoogleKey(name, path string) check {
 	return check{name, "ok", key.ClientEmail, nil, false}
 }
 
+// notMine — чьи календари не принадлежат подключённому аккаунту. "primary" —
+// свой по определению, как его ни зови.
+func notMine(calendars []string, account string) []string {
+	var out []string
+	for _, c := range calendars {
+		c = strings.TrimSpace(c)
+		if c == "" || c == "primary" || strings.EqualFold(c, account) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 func removeString(list []string, s string) []string {
 	out := list[:0]
 	for _, v := range list {
@@ -389,4 +477,28 @@ func removeString(list []string, s string) []string {
 		}
 	}
 	return out
+}
+
+// checkPlatforms говорит, с какими площадками бот работает и чего ждать от
+// субтитров. Субтитры — единственный источник имён говорящих, и узнавать об их
+// отсутствии на живом созвоне поздно.
+func checkPlatforms(cfg *Config) check {
+	var names, noCaptions []string
+	for _, p := range allPlatforms() {
+		names = append(names, p.Title())
+		if p.Captions() != CaptionsBuiltIn {
+			noCaptions = append(noCaptions, p.Title())
+		}
+	}
+	note := "умею: " + strings.Join(names, ", ")
+	if len(noCaptions) == 0 {
+		return check{"площадки", "ok", note, nil, false}
+	}
+	return check{"площадки", "ok", note, []string{
+		"→ у " + strings.Join(noCaptions, ", ") + " субтитры есть не всегда: на публичном " +
+			"meet.jit.si они выключены на сервере (transcription.enabled=false)",
+		"→ без них расшифровка идёт по звуку и без имён говорящих; что вышло на " +
+			"самом деле, бот пишет строкой «субтитры: …» и полем captions в result.json",
+		"→ свой сервер Jitsi добавляется в selectors.json, ключ jitsi.hosts",
+	}, false}
 }

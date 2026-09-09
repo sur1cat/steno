@@ -17,8 +17,8 @@ func gitRepo(t *testing.T) (string, func(...string)) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Боря", "GIT_AUTHOR_EMAIL=b@t",
-			"GIT_COMMITTER_NAME=Боря", "GIT_COMMITTER_EMAIL=b@t")
+			"GIT_AUTHOR_NAME=Участник Б", "GIT_AUTHOR_EMAIL=b@t",
+			"GIT_COMMITTER_NAME=Участник Б", "GIT_COMMITTER_EMAIL=b@t")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %s", args, out)
 		}
@@ -78,7 +78,7 @@ func TestSyncSeesOnlyNewCommits(t *testing.T) {
 		!strings.Contains(subjects, "вебхуки") {
 		t.Fatalf("темы коммитов: %q", subjects)
 	}
-	if res.Commits[0].Author != "Боря" {
+	if res.Commits[0].Author != "Участник Б" {
 		t.Errorf("автор потерялся: %q", res.Commits[0].Author)
 	}
 	if len(res.Commits[0].Short()) != 8 {
@@ -134,8 +134,8 @@ func TestSyncOnNonRepoIsAnError(t *testing.T) {
 func TestSyncDigestText(t *testing.T) {
 	d := syncDigest{
 		Project: "Платежи", Commits: 12, StillOpen: 3,
-		Closed: []string{"закончить миграцию — Боря\n    коммит a1b2c3d4 «миграция схемы»\n    коммит делает ровно это"},
-		Maybe:  []string{"проверить откат — Дима\n    коммит e5f6a7b8 «начал проверку»\n    работа начата, но не закончена"},
+		Closed: []string{"закончить миграцию — Участник Б\n    коммит a1b2c3d4 «миграция схемы»\n    коммит делает ровно это"},
+		Maybe:  []string{"проверить откат — Участник Г\n    коммит e5f6a7b8 «начал проверку»\n    работа начата, но не закончена"},
 	}
 	out := d.text()
 	for _, want := range []string{

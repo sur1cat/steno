@@ -154,7 +154,7 @@ func TestGmailSenderAllowed(t *testing.T) {
 	cfg.Gmail.Account = "steno@company.com"
 	s := &gmailSource{cfg: cfg}
 
-	ok := []string{"Аня <anya@company.com>", "anya@company.com", "Аня <ANYA@Company.COM>"}
+	ok := []string{"Участник А <user@company.com>", "user@company.com", "Участник А <USER@Company.COM>"}
 	for _, from := range ok {
 		if !s.senderAllowed(from) {
 			t.Errorf("свой домен не прошёл: %q", from)
@@ -176,10 +176,10 @@ func TestGmailSenderAllowed(t *testing.T) {
 	}
 
 	cfg.Gmail.AllowedDomains = []string{"company.com", "partner.com"}
-	if !s.senderAllowed("bob@partner.com") {
+	if !s.senderAllowed("user@partner.com") {
 		t.Error("явно разрешённый домен не прошёл")
 	}
-	if s.senderAllowed("bob@partner.com.evil.net") {
+	if s.senderAllowed("user@partner.com.evil.net") {
 		t.Error("двойник разрешённого домена прошёл")
 	}
 }

@@ -14,7 +14,7 @@ calendar: watching 12 calendars, polling every 2m0s
 mail: watching invitations to steno@company.com
 telegram: listening for meeting links
 panel: listening on :8080
-joining "Release planning" (reason: calendar, anna@company.com)
+joining "Release planning" (reason: calendar, owner@company.com)
 bot: muted mic and camera
 bot: in the call
 bot: recording to data/recordings/2026-09-09-1100-a1b2/audio.ogg

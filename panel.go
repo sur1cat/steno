@@ -48,6 +48,11 @@ type Panel struct {
 	// а не роняет процесс.
 	d *Dispatcher
 
+	// Начатые, но не завершённые подключения к Google. В памяти, а не в базе:
+	// они живут четверть часа, и пережившее перезапуск сервиса согласие никому
+	// не нужно.
+	google *googleStates
+
 	// Сериализует паузу после неверного пароля.
 	loginMu sync.Mutex
 }
@@ -75,7 +80,7 @@ func newPanel(cfg *Config, st *Store, lg *log.Logger) (*Panel, error) {
 		return nil, err
 	}
 	sum := sha256.Sum256([]byte("steno-panel:" + pass))
-	return &Panel{cfg: cfg, st: st, log: lg, key: sum[:]}, nil
+	return &Panel{cfg: cfg, st: st, log: lg, key: sum[:], google: newGoogleStates()}, nil
 }
 
 func (p *Panel) Run(ctx context.Context) error {

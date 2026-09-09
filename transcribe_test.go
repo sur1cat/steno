@@ -18,18 +18,18 @@ func TestAlignSpeakersUsesCaptionNames(t *testing.T) {
 	}
 	// Субтитры отстают от речи, поэтому таймкоды в них больше на ~1.5 с.
 	utts := []Utterance{
-		{Speaker: "Аня", Text: "давайте начнём", Start: 1.5, End: 5.5},
-		{Speaker: "Боря", Text: "я закончу миграцию", Start: 6.5, End: 10.5},
+		{Speaker: "Участник А", Text: "давайте начнём", Start: 1.5, End: 5.5},
+		{Speaker: "Участник Б", Text: "я закончу миграцию", Start: 6.5, End: 10.5},
 	}
 	got := alignSpeakers(segs, utts)
-	if got[0].Speaker != "Аня" || got[1].Speaker != "Боря" {
+	if got[0].Speaker != "Участник А" || got[1].Speaker != "Участник Б" {
 		t.Fatalf("имена разъехались: %+v", got)
 	}
 }
 
 func TestAlignSpeakersLeavesBlankWhenFarAway(t *testing.T) {
 	segs := []Segment{{Start: 100, End: 104, Text: "а это уже другое"}}
-	utts := []Utterance{{Speaker: "Аня", Text: "начало", Start: 0, End: 4}}
+	utts := []Utterance{{Speaker: "Участник А", Text: "начало", Start: 0, End: 4}}
 	if got := alignSpeakers(segs, utts); got[0].Speaker != "" {
 		t.Fatalf("приписали чужое имя: %q", got[0].Speaker)
 	}
@@ -44,11 +44,11 @@ func TestAlignSpeakersNoCaptions(t *testing.T) {
 
 func TestRenderTranscriptMergesSameSpeaker(t *testing.T) {
 	out := renderTranscript([]Segment{
-		{Start: 0, End: 2, Speaker: "Аня", Text: "привет"},
-		{Start: 2, End: 4, Speaker: "Аня", Text: "давайте начнём"},
-		{Start: 5, End: 7, Speaker: "Боря", Text: "да"},
+		{Start: 0, End: 2, Speaker: "Участник А", Text: "привет"},
+		{Start: 2, End: 4, Speaker: "Участник А", Text: "давайте начнём"},
+		{Start: 5, End: 7, Speaker: "Участник Б", Text: "да"},
 	})
-	want := "[00:00:00] Аня: привет давайте начнём\n[00:00:05] Боря: да\n"
+	want := "[00:00:00] Участник А: привет давайте начнём\n[00:00:05] Участник Б: да\n"
 	if out != want {
 		t.Fatalf("получили %q, ожидали %q", out, want)
 	}
@@ -59,7 +59,7 @@ func TestRenderTranscriptMergesSameSpeaker(t *testing.T) {
 // иначе» здесь не годится.
 func TestAlignSpeakersMatchesNaive(t *testing.T) {
 	rnd := rand.New(rand.NewSource(7))
-	names := []string{"Аня", "Боря", "Вика", "Дима"}
+	names := []string{"Участник А", "Участник Б", "Участник В", "Участник Г"}
 
 	for run := 0; run < 200; run++ {
 		var segs []Segment
@@ -129,9 +129,9 @@ func TestSegmentsFromCaptions(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "captions.jsonl")
 	mustWriteFile(t, path, strings.Join([]string{
-		`{"speaker":"Боря","text":"я закончу миграцию","start":20.0,"end":26.0}`,
-		`{"speaker":"Аня","text":"давайте начнём","start":1.5,"end":5.5}`,
-		`{"speaker":"Вика","text":"   ","start":30.0,"end":31.0}`,
+		`{"speaker":"Участник Б","text":"я закончу миграцию","start":20.0,"end":26.0}`,
+		`{"speaker":"Участник А","text":"давайте начнём","start":1.5,"end":5.5}`,
+		`{"speaker":"Участник В","text":"   ","start":30.0,"end":31.0}`,
 		`битая строка`,
 	}, "\n"))
 
@@ -143,7 +143,7 @@ func TestSegmentsFromCaptions(t *testing.T) {
 		t.Fatalf("ожидали две реплики, получили %+v", segs)
 	}
 	// Порядок по времени, а не по порядку в файле.
-	if segs[0].Speaker != "Аня" || segs[1].Speaker != "Боря" {
+	if segs[0].Speaker != "Участник А" || segs[1].Speaker != "Участник Б" {
 		t.Errorf("реплики не отсортированы по времени: %+v", segs)
 	}
 	if segs[0].Text != "давайте начнём" {

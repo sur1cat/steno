@@ -49,12 +49,12 @@ func TestProjectStateLifecycle(t *testing.T) {
 	// Первый созвон: две задачи по разным проектам.
 	first := &Followup{
 		ActionItems: []ActionItem{
-			{Owner: "Боря", What: "закончить миграцию", Due: "2026-09-11",
+			{Owner: "Участник Б", What: "закончить миграцию", Due: "2026-09-11",
 				Project: "биллинг", Quote: "я закончу"},
-			{Owner: "Ася", What: "прототип онбординга", Project: "Онбординг"},
+			{Owner: "Участник Д", What: "прототип онбординга", Project: "Онбординг"},
 		},
 		OpenQuestions: []OpenQuestion{
-			{Question: "кто дежурит", WaitingOn: "Аня", Project: "непонятный"},
+			{Question: "кто дежурит", WaitingOn: "Участник А", Project: "непонятный"},
 		},
 	}
 	for i := range first.ActionItems {
@@ -156,7 +156,7 @@ func TestTouchedProjects(t *testing.T) {
 
 func TestRenderProjectHTMLEscapes(t *testing.T) {
 	items := []ProjectItem{
-		{ID: "T-1", Kind: KindTask, Status: "open", Owner: "<b>Боря</b>",
+		{ID: "T-1", Kind: KindTask, Status: "open", Owner: "<b>Участник Б</b>",
 			Text: "миграция <script>alert(1)</script>", Quote: "«цитата»"},
 	}
 	out := renderProjectHTML("Платежи & Co", items)

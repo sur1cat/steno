@@ -23,7 +23,7 @@ func TestPanelNeverEmitsUserHTML(t *testing.T) {
 		StartedAt: time.Now(), Status: "published"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SaveSegments("x1", []Segment{{Start: 1, End: 4, Speaker: "Аня",
+	if err := st.SaveSegments("x1", []Segment{{Start: 1, End: 4, Speaker: "Участник А",
 		Text: `говорим про миграцию <img src=x onerror=alert(1)>`}}); err != nil {
 		t.Fatal(err)
 	}

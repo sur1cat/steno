@@ -89,10 +89,28 @@ type Config struct {
 		Prices map[string]Price `json:"prices"`
 	} `json:"claude"`
 
+	// Доступ в Google по кнопке. Второй путь к календарю, почте и Drive — рядом
+	// с файлом service-account, который остаётся в секциях ниже.
+	//
+	// Файл нужен компании: только он читает календари сорока человек, никого не
+	// спрашивая. Одному человеку он недоступен — за ним стоят проект в Google
+	// Cloud и админка домена, которой у частного человека нет. Здесь человек
+	// один раз соглашается у Google, и steno дальше видит ровно то, что видит
+	// он сам.
+	//
+	// Client ID не тайна: он уезжает на чужие машины вместе с программой и
+	// виден в адресной строке при согласии. Секрет приложения типа «Desktop
+	// app» Google секретом тоже не считает, но лежит он всё равно в окружении —
+	// чтобы конфиг целиком можно было держать в репозитории.
+	Google struct {
+		ClientID        string `json:"client_id"`
+		ClientSecretEnv string `json:"client_secret_env"`
+	} `json:"google"`
+
 	Calendar struct {
 		Enabled bool `json:"enabled"`
 		// Тот же service-account с domain-wide delegation. Пусто — берётся
-		// ключ из google_docs.
+		// ключ из google_docs. Не нужен, если Google подключён кнопкой.
 		CredentialsFile string `json:"credentials_file"`
 		// Чьи календари смотреть. Каждый читается от имени его владельца:
 		// domain-wide delegation позволяет представиться любым сотрудником.
@@ -302,7 +320,13 @@ func defaultConfig() *Config {
 	c.Claude.APIKeyEnv = "ANTHROPIC_API_KEY"
 	c.Claude.Model = "claude-opus-5"
 	c.Claude.Via = "auto"
-	c.Claude.Effort = "high"
+	// low, а не high, и это измерено, а не выбрано из осторожности. Один и тот
+	// же созвон прогнан десятью сочетаниями модели и усилия: все десять достали
+	// одни и те же пять поручений с верными исполнителями и сроками. Усилие не
+	// добавило ни одной задачи — только время и деньги, вплоть до 23 минут и
+	// $1.39 против 40 секунд и $0.12 на том же тексте. Выше поднимать стоит
+	// ради формулировок в рисках, а не ради полноты списков.
+	c.Claude.Effort = "low"
 	c.Claude.MaxTokens = 16000
 	c.Calendar.PollEvery = Duration(2 * time.Minute)
 	c.Calendar.JoinBefore = Duration(time.Minute)
@@ -312,6 +336,7 @@ func defaultConfig() *Config {
 	c.Calendar.ScheduleDays = 7
 	c.Calendar.Remind = true
 	c.Calendar.RemindBefore = Duration(10 * time.Minute)
+	c.Google.ClientSecretEnv = "GOOGLE_CLIENT_SECRET"
 	c.GoogleDocs.Scopes = []string{"https://www.googleapis.com/auth/drive"}
 	c.Slack.TokenEnv = "SLACK_BOT_TOKEN"
 	c.Slack.SigningSecretEnv = "SLACK_SIGNING_SECRET"

@@ -14,13 +14,13 @@ func TestRemindText(t *testing.T) {
 	base := ScheduleEntry{
 		Title:     "Планёрка по релизу",
 		StartsAt:  now.Add(10 * time.Minute),
-		Attendees: []string{"Аня", "Боря"},
+		Attendees: []string{"Участник А", "Участник Б"},
 		MeetURL:   "https://meet.google.com/abc-defg-hij",
 	}
 
 	got := remindText(base, now)
 	for _, want := range []string{"Через 10 мин", "Планёрка по релизу", "15:00",
-		"Аня, Боря", "Бот придёт", "meet.google.com/abc-defg-hij"} {
+		"Участник А, Участник Б", "Бот придёт", "meet.google.com/abc-defg-hij"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("в напоминании нет %q:\n%s", want, got)
 		}

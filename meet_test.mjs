@@ -39,19 +39,19 @@ class T {
 
 const captionRegion = new N("div", { role: "region", "aria-label": "Субтитры" }, [
   new N("div", {}, [
-    new N("div", {}, [new N("img", { alt: "Аня Смирнова" }), new N("div", {}, ["Аня Смирнова"])]),
+    new N("div", {}, [new N("img", { alt: "Участник А" }), new N("div", {}, ["Участник А"])]),
     new N("div", {}, [new N("div", {}, ["давайте начнём с релиза"])]),
   ]),
   new N("div", {}, [
-    new N("div", {}, ["Боря"]),
+    new N("div", {}, ["Участник Б"]),
     new N("div", {}, [new N("div", {}, ["я закончу "]), new N("div", {}, ["миграцию к пятнице"])]),
   ]),
 ]);
 
 const body = new N("body", {}, [
   captionRegion,
-  new N("div", { "data-participant-id": "p1" }, [new N("div", {}, ["Аня Смирнова"])]),
-  new N("div", { "data-participant-id": "p2" }, [new N("div", {}, ["Боря"])]),
+  new N("div", { "data-participant-id": "p1" }, [new N("div", {}, ["Участник А"])]),
+  new N("div", { "data-participant-id": "p2" }, [new N("div", {}, ["Участник Б"])]),
 ]);
 
 globalThis.window = { HTMLInputElement: { prototype: {} } };
@@ -79,10 +79,10 @@ assert.ok(c.ok, "область субтитров не нашлась по aria
 assert.deepStrictEqual(c.lines, [
   // Имя приходит и как alt аватарки, и как подпись — дубль не должен
   // попасть в текст реплики.
-  { speaker: "Аня Смирнова", text: "давайте начнём с релиза" },
-  { speaker: "Боря", text: "я закончу миграцию к пятнице" },
+  { speaker: "Участник А", text: "давайте начнём с релиза" },
+  { speaker: "Участник Б", text: "я закончу миграцию к пятнице" },
 ]);
-assert.deepStrictEqual(steno.participants(), ["Аня Смирнова", "Боря"]);
+assert.deepStrictEqual(steno.participants(), ["Участник А", "Участник Б"]);
 assert.strictEqual(steno.inCall(), true);
 assert.strictEqual(steno.left(), false);
 assert.strictEqual(steno.captionsOn(), true);
