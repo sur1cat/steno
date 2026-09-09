@@ -57,18 +57,24 @@ var setupProfiles = []setupProfile{
 }
 
 type setupState struct {
-	dir     string
-	profile setupProfile
-	cfg     *Config
-	env     map[string]string
-	in      *bufio.Reader
+	dir string
+	// -o назван человеком: тогда каталог не переспрашиваем и не уводим в ~/steno.
+	dirChosen bool
+	profile   setupProfile
+	cfg       *Config
+	env       map[string]string
+	in        *bufio.Reader
 }
 
 func cmdSetup(ctx context.Context, args []string) error {
 	fs := newFlagSet("setup")
-	out := fs.String("o", "steno.json", "куда записать конфиг")
+	out := fs.String("o", "", "куда записать конфиг")
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
+	}
+	chosen := *out != ""
+	if !chosen {
+		*out = "steno.json"
 	}
 
 	s := &setupState{
@@ -81,10 +87,40 @@ func cmdSetup(ctx context.Context, args []string) error {
 		return err
 	}
 	s.dir = filepath.Dir(abs)
+	s.dirChosen = chosen
+
+	// Ctrl+C обязан прерывать. Сам по себе он этого не делал: main перехватывает
+	// SIGINT ради мягкой остановки сервиса, а мастер висит на чтении stdin и про
+	// отмену контекста не знает — сигнал ловился и пропадал. Хуже того, в строке
+	// ниже было написано, что прервать можно в любой момент.
+	//
+	// Состояние терминала снимаем заранее: прерывание на вводе пароля приходится
+	// на сырой режим, и без восстановления человек остаётся с неработающей
+	// оболочкой.
+	fd := int(os.Stdin.Fd())
+	tty, _ := term.GetState(fd)
+	// done закрывается при выходе: без него обработчик срабатывал и на обычном
+	// завершении — main отменяет контекст, когда команда вернулась, и мастер
+	// дописывал «прервано» под успешно записанным конфигом.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+		}
+		if tty != nil {
+			_ = term.Restore(fd, tty)
+		}
+		fmt.Println()
+		fmt.Println(dim("прервано — ничего не записано"))
+		os.Exit(130)
+	}()
 
 	title("steno — настройка")
 	fmt.Println(dim("Спрошу по одному и сразу проверю. Пустой ответ берёт значение в скобках."))
-	fmt.Println(dim("Прервать можно в любой момент — ничего не записывается до самого конца."))
+	fmt.Println(dim("Ctrl+C прерывает в любой момент — до самого конца ничего не записывается."))
 	fmt.Println()
 
 	if _, err := os.Stat(abs); err == nil {
@@ -102,6 +138,7 @@ func cmdSetup(ctx context.Context, args []string) error {
 		s.askTargets,
 		s.askPanel,
 	}
+	stepNo, stepTotal = 0, len(steps)
 	for _, step := range steps {
 		if err := step(ctx); err != nil {
 			return err
@@ -127,20 +164,39 @@ func (s *setupState) askProfile(context.Context) error {
 	return nil
 }
 
+// askData выбирает каталог и заводит его сам. Раньше мастер молча писал в
+// текущий, и человеку приходилось перед запуском делать mkdir и cd — шаг, о
+// котором он узнавал только из инструкции.
 func (s *setupState) askData(context.Context) error {
 	section("Где хранить")
-	def := filepath.Join(s.dir, "data")
-	s.cfg.DataDir = s.ask("Каталог для записей и базы", def)
+	fmt.Println(dim("  Сюда лягут настройки, записи созвонов и база. Каталог заведу сам."))
+	fmt.Println()
+
+	home, _ := os.UserHomeDir()
+	def := filepath.Join(home, "steno")
+	if s.dirChosen {
+		def = s.dir // человек сам назвал файл через -o, не спорим
+	}
+	dir := expandHome(s.ask("Каталог", def))
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return fmt.Errorf("не создался каталог: %w", err)
+	}
+	s.dir = abs
+	s.cfg.DataDir = filepath.Join(abs, "data")
 	if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("не создался каталог: %w", err)
 	}
-	fmt.Println(ok("каталог готов"))
+	fmt.Println(ok(abs))
 	return nil
 }
 
 func (s *setupState) askTranscribe(ctx context.Context) error {
 	section("Чем распознавать речь")
-	fmt.Println(dim("От этого зависит и качество, и во что обойдётся железо."))
+	fmt.Println(dim("  От этого зависит и качество, и во что обойдётся железо."))
 	fmt.Println()
 
 	i := s.choose("Выбери", []string{
@@ -278,13 +334,16 @@ func (s *setupState) askClaude(ctx context.Context) error {
 
 func (s *setupState) askSources(ctx context.Context) error {
 	section("Как бот попадает в звонок")
-	fmt.Println(dim("Можно включить несколько. Календарь закрывает запланированное,"))
-	fmt.Println(dim("остальные — внезапное."))
+	fmt.Println(dim("  Можно включить несколько. Календарь закрывает запланированное,"))
+	fmt.Println(dim("  остальные — внезапное."))
 	fmt.Println()
 
 	if s.confirm("Ходить по календарям команды?", false) {
 		s.cfg.Calendar.Enabled = true
-		s.cfg.Calendar.Calendars = commaList(s.ask("Чьи календари, через запятую", ""))
+		fmt.Println(dim("  Нужны почтовые адреса тех, чьи встречи бот должен видеть."))
+		fmt.Println(dim("  Свой — чтобы ходить на собственные созвоны. Чужой сработает,"))
+		fmt.Println(dim("  только если этот человек открыл боту доступ к своему календарю."))
+		s.cfg.Calendar.Calendars = commaList(s.ask("Чьи календари (почта, через запятую)", ""))
 		s.askGoogleAccess()
 	}
 	if s.confirm("Приходить, когда бота добавляют в звонок по почте?", false) {
@@ -309,7 +368,7 @@ func (s *setupState) askSources(ctx context.Context) error {
 
 func (s *setupState) askTargets(ctx context.Context) error {
 	section("Куда складывать итоги")
-	fmt.Println(dim("Панель есть всегда — там архив, поиск и проекты. Остальное по желанию."))
+	fmt.Println(dim("  Панель есть всегда — там архив, поиск и проекты. Остальное по желанию."))
 	fmt.Println()
 
 	// Спрашиваем всегда, даже если приём в Telegram уже включён: включить
@@ -389,6 +448,11 @@ func (s *setupState) write(configPath string) error {
 		fmt.Println(ok(envPath + "  " + dim("права 0600, "+strconv.Itoa(len(s.env))+" секретов")))
 	}
 
+	// Каталог мог поменяться на шаге «Где хранить»: конфиг кладём туда же, где
+	// данные, а не туда, откуда запустили мастер.
+	if !s.dirChosen {
+		configPath = filepath.Join(s.dir, filepath.Base(configPath))
+	}
 	raw, err := marshalConfig(s.cfg)
 	if err != nil {
 		return err
@@ -407,10 +471,11 @@ func (s *setupState) write(configPath string) error {
 
 	fmt.Println()
 	fmt.Println(bold("Дальше:"))
-	fmt.Printf("  steno doctor -c %s   %s\n", filepath.Base(configPath),
-		dim("проверить, что всё на месте"))
-	fmt.Printf("  steno serve  -c %s   %s\n", filepath.Base(configPath),
-		dim("запустить"))
+	// Путь целиком, а не имя файла: мастер мог завести каталог не там, откуда
+	// его запустили, и «steno doctor -c steno.json» из другого места не сработает.
+	fmt.Printf("  cd %s\n", s.dir)
+	fmt.Printf("  steno doctor   %s\n", dim("проверить, что всё на месте"))
+	fmt.Printf("  steno serve    %s\n", dim("запустить"))
 	if s.cfg.Panel.Enabled {
 		fmt.Printf("  http://%s%s\n", s.cfg.Panel.Addr, dim("  — панель"))
 	}
@@ -584,8 +649,22 @@ func title(s string) {
 	fmt.Println(dim(strings.Repeat("─", len([]rune(s)))))
 }
 
+// Шаги нумеруются на ходу. Человек, отвечающий на седьмой вопрос подряд, не
+// знает, седьмой он из восьми или из тридцати, и это единственное, что отличает
+// «сейчас закончим» от «конца не видно».
+var (
+	stepNo    int
+	stepTotal int
+)
+
 func section(s string) {
+	stepNo++
 	fmt.Println()
+	if stepTotal > 0 {
+		fmt.Printf("%s  %s\n", bold("· "+s),
+			dim(fmt.Sprintf("шаг %d из %d", stepNo, stepTotal)))
+		return
+	}
 	fmt.Println(bold("· " + s))
 }
 
