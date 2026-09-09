@@ -12,3 +12,4 @@ web/dist/*
 !web/dist/.gitkeep
 web/app/tsconfig.tsbuildinfo
 /bin/
+/steno-demo
