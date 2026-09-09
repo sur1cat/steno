@@ -203,7 +203,7 @@ func TestSeed(t *testing.T) {
 	for i := range first.OpenQuestions {
 		first.OpenQuestions[i].Project = matchProject(cfg.Projects, first.OpenQuestions[i].Project)
 	}
-	if _, _, err := applyFollowup(st, cfg, "2026-09-08-1100-a1b2", first); err != nil {
+	if _, _, err := applyFollowup(st, cfg.Projects, "2026-09-08-1100-a1b2", first); err != nil {
 		t.Fatal(err)
 	}
 	// Следующий созвон закрыл одну задачу — так и выглядит движение по проекту.

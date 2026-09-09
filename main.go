@@ -129,6 +129,12 @@ func open(configPath string) (*Config, *Store, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if n, err := importProjects(st, cfg); err != nil {
+		st.Close()
+		return nil, nil, fmt.Errorf("перенос проектов из конфига: %w", err)
+	} else if n > 0 {
+		log.Printf("перенёс %d проектов из конфига в базу — дальше правь их в панели", n)
+	}
 	return cfg, st, nil
 }
 
@@ -542,7 +548,9 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 	if err != nil {
 		log.Printf("не прочитал открытые пункты: %v", err)
 	}
-	f, spend, err := makeFollowup(ctx, cfg, m, segs, renderPrimers(st, cfg), renderOpenItems(open))
+	projects := activeProjects(st, cfg)
+	f, spend, err := makeFollowup(ctx, cfg, m, segs, projects,
+		renderPrimers(st, projects), renderOpenItems(open))
 	if err != nil {
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
@@ -558,7 +566,7 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 	_ = st.SetStatus(id, "summarized", "")
 	log.Printf("задач: %d, решений: %d, открытых вопросов: %d",
 		len(f.ActionItems), len(f.Decisions), len(f.OpenQuestions))
-	if addedN, closedN, err := applyFollowup(st, cfg, id, f); err != nil {
+	if addedN, closedN, err := applyFollowup(st, projects, id, f); err != nil {
 		log.Printf("состояние проектов: %v", err)
 	} else if addedN > 0 || closedN > 0 {
 		log.Printf("по проектам: добавлено %d, закрыто %d", addedN, closedN)
@@ -693,13 +701,14 @@ func cmdContext(ctx context.Context, args []string) error {
 		return err
 	}
 	defer st.Close()
-	if len(cfg.Projects) == 0 {
-		return fmt.Errorf("в конфиге нет ни одного проекта")
+	projects := activeProjects(st, cfg)
+	if len(projects) == 0 {
+		return fmt.Errorf("нет ни одного проекта — заведи в панели или в конфиге")
 	}
 
 	only := fs.Arg(0)
 	var total float64
-	for _, p := range cfg.Projects {
+	for _, p := range projects {
 		if only != "" && !strings.EqualFold(p.Name, only) {
 			continue
 		}

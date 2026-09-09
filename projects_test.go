@@ -63,7 +63,7 @@ func TestProjectStateLifecycle(t *testing.T) {
 	for i := range first.OpenQuestions {
 		first.OpenQuestions[i].Project = matchProject(cfg.Projects, first.OpenQuestions[i].Project)
 	}
-	added, closed, err := applyFollowup(st, cfg, "m1", first)
+	added, closed, err := applyFollowup(st, cfg.Projects, "m1", first)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestProjectStateLifecycle(t *testing.T) {
 	second := &Followup{
 		Updates: []ItemUpdate{{ID: pay[0].ID, Status: "done", Note: "прогнали на стейдже"}},
 	}
-	added, closed, err = applyFollowup(st, cfg, "m2", second)
+	added, closed, err = applyFollowup(st, cfg.Projects, "m2", second)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@
     <a href="/" {{if eq .Nav "meetings"}}aria-current="page"{{end}}>Созвоны</a>
     <a href="/tasks" {{if eq .Nav "tasks"}}aria-current="page"{{end}}>Задачи</a>
     <a href="/projects" {{if eq .Nav "projects"}}aria-current="page"{{end}}>Проекты</a>
+    <a href="/settings" {{if eq .Nav "settings"}}aria-current="page"{{end}}>Настройки</a>
   </nav>
   <form class="find" action="/search" method="get" role="search">
     <input name="q" type="search" value="{{.Q}}" placeholder="Поиск по всем расшифровкам…"

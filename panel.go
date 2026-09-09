@@ -111,6 +111,11 @@ func (p *Panel) handler() http.Handler {
 	mux.Handle("GET /projects", p.guard(p.projects))
 	mux.Handle("GET /p/{name}", p.guard(p.project))
 	mux.Handle("GET /audio/{id}", p.guard(p.audio))
+	mux.Handle("GET /settings", p.guard(p.settings))
+	mux.Handle("GET /settings/projects/{name}", p.guard(p.projectForm))
+	mux.Handle("POST /settings/projects", p.guard(p.projectSave))
+	mux.Handle("POST /settings/projects/{name}/delete", p.guard(p.projectDelete))
+	mux.Handle("POST /settings/projects/{name}/context", p.guard(p.projectContext))
 	return mux
 }
 

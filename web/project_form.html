@@ -1,0 +1,58 @@
+{{define "project_form"}}{{template "head" "Проект"}}{{template "nav" .}}
+<main class="wrap" style="max-width:760px">
+  <h1>{{if .New}}Новый проект{{else}}{{.P.Name}}{{end}}</h1>
+  <p class="sub">Чем подробнее описан проект, тем точнее раскладываются по нему решения и задачи.</p>
+
+  <form method="post" action="/settings/projects" class="card form">
+    {{if not .New}}<input type="hidden" name="old_name" value="{{.P.Name}}">{{end}}
+
+    <label>Название
+      <input name="name" value="{{if not .New}}{{.P.Name}}{{end}}" required
+             placeholder="Платежи" autocomplete="off">
+    </label>
+
+    <label>Как называют вслух
+      <input name="aliases" value="{{.Aliases}}" autocomplete="off"
+             placeholder="биллинг, payments, платёжка">
+      <span class="hint">Через запятую. По этому списку «биллинг» превращается в «Платежи» — не гаданием модели, а точным совпадением.</span>
+    </label>
+
+    <label>О чём проект
+      <textarea name="about" rows="3" placeholder="Приём денег, подписки, вебхуки провайдеров">{{if not .New}}{{.P.About}}{{end}}</textarea>
+    </label>
+
+    <label>Источники
+      <textarea name="sources" rows="6" spellcheck="false"
+                placeholder="text Приём денег и подписки&#10;path ~/work/payments&#10;repo git@github.com:org/payments&#10;url https://pay.example.com">{{.Sources}}</textarea>
+      <span class="hint">По одному в строке: <code>вид значение</code>. Бывают <code>text</code>, <code>path</code> (локальный каталог), <code>repo</code> (склонируем на один коммит) и <code>url</code>. Из них собирается справка: README, состав, манифесты и темы последних коммитов — там и живёт словарь, которым команда говорит о проекте.</span>
+    </label>
+
+    <div class="actions">
+      <button type="submit">Сохранить</button>
+      <a href="/settings">отмена</a>
+    </div>
+  </form>
+
+  {{if not .New}}
+  <h2>Справка</h2>
+  {{if .Primer}}
+  <div class="card">
+    <p class="sub" style="margin:0 0 10px">Собрана {{dateRu .BuiltAt}} · уходит в промпт на каждом созвоне</p>
+    <div class="primer">{{.Primer}}</div>
+  </div>
+  {{else}}
+  <div class="empty">Справки нет. Она собирается из источников и объясняет модели, какими словами команда говорит об этом проекте.</div>
+  {{end}}
+
+  <div class="actions" style="margin-top:14px">
+    <form method="post" action="/settings/projects/{{.P.Name}}/context">
+      <button type="submit">{{if .Primer}}Пересобрать справку{{else}}Собрать справку{{end}}</button>
+    </form>
+    <form method="post" action="/settings/projects/{{.P.Name}}/delete">
+      <button type="submit" class="danger">Удалить проект</button>
+    </form>
+  </div>
+  <p class="sub">Удаление убирает описание, но не трогает накопленные задачи и решения — это история.</p>
+  {{end}}
+</main>
+</body></html>{{end}}

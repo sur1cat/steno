@@ -346,9 +346,9 @@ func (s *Store) SaveProjectContext(c ProjectContext) error {
 
 // renderPrimers — то, что уходит в промпт созвона. Справки обрезаны по объёму:
 // четыре проекта по тысяче слов съели бы больше, чем сама расшифровка.
-func renderPrimers(st *Store, cfg *Config) string {
+func renderPrimers(st *Store, projects []Project) string {
 	var b strings.Builder
-	for _, p := range cfg.Projects {
+	for _, p := range projects {
 		c, err := st.ProjectContext(p.Name)
 		if err != nil || strings.TrimSpace(c.Primer) == "" {
 			continue

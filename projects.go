@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -166,7 +167,7 @@ func (s *Store) KnownProjects() ([]string, error) {
 
 // applyFollowup переносит разобранный созвон в состояние проектов: закрывает
 // то, что закрылось, и заводит то, что появилось.
-func applyFollowup(st *Store, cfg *Config, meetingID string, f *Followup) (added, closed int, err error) {
+func applyFollowup(st *Store, projects []Project, meetingID string, f *Followup) (added, closed int, err error) {
 	for _, u := range f.Updates {
 		if u.Status == "done" || u.Status == "dropped" {
 			if err := st.CloseItem(u.ID, u.Status, u.Note, meetingID); err != nil {
@@ -177,7 +178,7 @@ func applyFollowup(st *Store, cfg *Config, meetingID string, f *Followup) (added
 	}
 	add := func(kind ItemKind, project, text, owner, due, quote string) error {
 		it := ProjectItem{
-			ID: newItemID(kind), Project: matchProject(cfg.Projects, project),
+			ID: newItemID(kind), Project: matchProject(projects, project),
 			Kind: kind, Text: text, Owner: owner, Due: due, Quote: quote,
 			OpenedIn: meetingID,
 		}
@@ -284,4 +285,97 @@ func renderOpenItems(items []ProjectItem) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// --- проекты в базе ---------------------------------------------------------
+//
+// Проекты заводит человек в панели, а не разработчик в конфиге: описать проект,
+// приложить сайт и репозиторий — это работа того, кто в проекте разбирается, и
+// требовать за неё правку JSON с перезапуском сервиса неправильно.
+//
+// Из конфига проекты переезжают один раз, при первом запуске: у тех, кто уже
+// описал их файлом, ничего не пропадёт.
+
+func (s *Store) Projects() ([]Project, error) {
+	rows, err := s.db.Query(`SELECT name, aliases, about, sources FROM projects ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Project
+	for rows.Next() {
+		var p Project
+		var aliases, sources string
+		if err := rows.Scan(&p.Name, &aliases, &p.About, &sources); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(aliases), &p.Aliases)
+		_ = json.Unmarshal([]byte(sources), &p.Sources)
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) Project(name string) (Project, error) {
+	var p Project
+	var aliases, sources string
+	err := s.db.QueryRow(`SELECT name, aliases, about, sources FROM projects WHERE name=?`, name).
+		Scan(&p.Name, &aliases, &p.About, &sources)
+	if err != nil {
+		return p, err
+	}
+	_ = json.Unmarshal([]byte(aliases), &p.Aliases)
+	_ = json.Unmarshal([]byte(sources), &p.Sources)
+	return p, nil
+}
+
+func (s *Store) SaveProject(p Project) error {
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("у проекта должно быть название")
+	}
+	aliases, _ := json.Marshal(p.Aliases)
+	sources, _ := json.Marshal(p.Sources)
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`INSERT INTO projects (name,aliases,about,sources,created_at,updated_at)
+		VALUES (?,?,?,?,?,?)
+		ON CONFLICT(name) DO UPDATE SET aliases=excluded.aliases, about=excluded.about,
+		sources=excluded.sources, updated_at=excluded.updated_at`,
+		p.Name, string(aliases), p.About, string(sources), now, now)
+	return err
+}
+
+// DeleteProject убирает описание, но не трогает накопленное состояние: задачи
+// и решения — это история, и терять её из-за переименования проекта нельзя.
+func (s *Store) DeleteProject(name string) error {
+	_, err := s.db.Exec(`DELETE FROM projects WHERE name=?`, name)
+	return err
+}
+
+// importProjects переносит проекты из конфига в базу при первом запуске.
+func importProjects(st *Store, cfg *Config) (int, error) {
+	if len(cfg.Projects) == 0 {
+		return 0, nil
+	}
+	existing, err := st.Projects()
+	if err != nil {
+		return 0, err
+	}
+	if len(existing) > 0 {
+		return 0, nil // база уже главнее конфига
+	}
+	for _, p := range cfg.Projects {
+		if err := st.SaveProject(p); err != nil {
+			return 0, err
+		}
+	}
+	return len(cfg.Projects), nil
+}
+
+// activeProjects — то, по чему работает сервис. База главнее конфига: в панели
+// проект правят на ходу, и перечитывать файл ради этого не должно быть нужно.
+func activeProjects(st *Store, cfg *Config) []Project {
+	if ps, err := st.Projects(); err == nil && len(ps) > 0 {
+		return ps
+	}
+	return cfg.Projects
 }

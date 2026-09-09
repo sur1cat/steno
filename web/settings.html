@@ -1,0 +1,55 @@
+{{define "settings"}}{{template "head" "Настройки"}}{{template "nav" .}}
+<main class="wrap">
+  <h1>Настройки</h1>
+  <p class="sub">Проекты правятся здесь. Секреты — только переменными окружения: класть токены в ту же базу, где лежат расшифровки всех разговоров, не стоит.</p>
+
+  <h2>Проекты</h2>
+  {{if .Projects}}
+  <div class="list">
+    {{range $i, $p := .Projects}}
+    <div class="row">
+      <a class="title" href="/settings/projects/{{$p.Name}}">{{$p.Name}}</a>
+      <div class="meta">
+        {{if $p.About}}{{$p.About}}{{else}}без описания{{end}}
+        {{if $p.Aliases}} · вслух: {{join ", " $p.Aliases}}{{end}}
+      </div>
+      <div class="right">
+        {{with index $.Contexts $i}}
+          {{if .Chars}}<span class="pill">справка {{.Chars}} символов</span>
+          {{else}}<span class="pill alarm">справки нет</span>{{end}}
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty">Проектов пока нет.<br>Без них follow-up остаётся плоским списком, из которого через месяц не вытащить, что к чему относилось.</div>
+  {{end}}
+  <p style="margin-top:14px"><a href="/settings/projects/new">+ добавить проект</a></p>
+
+  <h2>Каналы</h2>
+  <div class="card">
+    {{range .Channels}}
+    <div class="item">
+      <div><b>{{.Name}}</b>
+        {{if .On}}<span class="when">· {{if .In}}вход{{end}}{{if and .In .Out}} и {{end}}{{if .Out}}выход{{end}}</span>
+        {{else}}<span class="when">· выключен</span>{{end}}
+        {{with .Where}}<div class="when block">{{.}}</div>{{end}}
+      </div>
+      <span class="pill{{if not .On}} alarm{{end}}">{{if .On}}вкл{{else}}выкл{{end}}</span>
+    </div>
+    {{end}}
+  </div>
+  <p class="sub" style="margin-top:10px">Каналы включаются в <code>steno.json</code>: они определяют, куда сервис ходит и что слушает, — это настройка развёртывания, а не содержания.</p>
+
+  <h2>Секреты</h2>
+  <div class="card">
+    {{range .Secrets}}
+    <div class="item">
+      <div><b>{{.What}}</b> <span class="when">· {{.Env}}</span></div>
+      <span class="pill{{if not .Set}} alarm{{end}}">{{if .Set}}задан{{else}}пусто{{end}}</span>
+    </div>
+    {{end}}
+  </div>
+</main>
+</body></html>{{end}}

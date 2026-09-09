@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS project_items (
 
 CREATE INDEX IF NOT EXISTS project_items_state ON project_items(project, kind, status);
 
+-- Проекты живут в базе, а не в конфиге: их заводит и правит человек в панели,
+-- а не разработчик в JSON с перезапуском сервиса. Из конфига они переезжают
+-- один раз при первом запуске.
+CREATE TABLE IF NOT EXISTS projects (
+  name       TEXT PRIMARY KEY,
+  aliases    TEXT NOT NULL DEFAULT '[]',
+  about      TEXT NOT NULL DEFAULT '',
+  sources    TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 -- Справка о проекте: выжимка из репозитория, сайта и описания. Собирается
 -- редко, а читается на каждом созвоне, поэтому лежит готовой.
 CREATE TABLE IF NOT EXISTS project_context (

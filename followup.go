@@ -178,7 +178,7 @@ func clock(sec float64) string {
 	return fmt.Sprintf("%02d:%02d:%02d", s/3600, (s%3600)/60, s%60)
 }
 
-func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, primers, openItems string) (*Followup, Spend, error) {
+func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, projects []Project, primers, openItems string) (*Followup, Spend, error) {
 	key, err := secret(cfg.Claude.APIKeyEnv, "Claude")
 	if err != nil {
 		return nil, Spend{}, err
@@ -198,9 +198,9 @@ func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, 
 		fmt.Fprintf(&head, "Язык follow-up: %s\n", cfg.Claude.OutputLanguage)
 	}
 
-	if len(cfg.Projects) > 0 {
+	if len(projects) > 0 {
 		head.WriteString("\nПроекты команды:\n")
-		for _, p := range cfg.Projects {
+		for _, p := range projects {
 			fmt.Fprintf(&head, "  %s", p.Name)
 			if len(p.Aliases) > 0 {
 				fmt.Fprintf(&head, " (вслух: %s)", strings.Join(p.Aliases, ", "))
@@ -298,13 +298,13 @@ func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, 
 	// Названия проектов приводим к тем, что записаны в конфиге: модель может
 	// вернуть «биллинг» там, где проект называется «Платежи».
 	for i := range f.ActionItems {
-		f.ActionItems[i].Project = matchProject(cfg.Projects, f.ActionItems[i].Project)
+		f.ActionItems[i].Project = matchProject(projects, f.ActionItems[i].Project)
 	}
 	for i := range f.Decisions {
-		f.Decisions[i].Project = matchProject(cfg.Projects, f.Decisions[i].Project)
+		f.Decisions[i].Project = matchProject(projects, f.Decisions[i].Project)
 	}
 	for i := range f.OpenQuestions {
-		f.OpenQuestions[i].Project = matchProject(cfg.Projects, f.OpenQuestions[i].Project)
+		f.OpenQuestions[i].Project = matchProject(projects, f.OpenQuestions[i].Project)
 	}
 
 	spend := computeSpend(cfg, cfg.Claude.Model,

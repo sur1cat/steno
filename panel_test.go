@@ -172,3 +172,119 @@ func TestPanelWrongPassword(t *testing.T) {
 		t.Error("с неверным паролем пустили внутрь")
 	}
 }
+
+// Проекты заводятся в панели, а не в JSON. Проверяем весь оборот формы:
+// создать, переименовать, разобрать источники, удалить.
+func TestPanelProjectCRUD(t *testing.T) {
+	srv, st := testPanel(t)
+	c := login(t, srv, "тайна")
+
+	post := func(path string, form url.Values) int {
+		t.Helper()
+		resp, err := c.PostForm(srv.URL+path, form)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+	get := func(path string) string {
+		t.Helper()
+		resp, err := c.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+
+	post("/settings/projects", url.Values{
+		"name":    {"Платежи"},
+		"aliases": {"биллинг, payments"},
+		"about":   {"Приём денег и подписки"},
+		"sources": {"text Приём денег\npath /tmp/payments\nurl https://pay.example.com"},
+	})
+	got, err := st.Project("Платежи")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Aliases) != 2 || got.Aliases[0] != "биллинг" {
+		t.Fatalf("псевдонимы: %v", got.Aliases)
+	}
+	if len(got.Sources) != 3 || got.Sources[1].Kind != "path" || got.Sources[2].Value != "https://pay.example.com" {
+		t.Fatalf("источники: %+v", got.Sources)
+	}
+
+	// Проект виден в настройках и в списке проектов сервиса.
+	if body := get("/settings"); !strings.Contains(body, "Платежи") {
+		t.Error("проект не показан в настройках")
+	}
+	if ps, _ := st.Projects(); len(ps) != 1 {
+		t.Fatalf("в базе %d проектов", len(ps))
+	}
+
+	// Переименование не должно оставлять дубль.
+	post("/settings/projects", url.Values{
+		"old_name": {"Платежи"}, "name": {"Платёжка"},
+		"aliases": {"биллинг"}, "about": {"то же"}, "sources": {"text то же"},
+	})
+	ps, _ := st.Projects()
+	if len(ps) != 1 || ps[0].Name != "Платёжка" {
+		t.Fatalf("после переименования: %+v", ps)
+	}
+
+	// Мусор в источниках — внятная ошибка, а не молчаливое проглатывание.
+	if code := post("/settings/projects", url.Values{
+		"name": {"Кривой"}, "sources": {"магия что-то"},
+	}); code != 400 {
+		t.Errorf("непонятный вид источника принят, код %d", code)
+	}
+
+	post("/settings/projects/Платёжка/delete", url.Values{})
+	if ps, _ := st.Projects(); len(ps) != 0 {
+		t.Fatalf("проект не удалился: %+v", ps)
+	}
+}
+
+// Панель не должна показывать значения секретов — только факт, задан ли.
+func TestPanelSettingsHidesSecretValues(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-очень-секретный-ключ")
+	srv, _ := testPanel(t)
+	c := login(t, srv, "тайна")
+	resp, err := c.Get(srv.URL + "/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	body := string(b)
+
+	if strings.Contains(body, "sk-ant-очень-секретный-ключ") {
+		t.Fatal("панель показала значение секрета")
+	}
+	if !strings.Contains(body, "ANTHROPIC_API_KEY") || !strings.Contains(body, "задан") {
+		t.Error("панель не показала, что ключ настроен")
+	}
+}
+
+func TestParseSources(t *testing.T) {
+	got, err := parseSources("  text Приём денег \n\n# комментарий\nrepo: git@github.com:o/p\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("получили %+v", got)
+	}
+	if got[0].Kind != "text" || got[0].Value != "Приём денег" {
+		t.Errorf("первый источник: %+v", got[0])
+	}
+	// Двоеточие после вида — частая привычка, принимать надо.
+	if got[1].Kind != "repo" || got[1].Value != "git@github.com:o/p" {
+		t.Errorf("второй источник: %+v", got[1])
+	}
+	if _, err := parseSources("url"); err == nil {
+		t.Error("строка без значения принята")
+	}
+}
