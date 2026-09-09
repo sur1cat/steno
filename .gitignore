@@ -5,3 +5,5 @@
 steno.json
 *.ogg
 *.jsonl
+web/app/node_modules/
+web/dist/

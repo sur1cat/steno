@@ -118,6 +118,8 @@ func (p *Panel) handler() http.Handler {
 	mux.Handle("POST /settings/projects/{name}/context", p.guard(p.projectContext))
 	mux.Handle("POST /items/{id}/reopen", p.guard(p.reopenItem))
 	mux.Handle("POST /items/{id}/close", p.guard(p.closeItemByHand))
+	// JSON-API нового фронта живёт рядом со старой панелью, пока тот не готов.
+	mux.Handle("/api/", p.api())
 	return mux
 }
 
@@ -168,8 +170,7 @@ func (p *Panel) loginForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Panel) login(w http.ResponseWriter, r *http.Request) {
-	pass, err := secret(p.cfg.Panel.PasswordEnv, "панель")
-	if err != nil {
+	if _, err := secret(p.cfg.Panel.PasswordEnv, "панель"); err != nil {
 		http.Error(w, "панель не настроена", http.StatusInternalServerError)
 		return
 	}
@@ -178,13 +179,7 @@ func (p *Panel) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next := safeNext(r.FormValue("next"))
-	if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(pass)) != 1 {
-		// Пароль общий и потому короткий. Пауза под общим замком, а не просто
-		// time.Sleep: параллельные попытки иначе укладываются в ту же секунду,
-		// и ограничение перестаёт что-либо ограничивать.
-		p.loginMu.Lock()
-		time.Sleep(time.Second)
-		p.loginMu.Unlock()
+	if !p.passwordOK(r.FormValue("password")) {
 		// Неудачные входы должны быть видны: без записи в лог подбор пароля к
 		// архиву всех разговоров компании проходит бесследно.
 		p.log.Printf("панель: неверный пароль с %s", clientIP(r))
@@ -215,6 +210,23 @@ func safeNext(next string) string {
 		return "/"
 	}
 	return next
+}
+
+// passwordOK сверяет пароль и придерживает неудачную попытку. Пауза берётся
+// под общим замком, а не просто time.Sleep: параллельные попытки иначе
+// укладываются в ту же секунду, и ограничение перестаёт ограничивать.
+func (p *Panel) passwordOK(given string) bool {
+	pass, err := secret(p.cfg.Panel.PasswordEnv, "панель")
+	if err != nil {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(given), []byte(pass)) == 1 {
+		return true
+	}
+	p.loginMu.Lock()
+	time.Sleep(time.Second)
+	p.loginMu.Unlock()
+	return false
 }
 
 func (p *Panel) logout(w http.ResponseWriter, r *http.Request) {

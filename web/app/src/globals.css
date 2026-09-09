@@ -1,0 +1,218 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Fleety Emerald ── */
+  --color-primary: #6BCB9B;
+  --color-primary-hover: #5ABF8C;
+  --color-primary-light: #F0FBF6;
+  --color-primary-dark: #4AAF7A;
+  --color-primary-foreground: #FFFFFF;
+
+  --color-success: #22C55E;
+  --color-danger: #EF4444;
+  --color-warning: #F59E0B;
+  --color-info: #3B82F6;
+}
+
+:root {
+  --background: #F8F9FA;
+  --foreground: #111827;
+  --card: #FFFFFF;
+  --card-foreground: #111827;
+  --popover: #FFFFFF;
+  --popover-foreground: #111827;
+  --border: #E5E7EB;
+  --input: #E5E7EB;
+  --input-bg: #F3F4F6;
+  --muted: #F3F4F6;
+  --muted-foreground: #6B7280;
+  --accent: #6BCB9B;
+  --accent-foreground: #FFFFFF;
+  --destructive: #EF4444;
+  --ring: #6BCB9B;
+  --link-color: #111827;
+
+  /* Палитра графиков. Заведена переменными, а не хардкодом в компонентах:
+     кит рисует на голом SVG, где Tailwind-утилиты недоступны, а цвет обязан
+     переключаться вместе с темой. В тёмной берутся более светлые оттенки —
+     на почти чёрном фоне насыщенные тона выглядят грязными. */
+  --chart-positive: #059669;
+  --chart-negative: #DC2626;
+  --chart-neutral: #6B7280;
+
+  /* Sidebar — light emerald */
+  --sidebar-bg: #2E4F40;
+  --sidebar-text: #A8BFB2;
+  --sidebar-text-muted: rgba(255,255,255,0.28);
+  --sidebar-active-bg: rgba(24,176,122,0.12);
+  --sidebar-active-text: #8ED8B5;
+  --sidebar-hover-bg: rgba(255,255,255,0.04);
+  --sidebar-border: rgba(255,255,255,0.06);
+  --sidebar-logo-text: #FFFFFF;
+}
+
+.dark {
+  --background: #0B0F0D;
+  --foreground: #F1F5F9;
+  --card: #151C18;
+  --card-foreground: #F1F5F9;
+  --popover: #151C18;
+  --popover-foreground: #F1F5F9;
+  --border: #1E2A24;
+  --input: #1E2A24;
+  --input-bg: #151C18;
+  --muted: #1E2A24;
+  --muted-foreground: #94A3B8;
+  --accent: #4DDBA4;
+  --accent-foreground: #0B0F0D;
+  --destructive: #EF4444;
+  --ring: #4DDBA4;
+  --link-color: #4DDBA4;
+
+  --chart-positive: #34D399;
+  --chart-negative: #F87171;
+  --chart-neutral: #94A3B8;
+
+  --sidebar-bg: #264538;
+  --sidebar-text: #A8BFB2;
+  --sidebar-text-muted: rgba(255,255,255,0.22);
+  --sidebar-active-bg: rgba(77,219,164,0.10);
+  --sidebar-active-text: #8ED8B5;
+  --sidebar-hover-bg: rgba(255,255,255,0.03);
+  --sidebar-border: rgba(255,255,255,0.05);
+  --sidebar-logo-text: #FFFFFF;
+}
+
+/* Lock the page-level viewport. The dashboard layout uses h-screen +
+ * overflow-hidden on its root, but if anything (fixed save-bar, library
+ * portal, dev overlay) ever extends body height, the browser will show a
+ * second html/body scrollbar next to <main>'s — the "two-scrollbars on
+ * the right" symptom on long settings pages. Pin html/body to viewport so
+ * <main> is the only legitimate scroll container in the app shell. */
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), "Inter", system-ui, -apple-system, sans-serif;
+  font-weight: 300;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Force light typography everywhere — override Tailwind font-bold/semibold */
+h1, h2, h3, h4, h5, h6 { font-weight: 400 !important; }
+th { font-weight: 400 !important; }
+strong, b { font-weight: 500 !important; }
+label { font-weight: 300 !important; }
+button { font-weight: 400 !important; }
+p, span, td, a, li, div { font-weight: inherit; }
+
+/* Tailwind overrides */
+.font-bold { font-weight: 400 !important; }
+.font-semibold { font-weight: 400 !important; }
+.font-medium { font-weight: 400 !important; }
+
+* { border-color: var(--border); }
+input::placeholder { color: var(--muted-foreground); }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* iOS Safari zooms the page in — and never zooms back out — whenever a focused
+ * field has font-size < 16px. Every shared field primitive is text-sm (14px),
+ * and drivers/new/compact-layout drops to 13px on purpose, so on a phone the
+ * user pinches back after every single field.
+ *
+ * Never bump the shared class strings instead — the mouse desktop reads those
+ * too, and its density is deliberate.
+ *
+ * `pointer`, not `any-pointer`: the bug is iOS-Safari-only, and iOS reports a
+ * coarse primary pointer even with a trackpad attached. A Windows touch-laptop
+ * matches `any-pointer: coarse` but its browser never autozooms, so widening
+ * the query would only inflate that desktop for nothing.
+ *
+ * Load-bearing: this rule must stay UNLAYERED. Tailwind's utilities live in
+ * `@layer utilities`, and an unlayered rule outranks any layered one regardless
+ * of specificity — that, not !important, is what lets it beat `.text-sm`. Nest
+ * it inside a layer and the zoom bug returns silently.
+ * Guarded by lib/__tests__/mobile-touch-input.test.ts. */
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px; }
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* magic-ui keyframes */
+@keyframes shimmer-spin { 0% { rotate: 0deg; } 100% { rotate: 360deg; } }
+@keyframes meteor { 0% { transform: rotate(215deg) translateX(0); opacity: 1; } 70% { opacity: 1; } 100% { transform: rotate(215deg) translateX(-500px); opacity: 0; } }
+@keyframes shiny-text { 0%, 90%, 100% { background-position: calc(-100% - var(--shimmer-width)) 0; } 30%, 60% { background-position: calc(100% + var(--shimmer-width)) 0; } }
+
+@theme {
+  --animate-shimmer-spin: shimmer-spin 3s linear infinite;
+  --animate-meteor: meteor 5s linear infinite;
+  --animate-shiny-text: shiny-text 8s infinite;
+}
+
+/* Запасная растровая подложка карт в тёмной теме (components/map/basemap.tsx).
+   Тайлы OSM существуют только светлыми, а бесплатного тёмного растра без ключа
+   взамен CARTO нет — поэтому светлый инвертируется. hue-rotate возвращает цвета
+   на место после инверсии: без него вода станет оранжевой, а зелень сиреневой. */
+.basemap-raster-dark {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9);
+}
+
+/* ── Смена темы · круговое раскрытие ────────────────────────────────────────
+   Новая тема расходится кругом из нажатой кнопки, а не подменяет кадр целиком:
+   движение показывает, ОТКУДА пришло изменение, и заодно прячет тот единственный
+   кадр, на котором половина экрана уже перекрашена, а половина нет.
+
+   Работает поверх View Transitions API: браузер снимает кадры «до» и «после» и
+   подставляет их в псевдоэлементы ниже. Геометрию круга (--theme-reveal-x/y/r)
+   кладёт на <html> hooks/use-theme-reveal.ts — из JS эти псевдоэлементы не
+   достать, стилизуются они только отсюда. data-атрибут стоит на <html> только на
+   время перехода, поэтому правила не заденут никакой другой. Без поддержки API
+   или при prefers-reduced-motion до них дело не доходит — тема меняется
+   мгновенно, как раньше.
+
+   Кривая взята из компонента Mask View Transition Theme Toggle (21st.dev,
+   @jahirulislamrayhan07): почти стоит на месте в начале и выстреливает в конце —
+   от этого круг читается как раскрытие, а не как равномерно ползущая заливка. */
+:root {
+  --theme-reveal-ease: linear(
+    0 0%, 0.0085 31.26%, 0.0167 40.94%, 0.0289 48.86%, 0.0471 55.92%,
+    0.0717 61.99%, 0.1038 67.32%, 0.1443 72.07%, 0.1989 76.7%, 0.2659 80.89%,
+    0.3465 84.71%, 0.4419 88.22%, 0.554 91.48%, 0.6835 94.51%, 0.8316 97.34%,
+    1 100%
+  );
+}
+
+/* Старый кадр лежит неподвижно, новый прорастает поверх — иначе браузер
+   кроссфейдит оба и круг тонет в полупрозрачности. */
+html[data-theme-reveal]::view-transition-old(root) {
+  animation: none;
+  z-index: 0;
+}
+
+html[data-theme-reveal]::view-transition-new(root) {
+  animation: theme-reveal 620ms var(--theme-reveal-ease) both;
+  z-index: 1;
+}
+
+html[data-theme-reveal]::view-transition-old(root),
+html[data-theme-reveal]::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+
+@keyframes theme-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-reveal-x) var(--theme-reveal-y));
+  }
+  to {
+    clip-path: circle(
+      var(--theme-reveal-r) at var(--theme-reveal-x) var(--theme-reveal-y)
+    );
+  }
+}
