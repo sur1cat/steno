@@ -236,14 +236,18 @@ func lastLines(s string, n int) []string {
 }
 
 func checkClaude(cfg *Config) check {
-	if _, err := secret(cfg.Claude.APIKeyEnv, "Claude"); err != nil {
-		return check{"Claude", "fail", "переменная " + cfg.Claude.APIKeyEnv + " пуста",
+	_, how, err := claudeClient(cfg)
+	if err != nil {
+		return check{"Claude", "fail", "нет доступа",
 			[]string{
 				"→ ключ создаётся на console.anthropic.com → API keys",
 				"→ export " + cfg.Claude.APIKeyEnv + "=sk-ant-...",
+				"→ либо `ant auth login` — тогда ключ не нужен, но профиль живёт " +
+					"у пользователя и на сервере не годится",
 			}, false}
 	}
-	return check{"Claude", "ok", cfg.Claude.Model + ", effort " + orDash(cfg.Claude.Effort), nil, false}
+	return check{"Claude", "ok",
+		cfg.Claude.Model + ", effort " + orDash(cfg.Claude.Effort) + " · " + how, nil, false}
 }
 
 func checkSources(cfg *Config) []check {

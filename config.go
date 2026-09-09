@@ -97,6 +97,10 @@ type Config struct {
 		SkipMarkers []string `json:"skip_markers"`
 		// На сколько дней вперёд собирать расписание для панели.
 		ScheduleDays int `json:"schedule_days"`
+		// Напоминать о созвоне заранее. Почту читают не все и не всегда, а
+		// пропущенная встреча стоит дороже одного сообщения в чат.
+		Remind       bool     `json:"remind"`
+		RemindBefore Duration `json:"remind_before"`
 		// Сколько созвонов писать одновременно.
 		MaxConcurrent int `json:"max_concurrent"`
 	} `json:"calendar"`
@@ -296,6 +300,8 @@ func defaultConfig() *Config {
 	c.Calendar.SkipMarkers = []string{"#nosteno", "#беззаписи"}
 	c.Calendar.MaxConcurrent = 4
 	c.Calendar.ScheduleDays = 7
+	c.Calendar.Remind = true
+	c.Calendar.RemindBefore = Duration(10 * time.Minute)
 	c.GoogleDocs.Scopes = []string{"https://www.googleapis.com/auth/drive"}
 	c.Slack.TokenEnv = "SLACK_BOT_TOKEN"
 	c.Slack.SigningSecretEnv = "SLACK_SIGNING_SECRET"

@@ -248,6 +248,61 @@ export interface InviteResult {
   message: string;
 }
 
+export interface UploadResult {
+  id: string;
+  title: string;
+  bytes: number;
+}
+
+/**
+ * Загрузка записи. Единственная ручка, которую нельзя позвать через fetch: он
+ * не умеет докладывать, сколько уже ушло, а файл здесь — гигабайт видео с
+ * четырёхчасовой встречи. Без полосы прогресса это выглядит зависшей вкладкой,
+ * и человек нажимает «отправить» второй раз.
+ */
+export function uploadRecording(
+  file: File,
+  title: string,
+  opts: { onProgress?: (sent: number, total: number) => void; signal?: AbortSignal } = {},
+): Promise<UploadResult> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    if (title.trim()) form.append("title", title.trim());
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload");
+    xhr.withCredentials = true;
+    xhr.responseType = "text";
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
+    };
+    xhr.onerror = () => reject(new ApiError(0, "связь оборвалась, файл не дошёл"));
+    xhr.onabort = () => reject(new ApiError(0, "отменено"));
+    xhr.onload = () => {
+      let body: unknown = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        reject(new ApiError(xhr.status, "непонятный ответ сервера"));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        // Отказ в режиме субтитров объясняет причину словами — её и показываем,
+        // а не «ошибка 400».
+        const msg = (body as { error?: string } | null)?.error;
+        reject(new ApiError(xhr.status, msg ?? `ошибка ${xhr.status}`));
+        return;
+      }
+      resolve(body as UploadResult);
+    };
+
+    opts.signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(form);
+  });
+}
+
 // --- ручки ------------------------------------------------------------------
 
 export const api = {
@@ -288,4 +343,5 @@ export const api = {
   scheduleOverride: (key: string, decision: "" | "skip" | "attend") =>
     post<{ ok: boolean }>(`/api/schedule/${encodeURIComponent(key)}/override`, { decision }),
   invite: (url: string, title: string) => post<InviteResult>("/api/invite", { url, title }),
+  upload: uploadRecording,
 };

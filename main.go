@@ -588,7 +588,11 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 	_ = st.SetStatus(id, "transcribed", "")
 	log.Printf("реплик: %d, из них с именем: %d", len(segs), namedCount(segs))
 
-	log.Printf("делаю follow-up (%s)", cfg.Claude.Model)
+	if _, how, err := claudeClient(cfg); err == nil {
+		log.Printf("делаю follow-up (%s, доступ: %s)", cfg.Claude.Model, how)
+	} else {
+		log.Printf("делаю follow-up (%s)", cfg.Claude.Model)
+	}
 	// Модель должна видеть, что уже висит открытым: иначе каждый созвон
 	// заводит копии тех же задач, и состояние проекта тонет в дублях.
 	open, err := st.OpenItems("")
@@ -1000,6 +1004,11 @@ func cmdServe(ctx context.Context, args []string) error {
 		// читал бы файл ключа и менял OAuth-токен на каждого сотрудника.
 		cal := &calendarSource{cfg: cfg, d: d, log: lg}
 		sources = append(sources, cal, &schedulePoller{cfg: cfg, st: st, log: lg, src: cal})
+		if cfg.Calendar.Remind {
+			// Напоминание живёт отдельным тиком: раз в минуту, потому что
+			// напоминание за десять минут, пришедшее за четыре, уже бесполезно.
+			sources = append(sources, &reminder{cfg: cfg, st: st, log: lg})
+		}
 	}
 	if cfg.Telegram.Listen {
 		sources = append(sources, &telegramSource{cfg: cfg, d: d, log: lg})

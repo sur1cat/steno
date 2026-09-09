@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // Followup — то, ради чего всё затевалось. Структура выбрана под то, как это
@@ -179,11 +178,10 @@ func clock(sec float64) string {
 }
 
 func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, projects []Project, primers, openItems string) (*Followup, Spend, error) {
-	key, err := secret(cfg.Claude.APIKeyEnv, "Claude")
+	client, _, err := claudeClient(cfg)
 	if err != nil {
 		return nil, Spend{}, err
 	}
-	client := anthropic.NewClient(option.WithAPIKey(key))
 
 	var head strings.Builder
 	fmt.Fprintf(&head, "Название встречи: %s\n", orDash(m.Title))

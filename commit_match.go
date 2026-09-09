@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // Сверка открытых задач с новыми коммитами.
@@ -54,11 +53,10 @@ func matchCommitsToTasks(ctx context.Context, cfg *Config, project string,
 	if len(tasks) == 0 || len(commits) == 0 {
 		return nil, Spend{}, nil
 	}
-	key, err := secret(cfg.Claude.APIKeyEnv, "Claude")
+	client, _, err := claudeClient(cfg)
 	if err != nil {
 		return nil, Spend{}, err
 	}
-	client := anthropic.NewClient(option.WithAPIKey(key))
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Проект: %s\n\nОткрытые задачи:\n", project)

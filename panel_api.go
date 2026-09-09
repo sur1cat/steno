@@ -40,6 +40,7 @@ func (p *Panel) api() http.Handler {
 	mux.Handle("POST /api/items/{id}/reopen", p.apiGuard(p.apiReopenItem))
 	mux.Handle("POST /api/schedule/{key}/override", p.apiGuard(p.apiScheduleOverride))
 	mux.Handle("POST /api/invite", p.apiGuard(p.apiInvite))
+	mux.Handle("POST /api/upload", p.apiGuard(p.apiUpload))
 	return mux
 }
 

@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS schedule (
 -- Ручное решение живёт отдельно от того, что видно в календаре: опрос
 -- перезаписывает строку расписания целиком, а «не ходить сюда» должно это
 -- пережить.
+-- О каком созвоне уже напомнили. Отдельной таблицей, а не колонкой в
+-- расписании: опрос календаря перезаписывает строку целиком, и отметка о
+-- напоминании этого не пережила бы — человек получал бы одно и то же каждую
+-- минуту.
+CREATE TABLE IF NOT EXISTS schedule_reminded (
+  key         TEXT PRIMARY KEY,
+  reminded_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schedule_override (
   key        TEXT PRIMARY KEY,
   decision   TEXT NOT NULL,
@@ -264,4 +273,125 @@ func inviteToCall(ctx context.Context, d *Dispatcher, meetURL, title, why string
 		Status:    "recording",
 	}
 	return m.ID, d.Start(ctx, adHocKey(u, time.Now()), m, why), nil
+}
+
+// --- напоминания -------------------------------------------------------------
+//
+// Почту читают не все и не всегда, а пропущенная встреча стоит дороже одного
+// сообщения в чат. Напоминание приходит туда же, куда потом придёт follow-up,
+// и говорит заодно, придёт ли бот, — если нет, ещё есть время это поправить.
+
+func (s *Store) MarkReminded(key string) (bool, error) {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO schedule_reminded (key,reminded_at) VALUES (?,?)`,
+		key, time.Now().Unix())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// PruneReminded убирает отметки о прошедшем: таблица не должна расти вечно.
+func (s *Store) PruneReminded(before time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM schedule_reminded WHERE reminded_at < ?`, before.Unix())
+	return err
+}
+
+type reminder struct {
+	cfg *Config
+	st  *Store
+	log *log.Logger
+}
+
+func (r *reminder) Name() string { return "напоминания" }
+
+func (r *reminder) Run(ctx context.Context) error {
+	before := r.cfg.Calendar.RemindBefore.D()
+	if before <= 0 {
+		before = 10 * time.Minute
+	}
+	r.log.Printf("напоминания: за %s до начала", before)
+
+	// Раз в минуту: напоминание за десять минут, пришедшее за четыре, уже
+	// бесполезно.
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		r.once(ctx, before)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+	}
+}
+
+func (r *reminder) once(ctx context.Context, before time.Duration) {
+	now := time.Now()
+	entries, err := r.st.Schedule(now, now.Add(before))
+	if err != nil {
+		r.log.Printf("напоминания: %v", err)
+		return
+	}
+	for _, e := range entries {
+		if e.Recorded != "" {
+			continue // уже записывается — напоминать не о чем
+		}
+		fresh, err := r.st.MarkReminded(e.Key)
+		if err != nil {
+			r.log.Printf("напоминания: %v", err)
+			continue
+		}
+		if !fresh {
+			continue
+		}
+		r.send(ctx, e, now)
+	}
+	_ = r.st.PruneReminded(now.AddDate(0, 0, -2))
+}
+
+func (r *reminder) send(ctx context.Context, e ScheduleEntry, now time.Time) {
+	text := remindText(e, now)
+	if r.cfg.Telegram.Enabled && r.cfg.Telegram.ChatID != "" {
+		if err := sendTelegramText(ctx, r.cfg, r.cfg.Telegram.ChatID, text); err != nil {
+			r.log.Printf("напоминания: telegram: %v", err)
+		}
+	}
+	if r.cfg.Slack.Enabled && r.cfg.Slack.Channel != "" {
+		if err := sendSlackText(ctx, r.cfg, r.cfg.Slack.Channel, text); err != nil {
+			r.log.Printf("напоминания: slack: %v", err)
+		}
+	}
+}
+
+func remindText(e ScheduleEntry, now time.Time) string {
+	var b strings.Builder
+	mins := int(e.StartsAt.Sub(now).Minutes())
+	switch {
+	case mins <= 0:
+		b.WriteString("Сейчас начинается")
+	case mins == 1:
+		b.WriteString("Через минуту")
+	default:
+		fmt.Fprintf(&b, "Через %d мин", mins)
+	}
+	fmt.Fprintf(&b, " — %s\n%s", orDash(e.Title), e.StartsAt.Format("15:04"))
+	if len(e.Attendees) > 0 {
+		fmt.Fprintf(&b, " · %s", strings.Join(e.Attendees, ", "))
+	}
+	b.WriteString("\n")
+
+	// Про бота говорим всегда: «не придёт, потому что нет ссылки» — это ещё
+	// можно успеть поправить, а молчание разбирать потом уже поздно.
+	switch {
+	case e.WillAttend() && e.MeetURL != "":
+		fmt.Fprintf(&b, "Бот придёт. %s", e.MeetURL)
+	case e.Override == "skip":
+		b.WriteString("Бот не придёт: отменили в панели")
+	case e.Skip != "":
+		fmt.Fprintf(&b, "Бот не придёт: %s", e.Skip)
+	default:
+		b.WriteString("Бот придёт")
+	}
+	return b.String()
 }
