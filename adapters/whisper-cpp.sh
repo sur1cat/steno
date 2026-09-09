@@ -34,8 +34,15 @@ MODEL_DIR="${WHISPER_MODEL_DIR:-$HOME/.cache/whisper}"
 # из тех, что есть, а какая именно — печатаем в stderr, чтобы разница в
 # качестве расшифровки не выглядела необъяснимой.
 if [ -z "${WHISPER_MODEL:-}" ]; then
-  for m in ggml-large-v3 ggml-large-v3-turbo ggml-large-v2 ggml-large \
-           ggml-medium ggml-small ggml-base ggml-tiny; do
+  # Порядок — от лучшего качества к худшему, но с оговоркой: quantized-версии
+  # (-q5_0, -q8_0) весят втрое меньше и считают вдвое быстрее почти без потери
+  # качества, а turbo — ещё вчетверо быстрее large-v3 и лишь немного хуже.
+  # Поэтому turbo-quantized стоит выше обычной large-v3: на практике это лучший
+  # размен для созвонов.
+  for m in ggml-large-v3-turbo-q5_0 ggml-large-v3-turbo-q8_0 ggml-large-v3-turbo \
+           ggml-large-v3-q5_0 ggml-large-v3-q8_0 ggml-large-v3 \
+           ggml-large-v2 ggml-large \
+           ggml-medium-q5_0 ggml-medium ggml-small ggml-base ggml-tiny; do
     if [ -f "$MODEL_DIR/$m.bin" ]; then
       WHISPER_MODEL="$MODEL_DIR/$m.bin"
       break

@@ -1,0 +1,576 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+
+	"golang.org/x/term"
+)
+
+// Мастер установки.
+//
+// Развернуть steno должно быть можно и на ноутбуке одного человека, и на
+// сервере команды с шестью параллельными созвонами. Разница между этими двумя
+// установками — десяток решений, каждое из которых по отдельности неочевидно:
+// сколько расшифровок держать одновременно, какой моделью распознавать, куда
+// публиковать. Заставлять человека собирать это из документации значит не
+// получить ни одной установки, кроме своей.
+//
+// Поэтому мастер спрашивает по одному и сразу проверяет ответ: ключ, который
+// не работает, лучше узнать здесь, а не на первом созвоне.
+
+type setupProfile struct {
+	Key   string
+	Name  string
+	About string
+
+	MaxConcurrentMeetings int
+	MaxConcurrentWhisper  int
+	Effort                string
+}
+
+var setupProfiles = []setupProfile{
+	{
+		Key: "personal", Name: "Для себя",
+		About:                 "Один человек, свои созвоны. Записи и расшифровки на своей машине.",
+		MaxConcurrentMeetings: 1, MaxConcurrentWhisper: 1, Effort: "medium",
+	},
+	{
+		Key: "team", Name: "Небольшая команда",
+		About:                 "Несколько созвонов в неделю, редко больше одного разом.",
+		MaxConcurrentMeetings: 2, MaxConcurrentWhisper: 1, Effort: "high",
+	},
+	{
+		Key: "big", Name: "Большая команда",
+		About:                 "Пять-шесть созвонов параллельно, отдельный сервер, GPU или Groq.",
+		MaxConcurrentMeetings: 6, MaxConcurrentWhisper: 2, Effort: "high",
+	},
+}
+
+type setupState struct {
+	dir     string
+	profile setupProfile
+	cfg     *Config
+	env     map[string]string
+	in      *bufio.Reader
+}
+
+func cmdSetup(ctx context.Context, args []string) error {
+	fs := newFlagSet("setup")
+	out := fs.String("o", "steno.json", "куда записать конфиг")
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
+
+	s := &setupState{
+		cfg: defaultConfig(),
+		env: map[string]string{},
+		in:  bufio.NewReader(os.Stdin),
+	}
+	abs, err := filepath.Abs(*out)
+	if err != nil {
+		return err
+	}
+	s.dir = filepath.Dir(abs)
+
+	title("steno — настройка")
+	fmt.Println(dim("Спрошу по одному и сразу проверю. Пустой ответ берёт значение в скобках."))
+	fmt.Println(dim("Прервать можно в любой момент — ничего не записывается до самого конца."))
+	fmt.Println()
+
+	if _, err := os.Stat(abs); err == nil {
+		if !s.confirm(abs+" уже есть. Перезаписать?", false) {
+			return fmt.Errorf("отменено")
+		}
+	}
+
+	steps := []func(context.Context) error{
+		s.askProfile,
+		s.askData,
+		s.askTranscribe,
+		s.askClaude,
+		s.askSources,
+		s.askTargets,
+		s.askPanel,
+	}
+	for _, step := range steps {
+		if err := step(ctx); err != nil {
+			return err
+		}
+	}
+	return s.write(abs)
+}
+
+// --- шаги --------------------------------------------------------------------
+
+func (s *setupState) askProfile(context.Context) error {
+	section("Масштаб")
+	var opts []string
+	for _, p := range setupProfiles {
+		opts = append(opts, p.Name+" — "+dim(p.About))
+	}
+	i := s.choose("Как будете пользоваться?", opts, 1)
+	s.profile = setupProfiles[i]
+
+	s.cfg.Calendar.MaxConcurrent = s.profile.MaxConcurrentMeetings
+	s.cfg.Transcribe.MaxConcurrent = s.profile.MaxConcurrentWhisper
+	s.cfg.Claude.Effort = s.profile.Effort
+	return nil
+}
+
+func (s *setupState) askData(context.Context) error {
+	section("Где хранить")
+	def := filepath.Join(s.dir, "data")
+	s.cfg.DataDir = s.ask("Каталог для записей и базы", def)
+	if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
+		return fmt.Errorf("не создался каталог: %w", err)
+	}
+	fmt.Println(ok("каталог готов"))
+	return nil
+}
+
+func (s *setupState) askTranscribe(ctx context.Context) error {
+	section("Чем распознавать речь")
+	fmt.Println(dim("От этого зависит и качество, и во что обойдётся железо."))
+	fmt.Println()
+
+	i := s.choose("Выбери", []string{
+		"Groq — та же whisper-large-v3, но на их железе. " +
+			dim("$0.04 за час звука, ничего ставить не надо, аудио уходит наружу"),
+		"whisper на своей машине. " +
+			dim("ничего не уходит наружу; нужна модель на 0.5–3 ГБ, а без GPU медленно"),
+		"Субтитры Google Meet. " +
+			dim("бесплатно и мгновенно, качество ниже, смешанную речь не тянет"),
+	}, 0)
+
+	switch i {
+	case 0:
+		s.cfg.Transcribe.Source = "command"
+		s.cfg.Transcribe.Cmd = []string{"./adapters/groq.sh", "{{audio}}", "{{language}}"}
+		key := s.askSecret("Ключ Groq", "console.groq.com/keys")
+		if key != "" {
+			s.env["GROQ_API_KEY"] = key
+			fmt.Println(ok("ключ записан"))
+		}
+	case 1:
+		s.cfg.Transcribe.Source = "command"
+		s.cfg.Transcribe.Cmd = []string{"./adapters/whisper-cpp.sh", "{{audio}}", "{{language}}"}
+		s.checkWhisper()
+	case 2:
+		s.cfg.Transcribe.Source = "captions"
+		fmt.Println(dim("  Текст возьмётся из субтитров Meet. Имена говорящих в нём уже есть."))
+	}
+	return nil
+}
+
+// checkWhisper смотрит, чего не хватает, и говорит, чем это ставится. Узнать об
+// отсутствующей модели на первом созвоне — худший момент из возможных.
+func (s *setupState) checkWhisper() {
+	missing := []string{}
+	for _, bin := range []string{"whisper-cli", "ffmpeg", "jq"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			missing = append(missing, bin)
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Println(warn("не хватает: " + strings.Join(missing, ", ")))
+		fmt.Println(dim("  brew install whisper-cpp ffmpeg jq"))
+	} else {
+		fmt.Println(ok("whisper-cli, ffmpeg и jq на месте"))
+	}
+
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".cache", "whisper")
+	found := ""
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "ggml-") && strings.HasSuffix(e.Name(), ".bin") &&
+				!strings.Contains(e.Name(), "silero") {
+				found = e.Name()
+				break
+			}
+		}
+	}
+	if found == "" {
+		fmt.Println(warn("модели нет — без неё расшифровка не заработает"))
+		fmt.Println(dim("  mkdir -p " + dir))
+		fmt.Println(dim("  curl -L -o " + dir + "/ggml-large-v3-turbo-q5_0.bin \\"))
+		fmt.Println(dim("    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"))
+		fmt.Println(dim("  и отдельно VAD — 868 КБ, но ускоряет в восемь раз:"))
+		fmt.Println(dim("  curl -L -o " + dir + "/ggml-silero-v5.1.2.bin \\"))
+		fmt.Println(dim("    https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"))
+	} else {
+		fmt.Println(ok("модель " + found))
+	}
+}
+
+func (s *setupState) askClaude(ctx context.Context) error {
+	section("Claude — он собирает follow-up")
+	key := s.askSecret("Ключ Anthropic", "console.anthropic.com → API keys")
+	if key != "" {
+		s.env["ANTHROPIC_API_KEY"] = key
+	}
+
+	i := s.choose("Модель", []string{
+		"claude-opus-5 " + dim("умнее, около $0.40 за часовой созвон"),
+		"claude-sonnet-5 " + dim("дешевле в два с половиной раза, для планёрок обычно хватает"),
+	}, 0)
+	s.cfg.Claude.Model = []string{"claude-opus-5", "claude-sonnet-5"}[i]
+	fmt.Println(dim("  Усилие: " + s.cfg.Claude.Effort + " — при нём основная часть счёта уходит на"))
+	fmt.Println(dim("  рассуждение модели. Если станет дорого, снижай его первым."))
+	return nil
+}
+
+func (s *setupState) askSources(ctx context.Context) error {
+	section("Как бот попадает в звонок")
+	fmt.Println(dim("Можно включить несколько. Календарь закрывает запланированное,"))
+	fmt.Println(dim("остальные — внезапное."))
+	fmt.Println()
+
+	if s.confirm("Ходить по календарям команды?", false) {
+		s.cfg.Calendar.Enabled = true
+		s.cfg.Calendar.Calendars = commaList(s.ask("Чьи календари, через запятую", ""))
+		s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
+	}
+	if s.confirm("Приходить, когда бота добавляют в звонок по почте?", false) {
+		s.cfg.Gmail.Enabled = true
+		s.cfg.Gmail.Account = s.ask("Почта аккаунта бота", "")
+		if s.cfg.GoogleDocs.CredentialsFile == "" {
+			s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
+		}
+	}
+	if s.confirm("Принимать ссылки в Telegram?", true) {
+		s.cfg.Telegram.Listen = true
+		if tok := s.askSecret("Токен бота Telegram", "@BotFather"); tok != "" {
+			s.env["TELEGRAM_BOT_TOKEN"] = tok
+		}
+		s.cfg.Telegram.ChatID = s.ask("Из какого чата принимать (chat_id)", "")
+		if s.cfg.Telegram.ChatID != "" {
+			s.cfg.Telegram.AllowedChats = []string{s.cfg.Telegram.ChatID}
+		} else {
+			fmt.Println(warn("без chat_id сервис не запустит приём: принимать ссылки от кого угодно нельзя"))
+		}
+	}
+	return nil
+}
+
+func (s *setupState) askTargets(ctx context.Context) error {
+	section("Куда складывать итоги")
+	fmt.Println(dim("Панель есть всегда — там архив, поиск и проекты. Остальное по желанию."))
+	fmt.Println()
+
+	// Спрашиваем всегда, даже если приём в Telegram уже включён: включить
+	// отправку молча, по одному лишь факту приёма, — значит не сказать
+	// человеку, куда пойдут итоги его созвонов.
+	if s.cfg.Telegram.ChatID != "" {
+		if s.confirm("Присылать follow-up в Telegram, в тот же чат?", true) {
+			s.cfg.Telegram.Enabled = true
+		}
+	} else if s.confirm("Присылать follow-up в Telegram?", false) {
+		if tok := s.askSecret("Токен бота Telegram", "@BotFather"); tok != "" {
+			s.env["TELEGRAM_BOT_TOKEN"] = tok
+		}
+		s.cfg.Telegram.ChatID = s.ask("В какой чат (chat_id)", "")
+		s.cfg.Telegram.Enabled = s.cfg.Telegram.ChatID != ""
+	}
+	if s.confirm("Публиковать в Google Docs?", false) {
+		s.cfg.GoogleDocs.Enabled = true
+		if s.cfg.GoogleDocs.CredentialsFile == "" {
+			s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
+		}
+		s.cfg.GoogleDocs.Subject = s.ask("От чьего имени создавать документы", "")
+		s.cfg.GoogleDocs.FolderID = s.ask("ID папки Drive (пусто — корень)", "")
+		s.cfg.GoogleDocs.ProjectDocs = s.confirm("Вести отдельный документ на каждый проект?", true)
+	}
+	if s.confirm("Публиковать в Slack?", false) {
+		s.cfg.Slack.Enabled = true
+		if tok := s.askSecret("Токен бота Slack (xoxb-…)", "api.slack.com/apps"); tok != "" {
+			s.env["SLACK_BOT_TOKEN"] = tok
+		}
+		s.cfg.Slack.Channel = s.ask("Канал", "#созвоны")
+		s.cfg.Slack.DMOwners = s.confirm("Писать в личку тем, на ком задача?", true)
+	}
+	return nil
+}
+
+func (s *setupState) askPanel(ctx context.Context) error {
+	section("Панель")
+	s.cfg.Panel.Enabled = true
+	s.cfg.Panel.Addr = s.ask("Адрес", "127.0.0.1:8080")
+	pass := s.askSecret("Пароль (общий на команду)", "")
+	if pass == "" {
+		pass = randomPassword()
+		fmt.Println(ok("сгенерировал: " + pass))
+	}
+	s.env["STENO_PANEL_PASSWORD"] = pass
+	if !strings.HasPrefix(s.cfg.Panel.Addr, "127.0.0.1") &&
+		!strings.HasPrefix(s.cfg.Panel.Addr, "localhost") {
+		s.cfg.Panel.Secure = s.confirm("Панель за HTTPS?", true)
+		if !s.cfg.Panel.Secure {
+			fmt.Println(warn("панель смотрит наружу без TLS — пароль и cookie пойдут открытым текстом"))
+		}
+	}
+	return nil
+}
+
+// --- запись ------------------------------------------------------------------
+
+func (s *setupState) write(configPath string) error {
+	section("Готово")
+
+	// Секреты кладём отдельным файлом с правами 0600 и не пускаем в конфиг:
+	// конфиг хочется держать в репозитории, а токены — нет.
+	envPath := filepath.Join(s.dir, ".env")
+	if len(s.env) > 0 {
+		var b strings.Builder
+		b.WriteString("# Секреты steno. Файл читается при запуске.\n")
+		b.WriteString("# Не клади его в репозиторий: тут ключи, а не настройки.\n\n")
+		for _, k := range sortedKeys(s.env) {
+			fmt.Fprintf(&b, "%s=%s\n", k, s.env[k])
+		}
+		if err := os.WriteFile(envPath, []byte(b.String()), 0o600); err != nil {
+			return fmt.Errorf("не записался %s: %w", envPath, err)
+		}
+		fmt.Println(ok(envPath + "  " + dim("права 0600, "+strconv.Itoa(len(s.env))+" секретов")))
+	}
+
+	raw, err := marshalConfig(s.cfg)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(configPath, raw, 0o644); err != nil {
+		return err
+	}
+	fmt.Println(ok(configPath))
+
+	// .gitignore рядом с секретами — чтобы они не уехали в первый же коммит.
+	gi := filepath.Join(s.dir, ".gitignore")
+	if _, err := os.Stat(gi); os.IsNotExist(err) && len(s.env) > 0 {
+		_ = os.WriteFile(gi, []byte(".env\ndata/\n"), 0o644)
+		fmt.Println(ok(gi + "  " + dim("чтобы .env не уехал в репозиторий")))
+	}
+
+	fmt.Println()
+	fmt.Println(bold("Дальше:"))
+	fmt.Printf("  steno doctor -c %s   %s\n", filepath.Base(configPath),
+		dim("проверить, что всё на месте"))
+	fmt.Printf("  steno serve  -c %s   %s\n", filepath.Base(configPath),
+		dim("запустить"))
+	if s.cfg.Panel.Enabled {
+		fmt.Printf("  http://%s%s\n", s.cfg.Panel.Addr, dim("  — панель"))
+	}
+	fmt.Println()
+	fmt.Println(dim("Проверить на живом созвоне, ничего больше не настраивая:"))
+	fmt.Printf("  steno join --no-followup --captions %s\n",
+		dim("https://meet.google.com/…"))
+	return nil
+}
+
+// --- ввод --------------------------------------------------------------------
+
+func (s *setupState) ask(question, def string) string {
+	for {
+		if def != "" {
+			fmt.Printf("  %s [%s]: ", question, dim(def))
+		} else {
+			fmt.Printf("  %s: ", question)
+		}
+		line, err := s.in.ReadString('\n')
+		if err != nil && strings.TrimSpace(line) == "" {
+			return def
+		}
+		if v := strings.TrimSpace(line); v != "" {
+			return v
+		}
+		return def
+	}
+}
+
+// askSecret не показывает ввод: пароли и ключи не должны оставаться в истории
+// терминала и на плече у соседа.
+func (s *setupState) askSecret(question, where string) string {
+	if where != "" {
+		fmt.Printf("  %s %s\n", question, dim("— "+where))
+		fmt.Print("  ")
+	} else {
+		fmt.Printf("  %s: ", question)
+	}
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		line, _ := s.in.ReadString('\n')
+		return strings.TrimSpace(line)
+	}
+	raw, err := term.ReadPassword(fd)
+	fmt.Println()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func (s *setupState) confirm(question string, def bool) bool {
+	hint := "y/N"
+	if def {
+		hint = "Y/n"
+	}
+	for {
+		fmt.Printf("  %s [%s]: ", question, dim(hint))
+		line, _ := s.in.ReadString('\n')
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "":
+			return def
+		case "y", "yes", "д", "да":
+			return true
+		case "n", "no", "н", "нет":
+			return false
+		}
+	}
+}
+
+func (s *setupState) choose(question string, options []string, def int) int {
+	fmt.Printf("  %s\n", question)
+	for i, o := range options {
+		fmt.Printf("    %d) %s\n", i+1, o)
+	}
+	for {
+		fmt.Printf("  Номер [%s]: ", dim(strconv.Itoa(def+1)))
+		line, _ := s.in.ReadString('\n')
+		v := strings.TrimSpace(line)
+		if v == "" {
+			return def
+		}
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= len(options) {
+			return n - 1
+		}
+	}
+}
+
+func (s *setupState) askGoogleKey() string {
+	fmt.Println(dim("  Нужен ключ service-account с domain-wide delegation."))
+	fmt.Println(dim("  Консоль Google → IAM → сервисные аккаунты → ключи → создать JSON."))
+	for {
+		p := s.ask("Путь к файлу ключа", "")
+		if p == "" {
+			fmt.Println(warn("без него календарь, почта и Google Docs не заработают"))
+			return ""
+		}
+		p = expandHome(p)
+		if c := checkGoogleKey("ключ", p); c.state == "ok" {
+			fmt.Println(ok(c.note))
+			return p
+		} else {
+			fmt.Println(warn(c.note))
+			for _, f := range c.fix {
+				fmt.Println(dim("  " + f))
+			}
+		}
+	}
+}
+
+// --- оформление ---------------------------------------------------------------
+//
+// Цвета включаются, только если вывод идёт в терминал: в логе systemd или в
+// пайпе escape-последовательности только мешают.
+
+var useColor = term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
+
+func paint(code, s string) string {
+	if !useColor {
+		return s
+	}
+	return "\x1b[" + code + "m" + s + "\x1b[0m"
+}
+
+func bold(s string) string { return paint("1", s) }
+func dim(s string) string  { return paint("2", s) }
+
+func title(s string) {
+	fmt.Println()
+	fmt.Println(bold(s))
+	fmt.Println(dim(strings.Repeat("─", len([]rune(s)))))
+}
+
+func section(s string) {
+	fmt.Println()
+	fmt.Println(bold("· " + s))
+}
+
+func ok(s string) string   { return "  " + paint("32", "✓") + " " + s }
+func warn(s string) string { return "  " + paint("33", "!") + " " + s }
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func randomPassword() string {
+	const alphabet = "abcdefghijkmnpqrstuvwxyz23456789"
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b)
+}
+
+// loadDotEnv подхватывает секреты из файла рядом с конфигом. Просить человека
+// каждый раз экспортировать шесть переменных — верный способ получить сервис,
+// запущенный без половины из них.
+func loadDotEnv(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		v = strings.Trim(v, `"'`)
+		// Уже заданное окружение главнее файла: в проде переменные приходят от
+		// systemd или docker, и файл не должен их перебивать.
+		if _, exists := os.LookupEnv(k); !exists {
+			_ = os.Setenv(k, v)
+		}
+	}
+	return nil
+}
+
+// marshalConfig печатает конфиг человекочитаемо: его будут править руками.
+func marshalConfig(c *Config) ([]byte, error) {
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+// commaList — свой разбор списка через запятую: одноимённая функция живёт в
+// файлах панели, которые сейчас переписываются, и завязываться на неё незачем.
+func commaList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}

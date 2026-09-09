@@ -22,6 +22,7 @@ import (
 
 const usage = `steno — заметки и follow-up с созвонов.
 
+  steno setup                настроить всё: спросит по одному и проверит
   steno serve                слушать все источники и ходить на созвоны
   steno join <meet-url>      зайти в созвон, записать и разослать follow-up
                              --record-only  только запись
@@ -56,6 +57,8 @@ func main() {
 
 	var err error
 	switch cmd {
+	case "setup":
+		err = cmdSetup(ctx, args)
 	case "serve":
 		err = cmdServe(ctx, args)
 	case "join":
@@ -131,6 +134,12 @@ func envOr(k, def string) string {
 }
 
 func open(configPath string) (*Config, *Store, error) {
+	// Секреты лежат в .env рядом с конфигом. Уже заданное окружение главнее:
+	// в проде переменные приходят от systemd или docker.
+	if abs, err := filepath.Abs(configPath); err == nil {
+		_ = loadDotEnv(filepath.Join(filepath.Dir(abs), ".env"))
+	}
+
 	if _, err := os.Stat(configPath); err != nil {
 		// Умолчания подставляем, только если человек не называл файл сам.
 		// Иначе опечатка в -c тихо запускала бы сервис без единого адресата:
