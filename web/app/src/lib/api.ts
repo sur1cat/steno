@@ -188,16 +188,19 @@ export interface SettingsProject {
   primer: string;
 }
 
-export interface SecretRow {
-  what: string;
-  env: string;
-  set: boolean;
-}
+// Секретов панель не знает вовсе — ни значений, ни имён переменных, ни того,
+// заданы ли они. Токены задаёт разработчик в `steno setup`; человеку, который
+// открыл панель посмотреть, куда уходит follow-up, показывать нечего.
+// Лишние поля в ответе сервера здесь просто не описаны и никем не читаются.
 
 export interface ChannelField {
   key: string;
   label: string;
-  kind: "text" | "list" | "number" | "duration" | "switch";
+  /**
+   * «list» — набор значений; по проводу это строка через запятую.
+   * «google» — не поле, а кнопка «Подключить Google»: значения не хранит.
+   */
+  kind: "text" | "list" | "number" | "duration" | "switch" | "google";
   hint: string;
   placeholder: string;
 }
@@ -211,14 +214,12 @@ export interface Channel {
   enabled: boolean;
   values: Record<string, string>;
   fields: ChannelField[];
-  secrets: SecretRow[] | null;
   summary: string;
   live: boolean;
 }
 
 export interface Settings {
   projects: SettingsProject[];
-  secrets: SecretRow[];
   channels: Channel[];
 }
 

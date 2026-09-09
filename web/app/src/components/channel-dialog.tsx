@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type Channel } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChipsInput, submittedFromChips } from "@/components/ui/chips-input";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -16,6 +16,20 @@ import {
 // Форма канала рисуется по описанию полей, которое пришло с сервера, а не по
 // своему списку: иначе новое поле пришлось бы заводить в двух местах, и рано
 // или поздно они разошлись бы.
+//
+// Имён переменных окружения здесь нет и не будет. Токены задаёт разработчик в
+// `steno setup`; человеку, который открыл панель посмотреть, куда уходит
+// follow-up, слово TELEGRAM_BOT_TOKEN не говорит ничего, кроме того, что он
+// попал не туда.
+
+/** Строка через запятую с сервера — в список значений и обратно. */
+function splitList(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export function ChannelDialog({
   open,
   onClose,
@@ -63,6 +77,9 @@ export function ChannelDialog({
         className="space-y-5"
         onSubmit={(e) => {
           e.preventDefault();
+          // Enter в наборе значений уже добавил значение — сохранять по нему
+          // рано: модалка закрылась бы посреди набора списка.
+          if (submittedFromChips()) return;
           save.mutate();
         }}
       >
@@ -80,7 +97,12 @@ export function ChannelDialog({
           <Switch checked={enabled} onCheckedChange={setEnabled} />
         </div>
 
-        {channel.fields.map((f) => (
+        {/* «google» — не поле, а кнопка «Подключить Google»; значения оно не
+            хранит, и текстовым полем его рисовать нельзя: получилась бы пустая
+            строка ввода, в которую нечего вписать. До готового обмена с
+            бэкендом раздел просто не рисуется — пустое место честнее мёртвого
+            поля. */}
+        {channel.fields.filter((f) => f.kind !== "google").map((f) => (
           <div key={f.key}>
             {f.kind === "switch" ? (
               <div className="flex items-start justify-between gap-4">
@@ -97,18 +119,35 @@ export function ChannelDialog({
               </div>
             ) : (
               <>
-                <label className="mb-1.5 block text-sm font-light text-[var(--muted-foreground)]">
+                <label
+                  htmlFor={`ch-${f.key}`}
+                  className="mb-1.5 block text-sm font-light text-[var(--muted-foreground)]"
+                >
                   {f.label}
                 </label>
-                <input
-                  value={values[f.key] ?? ""}
-                  onChange={(e) => set(f.key, e.target.value)}
-                  placeholder={f.placeholder}
-                  inputMode={f.kind === "number" ? "numeric" : undefined}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="h-10 w-full rounded-xl border-0 bg-[var(--muted)] px-3 text-sm placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
+                {/* Список набирается по одному значению, а не строкой через
+                    запятую: см. components/ui/chips-input.tsx. Наружу уходит
+                    та же строка — проволочный формат менять незачем. */}
+                {f.kind === "list" ? (
+                  <ChipsInput
+                    id={`ch-${f.key}`}
+                    value={splitList(values[f.key])}
+                    onChange={(next) => set(f.key, next.join(", "))}
+                    placeholder={f.placeholder}
+                    addLabel={`Добавить: ${f.label.toLowerCase()}`}
+                  />
+                ) : (
+                  <input
+                    id={`ch-${f.key}`}
+                    value={values[f.key] ?? ""}
+                    onChange={(e) => set(f.key, e.target.value)}
+                    placeholder={f.placeholder}
+                    inputMode={f.kind === "number" ? "numeric" : undefined}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="h-10 w-full rounded-xl border-0 bg-[var(--muted)] px-3 text-sm placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                )}
                 {f.hint && (
                   <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
                     {f.hint}
@@ -118,26 +157,6 @@ export function ChannelDialog({
             )}
           </div>
         ))}
-
-        {channel.secrets && channel.secrets.length > 0 && (
-          <div className="rounded-xl border border-[var(--border)] p-4">
-            <div className="text-sm">Что нужно в окружении</div>
-            <p className="mb-3 text-xs text-[var(--muted-foreground)]">
-              Токены задаются переменными окружения и в базу не попадают: класть их туда, где
-              лежат расшифровки всех разговоров, не стоит.
-            </p>
-            <div className="space-y-2">
-              {channel.secrets.map((s) => (
-                <div key={s.env} className="flex items-center justify-between gap-3 text-sm">
-                  <span>
-                    {s.what} <code className="text-xs text-[var(--muted-foreground)]">{s.env}</code>
-                  </span>
-                  <Badge variant={s.set ? "success" : "warning"}>{s.set ? "задан" : "пусто"}</Badge>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>

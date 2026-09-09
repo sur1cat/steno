@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, type SettingsProject, type Source } from "@/lib/api";
 import { dateRu } from "@/lib/fmt";
 import { Button } from "@/components/ui/button";
+import { ChipsInput, submittedFromChips } from "@/components/ui/chips-input";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -30,7 +31,7 @@ export function ProjectDialog({
 }) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
-  const [aliases, setAliases] = useState("");
+  const [aliases, setAliases] = useState<string[]>([]);
   const [about, setAbout] = useState("");
   const [sources, setSources] = useState<Source[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -38,7 +39,7 @@ export function ProjectDialog({
   useEffect(() => {
     if (!open) return;
     setName(project?.name ?? "");
-    setAliases((project?.aliases ?? []).join(", "));
+    setAliases(project?.aliases ?? []);
     setAbout(project?.about ?? "");
     setSources(project?.sources ?? []);
     setConfirmDelete(false);
@@ -57,10 +58,7 @@ export function ProjectDialog({
         oldName: project?.name,
         name: name.trim(),
         about: about.trim(),
-        aliases: aliases
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        aliases,
         // Пустые строки не сохраняем: человек добавил источник и передумал —
         // это не повод получить ошибку «у источника пустое значение».
         sources: sources.filter((s) => s.value.trim() !== ""),
@@ -102,6 +100,9 @@ export function ProjectDialog({
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
+            // Enter в «как называют вслух» уже добавил название — сохранять по
+            // нему рано: модалка закрылась бы посреди набора списка.
+            if (submittedFromChips()) return;
             if (name.trim()) save.mutate();
           }}
         >
@@ -115,16 +116,24 @@ export function ProjectDialog({
           />
 
           <div>
-            <Input
-              label="Как называют вслух"
+            <label
+              htmlFor="project-aliases"
+              className="mb-1.5 block text-sm font-light text-[var(--muted-foreground)]"
+            >
+              Как называют вслух
+            </label>
+            {/* Не строка через запятую: набранное имя становится отдельным
+                значением, и видно, что именно в списке лежит. */}
+            <ChipsInput
+              id="project-aliases"
               value={aliases}
-              onChange={(e) => setAliases(e.target.value)}
-              placeholder="биллинг, payments, платёжка"
-              autoComplete="off"
+              onChange={setAliases}
+              placeholder="биллинг"
+              addLabel="Добавить название"
             />
-            <p className="mt-1.5 text-xs text-[var(--muted-foreground)]">
-              Через запятую. По этому списку «биллинг» превращается в «Платежи» — не гаданием
-              модели, а точным совпадением.
+            <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+              По этому списку «биллинг» превращается в «Платежи» — точным совпадением, а не
+              догадкой. Добавляй по одному: Enter или плюс.
             </p>
           </div>
 

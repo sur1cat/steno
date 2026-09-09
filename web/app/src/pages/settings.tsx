@@ -10,14 +10,16 @@ import { Empty, Failed, Loading, PageHead } from "@/components/layout";
 import { ProjectDialog } from "@/components/project-dialog";
 import { ChannelDialog } from "@/components/channel-dialog";
 
-// Настройки разложены по разделам, а не идут одной простынёй.
+// Настройки разложены по разделам, а не идут одной простынёй: раньше всё шло
+// подряд одним свитком, и до нужного места приходилось проматывать остальные.
+// Адрес (?tab=) помнит, где человек был: обновление страницы не выбрасывает
+// наверх.
 //
-// Раньше проекты, каналы и секреты шли подряд одним свитком: чтобы посмотреть,
-// задан ли токен Slack, приходилось проматывать все проекты и все каналы, а
-// найдя — прокручивать обратно. Разделы держат страницу короткой, а адрес
-// (?tab=) помнит, где человек был: обновление страницы не выбрасывает наверх.
+// Раздела «Секреты» здесь нет. Он показывал имена переменных окружения и то,
+// пусты они или нет, — то есть спрашивал у человека из продаж про то, чего он
+// не задаёт и задать не может. Токены живут в `steno setup`, у разработчика.
 
-type TabKey = "projects" | "channels" | "secrets";
+type TabKey = "projects" | "channels";
 
 export function SettingsPage() {
   const q = useQuery({ queryKey: ["settings"], queryFn: api.settings });
@@ -29,10 +31,9 @@ export function SettingsPage() {
   if (q.isPending) return <Loading />;
   if (q.isError) return <Failed error={q.error} />;
 
-  const { projects, channels, secrets } = q.data;
+  const { projects, channels } = q.data;
   const raw = params.get("tab");
-  const tab: TabKey =
-    raw === "channels" || raw === "secrets" || raw === "projects" ? raw : "projects";
+  const tab: TabKey = raw === "channels" ? raw : "projects";
 
   // Число рядом с разделом — сколько там всего, а не сколько включено.
   // «Каналы 0» при семи выключенных каналах читается как «каналов нет», и это
@@ -40,7 +41,6 @@ export function SettingsPage() {
   const tabs: { key: TabKey; label: string; count: number }[] = [
     { key: "projects", label: "Проекты", count: projects.length },
     { key: "channels", label: "Каналы", count: channels.length },
-    { key: "secrets", label: "Секреты", count: secrets.length },
   ];
 
   const openProject = (p: SettingsProject | null) => {
@@ -52,7 +52,7 @@ export function SettingsPage() {
     <>
       <PageHead
         title="Настройки"
-        sub="Проекты и каналы правятся здесь. Секреты — только переменными окружения: класть токены в ту же базу, где лежат расшифровки всех разговоров, не стоит."
+        sub="Проекты — чтобы steno понимал, о чём речь на созвоне. Каналы — откуда он берёт созвоны и куда потом присылает итог."
       />
 
       {/* w-fit: полоса разделов обнимает свои три кнопки. Растянутая во всю
@@ -81,8 +81,8 @@ export function SettingsPage() {
         <section>
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
             <p className="max-w-prose text-sm leading-relaxed text-[var(--muted-foreground)]">
-              Проект — это то, к чему привязываются задачи и решения с созвонов. Справка по нему
-              собирается из репозиториев и заметок и уходит в модель вместе с расшифровкой.
+              Проект — это то, по чему потом раскладываются задачи и решения с созвонов. Чем
+              лучше steno знает, чем проект занят, тем точнее он понимает, о чём шла речь.
             </p>
             <Button variant="outline" size="sm" onClick={() => openProject(null)}>
               <Plus className="h-4 w-4" />
@@ -108,11 +108,13 @@ export function SettingsPage() {
                 >
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="min-w-0 break-words">{p.name}</span>
+                    {/* Сколько именно символов в справке — счётчик для того,
+                        кто её собирал. Человеку важно одно: собрана или нет. */}
                     {p.primerChars > 0 ? (
-                      <Badge className="shrink-0">справка {p.primerChars} симв.</Badge>
+                      <Badge className="shrink-0">steno в курсе</Badge>
                     ) : (
                       <Badge variant="warning" className="shrink-0">
-                        справки нет
+                        ещё не изучен
                       </Badge>
                     )}
                   </span>
@@ -134,10 +136,8 @@ export function SettingsPage() {
       {tab === "channels" && (
         <section>
           <p className="mb-3 max-w-prose text-sm leading-relaxed text-[var(--muted-foreground)]">
-            Настройки лежат в базе и главнее <code>steno.json</code>: файл — начальное значение,
-            а дальше канал правится здесь. Адресаты перечитываются перед каждой рассылкой,
-            источники слушают сеть с самого старта — их переключение подхватится при следующем
-            запуске сервиса.
+            Откуда steno узнаёт о созвонах и куда присылает итог. Открой любой, чтобы включить
+            или поменять — что там настраивать, канал расскажет сам.
           </p>
           <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
             {channels.map((c) => (
@@ -153,8 +153,14 @@ export function SettingsPage() {
                     <Badge variant={c.enabled ? "success" : "default"} className="shrink-0">
                       {c.enabled ? "вкл" : "выкл"}
                     </Badge>
-                    <span className="text-xs uppercase tracking-wide text-[var(--muted-foreground)]/70">
-                      {c.in && c.out ? "вход и выход" : c.in ? "вход" : "выход"}
+                    {/* Теми же словами, что и в самой модалке канала: «вход» и
+                        «выход» короче, но требуют догадаться, чей это вход. */}
+                    <span className="text-[13px] text-[var(--muted-foreground)]/70">
+                      {c.in && c.out
+                        ? "приносит созвоны и уносит follow-up"
+                        : c.in
+                          ? "приносит созвоны"
+                          : "уносит follow-up"}
                     </span>
                   </span>
                   <span className="mt-1 block max-w-prose text-sm leading-relaxed text-[var(--muted-foreground)]">
@@ -167,30 +173,6 @@ export function SettingsPage() {
         </section>
       )}
 
-      {tab === "secrets" && (
-        <section>
-          <p className="mb-3 max-w-prose text-sm leading-relaxed text-[var(--muted-foreground)]">
-            Панель видит только имя переменной и то, пуста она или нет. Значений здесь нет и не
-            будет.
-          </p>
-          <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
-            {secrets.map((s) => (
-              <div
-                key={s.env}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm sm:px-5"
-              >
-                <Badge variant={s.set ? "success" : "warning"} className="shrink-0 order-first">
-                  {s.set ? "задан" : "пусто"}
-                </Badge>
-                <span className="min-w-0">{s.what}</span>
-                <code className="ml-auto shrink-0 rounded-md bg-[var(--muted)] px-2 py-0.5 text-xs text-[var(--muted-foreground)]">
-                  {s.env}
-                </code>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       <ProjectDialog
         open={projectOpen}
