@@ -211,7 +211,7 @@ func (s *setupState) askTranscribe(ctx context.Context) error {
 	switch i {
 	case 0:
 		s.cfg.Transcribe.Source = "command"
-		s.cfg.Transcribe.Cmd = []string{"./adapters/groq.sh", "{{audio}}", "{{language}}"}
+		s.cfg.Transcribe.Cmd = []string{findAdapter("groq.sh"), "{{audio}}", "{{language}}"}
 		key := s.askSecret("Ключ Groq", "console.groq.com/keys")
 		if key != "" {
 			s.env["GROQ_API_KEY"] = key
@@ -219,7 +219,7 @@ func (s *setupState) askTranscribe(ctx context.Context) error {
 		}
 	case 1:
 		s.cfg.Transcribe.Source = "command"
-		s.cfg.Transcribe.Cmd = []string{"./adapters/whisper-cpp.sh", "{{audio}}", "{{language}}"}
+		s.cfg.Transcribe.Cmd = []string{findAdapter("whisper-cpp.sh"), "{{audio}}", "{{language}}"}
 		s.checkWhisper()
 	case 2:
 		s.cfg.Transcribe.Source = "captions"
@@ -737,4 +737,48 @@ func commaList(s string) []string {
 		}
 	}
 	return out
+}
+
+// findAdapter ищет адаптер расшифровки и возвращает путь, который сработает из
+// любого каталога.
+//
+// Раньше в конфиг писалось «./adapters/whisper-cpp.sh» — относительный путь,
+// живущий только внутри клона репозитория. У поставившего через brew файла по
+// этому пути нет вовсе, и распознавание молча оказывалось неработающим: doctor
+// говорил «не запускается», а откуда взять — нет.
+//
+// Порядок понятный: рядом с текущим каталогом (разработка), рядом с самим
+// бинарником, и в share пакета — туда их кладёт формула Homebrew.
+func findAdapter(name string) string {
+	var roots []string
+	if wd, err := os.Getwd(); err == nil {
+		roots = append(roots, filepath.Join(wd, "adapters"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		if exe, err = filepath.EvalSymlinks(exe); err == nil {
+			dir := filepath.Dir(exe)
+			roots = append(roots,
+				filepath.Join(dir, "adapters"),
+				// Cellar/steno/<версия>/bin/steno → .../share/steno/adapters
+				filepath.Join(dir, "..", "share", "steno", "adapters"),
+			)
+		}
+	}
+	if p := os.Getenv("HOMEBREW_PREFIX"); p != "" {
+		roots = append(roots, filepath.Join(p, "share", "steno", "adapters"))
+	}
+	roots = append(roots, "/opt/homebrew/share/steno/adapters", "/usr/local/share/steno/adapters")
+
+	for _, r := range roots {
+		p := filepath.Join(r, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			if abs, err := filepath.Abs(p); err == nil {
+				return abs
+			}
+			return p
+		}
+	}
+	// Не нашли — оставляем прежний вид, чтобы doctor сказал об этом словами, а
+	// конфиг остался читаемым и правился руками.
+	return filepath.Join("adapters", name)
 }

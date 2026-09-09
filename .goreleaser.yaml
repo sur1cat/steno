@@ -81,8 +81,14 @@ brews:
     # тянуть их тому, кто выбрал Groq или субтитры, незачем.
     dependencies:
       - name: ffmpeg
+    # Адаптеры расшифровки кладутся рядом с бинарником: без них steno умеет
+    # только субтитры площадки, а setup ищет их именно в share пакета. Первая
+    # brew-установка этого не делала, и распознавание оказывалось неработающим.
+    extra_install: |
+      pkgshare.install "adapters"
     test: |
       assert_match "steno", shell_output("#{bin}/steno help")
+      assert_predicate pkgshare/"adapters/whisper-cpp.sh", :exist?
     caveats: |
       Настройка одной командой — она спросит всё нужное и проверит по ходу:
 

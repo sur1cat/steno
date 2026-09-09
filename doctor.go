@@ -49,7 +49,16 @@ func cmdDoctor(args []string) error {
 	cs = append(cs, checkTargets(cfg)...)
 	cs = append(cs, checkPanel(cfg))
 
-	fmt.Printf("steno doctor · конфиг %s\n\n", orDash(*cfgPath))
+	// Отсутствие конфига надо называть отсутствием. Раньше в шапке печаталось
+	// «конфиг steno.json» и тогда, когда файла не было вовсе: doctor показывал
+	// умолчания, человек читал их как свои настройки и не понимал, почему панель
+	// выключена, модель не та, а адаптер не находится.
+	if _, err := os.Stat(*cfgPath); err != nil {
+		fmt.Printf("steno doctor · %s\n", paint("33", "конфига "+*cfgPath+" нет — показываю умолчания"))
+		fmt.Printf("%s\n\n", dim("настроить одной командой:  steno setup"))
+	} else {
+		fmt.Printf("steno doctor · конфиг %s\n\n", *cfgPath)
+	}
 	blocked, broken := false, false
 	for _, c := range cs {
 		mark := map[string]string{"ok": "✓", "fail": "✗", "off": "—"}[c.state]
