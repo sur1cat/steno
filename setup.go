@@ -138,7 +138,9 @@ func cmdSetup(ctx context.Context, args []string) error {
 		s.askTargets,
 		s.askPanel,
 	}
-	stepNo, stepTotal = 0, len(steps)
+	// +1 — «Готово» тоже раздел и тоже печатает заголовок. Без этого последним
+	// показывалось «шаг 8 из 7».
+	stepNo, stepTotal = 0, len(steps)+1
 	for _, step := range steps {
 		if err := step(ctx); err != nil {
 			return err
