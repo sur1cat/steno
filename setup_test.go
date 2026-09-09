@@ -35,11 +35,11 @@ func TestSetupWritesConfigAndSecrets(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "steno.json")
 
-	// Небольшая команда · данные по умолчанию · Groq · ключ · Claude opus ·
-	// без календаря · без почты · Telegram да · токен · чат · follow-up в
-	// Telegram · без Docs · без Slack · панель · пароль.
+	// Небольшая команда · данные по умолчанию · Groq · ключ · Claude по ключу ·
+	// ключ · opus · без календаря · без почты · Telegram да · токен · чат ·
+	// follow-up в Telegram · без Docs · без Slack · панель · пароль.
 	input := strings.Join([]string{
-		"2", "", "1", "groq-ключ", "sk-ant-ключ", "1",
+		"2", "", "1", "groq-ключ", "2", "sk-ant-ключ", "1",
 		"n", "n", "y", "телеграм-токен", "-100500",
 		"y", "n", "n",
 		"127.0.0.1:9090", "пароль-панели",
@@ -70,6 +70,11 @@ func TestSetupWritesConfigAndSecrets(t *testing.T) {
 	}
 	if cfg.Claude.Model != "claude-opus-5" {
 		t.Errorf("модель: %q", cfg.Claude.Model)
+	}
+	// Сервер обязан ходить по ключу: на нём некому выполнить вход в Claude Code,
+	// и «auto» подобрал бы подписку разработчика, которой там нет.
+	if cfg.Claude.Via != "api" {
+		t.Errorf("сервер настроился не на ключ: %q", cfg.Claude.Via)
 	}
 	if !cfg.Telegram.Listen || cfg.Telegram.ChatID != "-100500" {
 		t.Errorf("Telegram настроился не так: %+v", cfg.Telegram)
@@ -110,13 +115,15 @@ func TestSetupWritesConfigAndSecrets(t *testing.T) {
 	}
 }
 
-// Профиль «для себя» и субтитры Meet: установка, которой не нужно вообще ничего,
-// кроме ключа Claude.
+// Профиль «для себя»: субтитры Meet и подписка Claude. Установка, которой не
+// нужно ни одного ключа и ни одного отдельного счёта.
 func TestSetupPersonalProfile(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "steno.json")
+	// Личный профиль · данные по умолчанию · субтитры · подписка Claude ·
+	// sonnet · дальше всё «нет».
 	input := strings.Join([]string{
-		"1", "", "3", "sk-ant", "2",
+		"1", "", "3", "1", "2",
 		"n", "n", "n",
 		"n", "n", "n",
 		"", "",
@@ -137,6 +144,15 @@ func TestSetupPersonalProfile(t *testing.T) {
 	}
 	if cfg.Claude.Model != "claude-sonnet-5" {
 		t.Errorf("модель: %q", cfg.Claude.Model)
+	}
+	// Ради этого профиль и заводился: для себя никакой второй подписки не нужно,
+	// follow-up идёт через ту, что уже оплачена. Ключ спрашивать нельзя — иначе
+	// человек решит, что без него не заработает.
+	if cfg.Claude.Via != "cli" {
+		t.Errorf("личная установка не встала на подписку: %q", cfg.Claude.Via)
+	}
+	if strings.Contains(string(raw), "sk-ant") {
+		t.Error("мастер всё-таки спросил ключ")
 	}
 	if cfg.Calendar.MaxConcurrent != 1 {
 		t.Errorf("личный профиль не применился: %d", cfg.Calendar.MaxConcurrent)

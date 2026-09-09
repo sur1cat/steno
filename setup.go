@@ -203,11 +203,20 @@ func (s *setupState) checkWhisper() {
 	if found == "" {
 		fmt.Println(warn("модели нет — без неё расшифровка не заработает"))
 		fmt.Println(dim("  mkdir -p " + dir))
-		fmt.Println(dim("  curl -L -o " + dir + "/ggml-large-v3-turbo-q5_0.bin \\"))
-		fmt.Println(dim("    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"))
+		fmt.Println(dim("  curl -L -o " + dir + "/ggml-large-v3-q5_0.bin \\"))
+		fmt.Println(dim("    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin"))
 		fmt.Println(dim("  и отдельно VAD — 868 КБ, но ускоряет в восемь раз:"))
 		fmt.Println(dim("  curl -L -o " + dir + "/ggml-silero-v5.1.2.bin \\"))
 		fmt.Println(dim("    https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"))
+	} else if strings.Contains(found, "turbo") {
+		// turbo не просто хуже — она подменяет незнакомые слова похожими
+		// знакомыми и зацикливается. Ошибка получается связной и правдоподобной,
+		// в follow-up её уже не отличить от сказанного.
+		fmt.Println(warn("модель " + found + " — она путает названия и зацикливается"))
+		fmt.Println(dim("  на записи созвона turbo превратила Plaud в Cloud AI и повторила"))
+		fmt.Println(dim("  его семнадцать раз подряд. Возьми large-v3-q5_0 — тот же размер:"))
+		fmt.Println(dim("  curl -L -o " + dir + "/ggml-large-v3-q5_0.bin \\"))
+		fmt.Println(dim("    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin"))
 	} else {
 		fmt.Println(ok("модель " + found))
 	}
@@ -215,9 +224,46 @@ func (s *setupState) checkWhisper() {
 
 func (s *setupState) askClaude(ctx context.Context) error {
 	section("Claude — он собирает follow-up")
-	key := s.askSecret("Ключ Anthropic", "console.anthropic.com → API keys")
-	if key != "" {
-		s.env["ANTHROPIC_API_KEY"] = key
+
+	// Два пути, и выбор между ними не про цену, а про то, кто запускает.
+	// Подписка идёт через `claude -p` — штатный неинтерактивный режим Claude
+	// Code. Отдельно платить не надо, но нужен выполненный вход, который делает
+	// человек: на сервере, куда никто не заходит, это не работает. Поэтому
+	// подписку предлагаем первой только если CLI уже готов.
+	cliOK, cliNote := claudeCLIAvailable()
+	opts := []string{
+		"Подписка Claude " + dim("через claude -p, отдельный ключ не нужен"),
+		"Ключ API " + dim("нужен для сервера: работает без входа человеком"),
+	}
+	if cliOK {
+		opts[0] += "\n     " + ok(cliNote)
+	} else {
+		opts[0] += "\n     " + warn(cliNote)
+	}
+	def := 1
+	if cliOK {
+		def = 0
+	}
+	if s.choose("Чем платить за follow-up", opts, def) == 0 {
+		s.cfg.Claude.Via = "cli"
+		if !cliOK {
+			fmt.Println(warn("CLI пока не готов — steno скажет об этом при первом созвоне"))
+			fmt.Println(dim("  поставь Claude Code и войди: claude auth login"))
+		}
+		// Потолок на запрос: у подписки нет счёта, который придёт в конце
+		// месяца, но есть лимит, который можно выбрать одним циклом.
+		if s.cfg.Claude.MaxUSDPerCall == 0 {
+			s.cfg.Claude.MaxUSDPerCall = 2
+		}
+		fmt.Println(dim("  Потолок на один follow-up: $" +
+			strconv.FormatFloat(s.cfg.Claude.MaxUSDPerCall, 'f', -1, 64) +
+			" — меняется в claude.max_usd_per_call"))
+	} else {
+		s.cfg.Claude.Via = "api"
+		key := s.askSecret("Ключ Anthropic", "console.anthropic.com → API keys")
+		if key != "" {
+			s.env["ANTHROPIC_API_KEY"] = key
+		}
 	}
 
 	i := s.choose("Модель", []string{

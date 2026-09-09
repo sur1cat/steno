@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/anthropics/anthropic-sdk-go"
 )
 
 // Сверка открытых задач с новыми коммитами.
@@ -53,11 +51,6 @@ func matchCommitsToTasks(ctx context.Context, cfg *Config, project string,
 	if len(tasks) == 0 || len(commits) == 0 {
 		return nil, Spend{}, nil
 	}
-	client, _, err := claudeClient(cfg)
-	if err != nil {
-		return nil, Spend{}, err
-	}
-
 	var b strings.Builder
 	fmt.Fprintf(&b, "Проект: %s\n\nОткрытые задачи:\n", project)
 	for _, t := range tasks {
@@ -100,49 +93,16 @@ func matchCommitsToTasks(ctx context.Context, cfg *Config, project string,
 		"additionalProperties": false,
 	}
 
-	adaptive := anthropic.ThinkingConfigAdaptiveParam{}
-	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(cfg.Claude.Model),
-		MaxTokens: 4000,
-		System: []anthropic.TextBlockParam{{
-			Text:         commitMatchSystem,
-			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		}},
-		Thinking: anthropic.ThinkingConfigParamUnion{OfAdaptive: &adaptive},
-		// Сверка идёт раз в час по всем проектам — разоряться тут незачем.
-		OutputConfig: anthropic.OutputConfigParam{
-			Effort: anthropic.OutputConfigEffortMedium,
-			Format: anthropic.JSONOutputFormatParam{Schema: schema},
-		},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(b.String())),
-		},
+	// Сверка идёт раз в сутки по всем проектам — разоряться тут незачем.
+	out, spend, err := askLLM(ctx, cfg, commitMatchSystem, b.String(), schema, 4000)
+	if err != nil {
+		return nil, Spend{}, err
 	}
 
-	stream := client.Messages.NewStreaming(ctx, params)
-	defer stream.Close()
-	var msg anthropic.Message
-	for stream.Next() {
-		if err := msg.Accumulate(stream.Current()); err != nil {
-			return nil, Spend{}, err
-		}
-	}
-	if err := stream.Err(); err != nil {
-		return nil, Spend{}, fmt.Errorf("Claude: %w", err)
-	}
-	if msg.StopReason == anthropic.StopReasonRefusal {
-		return nil, Spend{}, fmt.Errorf("Claude отказался: %s", msg.StopDetails.Explanation)
-	}
-	var out strings.Builder
-	for _, block := range msg.Content {
-		if t, ok := block.AsAny().(anthropic.TextBlock); ok {
-			out.WriteString(t.Text)
-		}
-	}
 	var parsed struct {
 		Verdicts []commitVerdict `json:"verdicts"`
 	}
-	if err := json.Unmarshal([]byte(out.String()), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		return nil, Spend{}, fmt.Errorf("разбор ответа: %w", err)
 	}
 
@@ -167,9 +127,6 @@ func matchCommitsToTasks(ctx context.Context, cfg *Config, project string,
 		kept = append(kept, v)
 	}
 
-	spend := computeSpend(cfg, cfg.Claude.Model,
-		msg.Usage.InputTokens, msg.Usage.OutputTokens,
-		msg.Usage.CacheReadInputTokens, msg.Usage.CacheCreationInputTokens)
 	return kept, spend, nil
 }
 

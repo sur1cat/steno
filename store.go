@@ -441,10 +441,18 @@ func (s *Store) saveTasks(meetingID string, items []ActionItem) error {
 }
 
 func (s *Store) SaveSpend(meetingID string, sp Spend) error {
-	_, err := s.db.Exec(`UPDATE followups SET input_tokens=?, output_tokens=?,
+	res, err := s.db.Exec(`UPDATE followups SET input_tokens=?, output_tokens=?,
 		cache_read=?, cache_write=?, cost_usd=? WHERE meeting_id=?`,
 		sp.Input, sp.Output, sp.CacheRead, sp.CacheWrite, sp.USD, meetingID)
-	return err
+	if err != nil {
+		return err
+	}
+	// UPDATE, не нашедший строки, — не ошибка для SQL, но здесь это потерянный
+	// расход. Проверяем явно: молчаливый ноль в учёте хуже, чем его отсутствие.
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("нет follow-up для %s — расход некуда записать", meetingID)
+	}
+	return nil
 }
 
 func (s *Store) Spend(meetingID string) (Spend, error) {

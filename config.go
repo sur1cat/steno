@@ -67,8 +67,17 @@ type Config struct {
 
 	Claude struct {
 		APIKeyEnv string `json:"api_key_env"`
-		Model     string `json:"model"`
-		Effort    string `json:"effort"`
+		// Как обращаться к Claude:
+		//   "api"  — по ключу. Нужен для сервера: работает без человека.
+		//   "cli"  — через `claude -p`, то есть по подписке, которая уже есть
+		//            у того, кто поставил steno себе на машину.
+		//   "auto" — есть ключ, берём ключ; нет — смотрим, готов ли CLI.
+		Via string `json:"via"`
+		// Потолок расхода на один запрос при работе через CLI. Ноль — без
+		// ограничения.
+		MaxUSDPerCall float64 `json:"max_usd_per_call"`
+		Model         string  `json:"model"`
+		Effort        string  `json:"effort"`
 		// Потолок ответа. Его делят между собой рассуждение модели и сам
 		// follow-up, поэтому на длинных созвонах при высоком effort его
 		// может не хватить.
@@ -292,6 +301,7 @@ func defaultConfig() *Config {
 	c.Transcribe.Nice = true
 	c.Claude.APIKeyEnv = "ANTHROPIC_API_KEY"
 	c.Claude.Model = "claude-opus-5"
+	c.Claude.Via = "auto"
 	c.Claude.Effort = "high"
 	c.Claude.MaxTokens = 16000
 	c.Calendar.PollEvery = Duration(2 * time.Minute)

@@ -13,11 +13,14 @@ import (
 //
 // Обычный путь — ключ из переменной окружения. Но SDK умеет находить учётные
 // данные и сам: сначала ANTHROPIC_API_KEY, потом ANTHROPIC_AUTH_TOKEN, потом
-// профиль, оставленный командой `ant auth login`. Требовать ключ, когда рабочий
-// профиль уже лежит на машине, — лишний шаг на ровном месте.
+// сохранённый профиль. Мы этот разбор не подменяем: если учётные данные уже
+// есть в каком-то из этих видов, требовать вдобавок переменную — лишний шаг.
 //
-// Для сервера всё-таки нужен именно ключ: профиль живёт у пользователя, а
-// сервис работает без него и не может пройти вход в браузере.
+// Отдельно стоит сказать, чего здесь нет: подписка на Claude Code — это доступ
+// для Claude Code, а не замена ключу. Тащить её учётные данные в сторонний
+// сервис значит обходить то, за что заплачено, и делать этого не нужно тем
+// более, что личное использование стоит копейки: тридцать созвонов в месяц на
+// Sonnet — около доллара.
 func claudeClient(cfg *Config) (anthropic.Client, string, error) {
 	key, err := secret(cfg.Claude.APIKeyEnv, "Claude")
 	if err == nil {
@@ -28,7 +31,7 @@ func claudeClient(cfg *Config) (anthropic.Client, string, error) {
 	// поэтому объясняем заранее, что искали.
 	if !anthropicCredentialsAvailable() {
 		return anthropic.Client{}, "", fmt.Errorf(
-			"нет доступа к Claude: переменная %s пуста и профиль `ant auth login` не найден.\n"+
+			"нет доступа к Claude: переменная %s пуста, других учётных данных тоже не нашлось.\n"+
 				"  → ключ создаётся на console.anthropic.com → API keys\n"+
 				"  → export %s=sk-ant-…", cfg.Claude.APIKeyEnv, cfg.Claude.APIKeyEnv)
 	}
@@ -47,7 +50,7 @@ func anthropicCredentialsAvailable() bool {
 	return antProfileExists()
 }
 
-// antProfileExists ищет профиль, который оставляет `ant auth login`.
+// antProfileExists ищет сохранённый профиль Anthropic, если он есть на машине.
 func antProfileExists() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {

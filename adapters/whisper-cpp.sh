@@ -10,7 +10,10 @@
 #   WHISPER_MODEL    путь к ggml-модели   (по умолчанию — лучшая из найденных
 #                                          в WHISPER_MODEL_DIR)
 #   WHISPER_MODEL_DIR где искать модели   (по умолчанию ~/.cache/whisper)
-#   WHISPER_THREADS  сколько потоков      (по умолчанию по числу ядер)
+#   WHISPER_THREADS  сколько потоков      (по умолчанию по числу
+#                                          производительных ядер)
+#   WHISPER_DETECT_MODEL модель для определения языка (по умолчанию основная;
+#                                          мелкая экономит ~10 с на прогон)
 #   WHISPER_VAD_MODEL модель VAD          (по умолчанию ggml-silero-*.bin
 #                                          из WHISPER_MODEL_DIR, если лежит)
 #
@@ -34,14 +37,17 @@ MODEL_DIR="${WHISPER_MODEL_DIR:-$HOME/.cache/whisper}"
 # из тех, что есть, а какая именно — печатаем в stderr, чтобы разница в
 # качестве расшифровки не выглядела необъяснимой.
 if [ -z "${WHISPER_MODEL:-}" ]; then
-  # Порядок — от лучшего качества к худшему, но с оговоркой: quantized-версии
-  # (-q5_0, -q8_0) весят втрое меньше и считают вдвое быстрее почти без потери
-  # качества, а turbo — ещё вчетверо быстрее large-v3 и лишь немного хуже.
-  # Поэтому turbo-quantized стоит выше обычной large-v3: на практике это лучший
-  # размен для созвонов.
-  for m in ggml-large-v3-turbo-q5_0 ggml-large-v3-turbo-q8_0 ggml-large-v3-turbo \
-           ggml-large-v3-q5_0 ggml-large-v3-q8_0 ggml-large-v3 \
+  # Порядок — по замеру на записи реального созвона, а не по размеру файла.
+  # Quantized-версии (-q5_0) весят втрое меньше и считают в полтора раза
+  # быстрее, а текст выдают тот же — поэтому large-v3-q5_0 стоит выше полной
+  # large-v3. А turbo, хоть и быстрее всех, стоит ниже обеих: на том же куске
+  # записи она зацикливается («Cloud, Cloud, Cloud» семнадцать раз подряд) и
+  # подменяет незнакомое название похожим знакомым — Plaud превращается в
+  # Cloud AI. Это не мусор, который видно глазом: follow-up по такому тексту
+  # уверенно напишет про облако, которого в разговоре не было.
+  for m in ggml-large-v3-q5_0 ggml-large-v3-q8_0 ggml-large-v3 \
            ggml-large-v2 ggml-large \
+           ggml-large-v3-turbo-q5_0 ggml-large-v3-turbo-q8_0 ggml-large-v3-turbo \
            ggml-medium-q5_0 ggml-medium ggml-small ggml-base ggml-tiny; do
     if [ -f "$MODEL_DIR/$m.bin" ]; then
       WHISPER_MODEL="$MODEL_DIR/$m.bin"
@@ -59,9 +65,16 @@ fi
 MODEL="$WHISPER_MODEL"
 echo "whisper: модель $(basename "$MODEL")" >&2
 
-# Число ядер. WHISPER_THREADS ставит сервис: расшифровка не должна занимать
+# Число потоков. WHISPER_THREADS ставит сервис: расшифровка не должна занимать
 # машину целиком, если она же используется для работы.
-THREADS="${WHISPER_THREADS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}"
+#
+# По умолчанию берём только производительные ядра, а не все. На M3 (4P+4E)
+# восемь потоков оказались медленнее четырёх — 47.6 с против 44.8 с — при вдвое
+# большем расходе CPU: энергоэффективные ядра тормозят общий барьер, на котором
+# ждут остальные. hw.perflevel0.logicalcpu есть только на Apple Silicon, на
+# Intel-маке и на Linux откатываемся на общее число ядер.
+THREADS="${WHISPER_THREADS:-$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null \
+  || sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 
 # VAD не обязателен: без него адаптер работает как раньше, только хуже и
 # медленнее. Поэтому не падаем, а один раз говорим, чего не хватает.
@@ -105,8 +118,23 @@ if [ "$LANG_CODE" = "auto" ]; then
   else
     DETECT_SRC="$TMP/a.wav" # речи почти нет — определять всё равно не по чему
   fi
-  DET="$("$BIN" -m "$MODEL" -t "$THREADS" -l auto -dl -f "$DETECT_SRC" 2>&1 |
-         sed -n 's/.*auto-detected language: \([a-z][a-z]*\).*/\1/p' | tail -1)"
+  # Отдельная модель под определение языка: задача грубая (ru или en), а
+  # вторая загрузка large-v3 стоит 11 с из 28 с всего прогона. Задаётся явно —
+  # сами на мелкую не переключаемся, ошибка определения испортит всю расшифровку.
+  DETECT_MODEL="${WHISPER_DETECT_MODEL:-$MODEL}"
+  # Вывод в файл, а не в подстановку: под set -e + pipefail упавший whisper
+  # ронял весь адаптер с кодом 1 и без единого слова в лог — stderr уходил в
+  # $(...) и там же выбрасывался sed'ом. Язык не определился — не беда, whisper
+  # определит его сам на основном проходе; а вот молча умереть — беда.
+  if "$BIN" -m "$DETECT_MODEL" -t "$THREADS" -l auto -dl \
+       -f "$DETECT_SRC" >"$TMP/detect.log" 2>&1; then
+    DET="$(sed -n 's/.*auto-detected language: \([a-z][a-z]*\).*/\1/p' \
+             "$TMP/detect.log" | tail -1)"
+  else
+    echo "whisper: определить язык не вышло, расшифровываю с auto:" >&2
+    tail -5 "$TMP/detect.log" >&2
+    DET=""
+  fi
   if [ -n "$DET" ]; then
     echo "whisper: язык определён как $DET" >&2
     LANG_CODE="$DET"

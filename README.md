@@ -66,6 +66,36 @@ Secrets are typed without echo and written to a `.env` file with mode 0600,
 never into the config: the config is meant to live in a repository, tokens are
 not.
 
+### Two ways to pay for Claude
+
+`setup` asks which one, because the right answer depends on who starts the
+process, not on price.
+
+**A Claude subscription you already have.** steno calls `claude -p`, the
+non-interactive mode of Claude Code, and the follow-up comes out of the plan you
+are already paying for. No API key, no second bill. This is the personal setup:
+your own meetings, on your own laptop.
+
+```
+claude auth login     # if you have not already
+steno setup           # pick "Подписка Claude"
+```
+
+**An API key.** Needed on a server, and the reason is not billing: `claude -p`
+requires a login performed by a human, and nobody logs into a server.
+
+```
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Either way `steno doctor` tells you which one it found, and `claude.via` in the
+config pins it (`cli`, `api`, or `auto`).
+
+One honest note about the subscription path: Claude Code sends its own system
+prompt with every call, so a follow-up costs somewhat more in tokens than the
+same request through the API. It comes out of a plan rather than a card, which
+is the whole point, but `steno cost` reports what was actually spent either way.
+
 Then:
 
 ```
@@ -149,12 +179,24 @@ reports measured token counts, not estimates.
 | | quality | speed | privacy |
 |---|---|---|---|
 | Groq | whisper-large-v3 | an hour of audio in ~10s | audio leaves your network |
-| whisper locally | your choice of model | 15–20 min/hour on Apple Silicon; hours on a CPU without a GPU | nothing leaves |
+| whisper locally | `large-v3-q5_0`, 1 GB | ~13 min per meeting-hour on Apple Silicon; **3 hours** on the same machine's CPU | nothing leaves |
 | Meet captions | noticeably worse, single language only | instant | nothing leaves |
 
 Meet recognises **one** language per session, so a call that switches between
 languages needs whisper. Captions are still used either way — they are the only
 source of speaker names, and the language setting does not affect those.
+
+**Pick `large-v3-q5_0`, and skip `turbo`.** Benchmarked on a real recording:
+quantizing large-v3 costs nothing — the transcripts match word for word, at a
+third of the disk and half the RAM. `turbo` is the trap. It is twice as fast and
+it rewrote a product name it did not know (`Plaud`) into a plausible one it did
+(`Cloud AI`), then looped `Cloud` seventeen times over the most substantive
+minute of the call. That is not noise you can see; a follow-up written from it
+will confidently describe a cloud integration nobody mentioned. Numbers and
+transcripts: [README.ru.md](README.ru.md#какую-модель-брать).
+
+Running locally without a GPU is not a slow option, it is not an option: a
+meeting-hour takes three. Use Groq or Meet captions instead.
 
 ## Scale
 

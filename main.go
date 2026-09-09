@@ -607,12 +607,15 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 		return err
 	}
 	log.Printf("расход: %s", spend)
-	if err := st.SaveSpend(id, spend); err != nil {
-		log.Printf("не записал расход: %v", err)
-	}
+	// Порядок важен: расход дописывается в строку follow-up, а создаёт её
+	// SaveFollowup. Наоборот UPDATE не находил строки и молча терял расход —
+	// на повторном запуске всё сходилось, на первом `steno cost` показывал ноль.
 	if err := st.SaveFollowup(id, cfg.Claude.Model, f); err != nil {
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
+	}
+	if err := st.SaveSpend(id, spend); err != nil {
+		log.Printf("не записал расход: %v", err)
 	}
 	_ = st.SetStatus(id, "summarized", "")
 	log.Printf("задач: %d, решений: %d, открытых вопросов: %d",

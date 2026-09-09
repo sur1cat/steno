@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/anthropics/anthropic-sdk-go"
 )
 
 // Followup — то, ради чего всё затевалось. Структура выбрана под то, как это
@@ -178,11 +176,6 @@ func clock(sec float64) string {
 }
 
 func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, projects []Project, primers, openItems string) (*Followup, Spend, error) {
-	client, _, err := claudeClient(cfg)
-	if err != nil {
-		return nil, Spend{}, err
-	}
-
 	var head strings.Builder
 	fmt.Fprintf(&head, "Название встречи: %s\n", orDash(m.Title))
 	fmt.Fprintf(&head, "Дата: %s\n", m.StartedAt.Format("2006-01-02 15:04 MST"))
@@ -220,73 +213,14 @@ func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, 
 	}
 	head.WriteString("\nРасшифровка:\n\n")
 
-	effort := anthropic.OutputConfigEffortHigh
-	switch cfg.Claude.Effort {
-	case "":
-	case "low", "medium", "high", "xhigh", "max":
-		effort = anthropic.OutputConfigEffort(cfg.Claude.Effort)
-	default:
-		return nil, Spend{}, fmt.Errorf("claude.effort=%q — допустимы low, medium, high, xhigh, max",
-			cfg.Claude.Effort)
-	}
-	adaptive := anthropic.ThinkingConfigAdaptiveParam{}
-
 	maxTokens := int64(cfg.Claude.MaxTokens)
 	if maxTokens <= 0 {
 		maxTokens = 16000
 	}
-	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(cfg.Claude.Model),
-		MaxTokens: maxTokens,
-		System: []anthropic.TextBlockParam{{
-			Text:         followupSystem,
-			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		}},
-		Thinking: anthropic.ThinkingConfigParamUnion{OfAdaptive: &adaptive},
-		OutputConfig: anthropic.OutputConfigParam{
-			Effort: effort,
-			Format: anthropic.JSONOutputFormatParam{Schema: followupSchema()},
-		},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(head.String() + renderTranscript(segs))),
-		},
-	}
-
-	// Расшифровка часового созвона — это десятки тысяч токенов на входе.
-	// Стримим, чтобы не упереться в таймаут HTTP.
-	stream := client.Messages.NewStreaming(ctx, params)
-	// Тело ответа закрывает только Close: Next этого не делает. Выйдя из цикла
-	// по ошибке, мы оставляли соединение открытым, а генерацию — идущей и
-	// оплачиваемой.
-	defer stream.Close()
-	var msg anthropic.Message
-	for stream.Next() {
-		if err := msg.Accumulate(stream.Current()); err != nil {
-			return nil, Spend{}, fmt.Errorf("сборка ответа: %w", err)
-		}
-	}
-	if err := stream.Err(); err != nil {
-		return nil, Spend{}, fmt.Errorf("Claude: %w", err)
-	}
-	if msg.StopReason == anthropic.StopReasonRefusal {
-		return nil, Spend{}, fmt.Errorf("Claude отказался обрабатывать расшифровку: %s", msg.StopDetails.Explanation)
-	}
-	// Обрыв по потолку токенов выглядел как поломка схемы: JSON приходил
-	// недописанным, и человек видел «unexpected end of JSON input» — сообщение,
-	// по которому невозможно догадаться, что чинить.
-	if msg.StopReason == anthropic.StopReasonMaxTokens {
-		return nil, Spend{}, fmt.Errorf("ответ не поместился в claude.max_tokens (%d) — "+
-			"подними его или поставь claude.effort пониже", maxTokens)
-	}
-
-	var out string
-	for _, block := range msg.Content {
-		if t, ok := block.AsAny().(anthropic.TextBlock); ok {
-			out += t.Text
-		}
-	}
-	if strings.TrimSpace(out) == "" {
-		return nil, Spend{}, fmt.Errorf("Claude вернул пустой ответ (stop_reason=%s)", msg.StopReason)
+	out, spend, err := askLLM(ctx, cfg, followupSystem,
+		head.String()+renderTranscript(segs), followupSchema(), maxTokens)
+	if err != nil {
+		return nil, Spend{}, err
 	}
 
 	var f Followup
@@ -305,9 +239,6 @@ func makeFollowup(ctx context.Context, cfg *Config, m *Meeting, segs []Segment, 
 		f.OpenQuestions[i].Project = matchProject(projects, f.OpenQuestions[i].Project)
 	}
 
-	spend := computeSpend(cfg, cfg.Claude.Model,
-		msg.Usage.InputTokens, msg.Usage.OutputTokens,
-		msg.Usage.CacheReadInputTokens, msg.Usage.CacheCreationInputTokens)
 	return &f, spend, nil
 }
 

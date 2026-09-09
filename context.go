@@ -14,9 +14,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 // Справка о проекте.
@@ -254,12 +251,6 @@ func buildPrimer(ctx context.Context, cfg *Config, p Project, material string) (
 	if strings.TrimSpace(material) == "" {
 		return "", Spend{}, fmt.Errorf("нечего читать: не задан ни один источник")
 	}
-	key, err := secret(cfg.Claude.APIKeyEnv, "Claude")
-	if err != nil {
-		return "", Spend{}, err
-	}
-	client := anthropic.NewClient(option.WithAPIKey(key))
-
 	head := fmt.Sprintf("Проект: %s\n", p.Name)
 	if len(p.Aliases) > 0 {
 		head += fmt.Sprintf("Как называют вслух: %s\n", strings.Join(p.Aliases, ", "))
@@ -268,50 +259,15 @@ func buildPrimer(ctx context.Context, cfg *Config, p Project, material string) (
 		head += fmt.Sprintf("Коротко: %s\n", p.About)
 	}
 
-	adaptive := anthropic.ThinkingConfigAdaptiveParam{}
-	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(cfg.Claude.Model),
-		MaxTokens: 4000,
-		System: []anthropic.TextBlockParam{{
-			Text:         primerSystem,
-			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		}},
-		Thinking: anthropic.ThinkingConfigParamUnion{OfAdaptive: &adaptive},
-		// Справка собирается редко и читается на каждом созвоне — на ней
-		// экономить не стоит, но и рассуждать тут особо не о чем.
-		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortMedium},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(head + "\nМатериал:\n" + material)),
-		},
+	// Справка собирается редко и читается на каждом созвоне — экономить на ней
+	// не стоит, но и рассуждать тут особо не о чем.
+	text, spend, err := askLLM(ctx, cfg, primerSystem, head+"\nМатериал:\n"+material, nil, 4000)
+	if err != nil {
+		return "", Spend{}, err
 	}
-
-	stream := client.Messages.NewStreaming(ctx, params)
-	defer stream.Close()
-	var msg anthropic.Message
-	for stream.Next() {
-		if err := msg.Accumulate(stream.Current()); err != nil {
-			return "", Spend{}, err
-		}
+	if text = strings.TrimSpace(text); text == "" {
+		return "", Spend{}, fmt.Errorf("вернулась пустая справка")
 	}
-	if err := stream.Err(); err != nil {
-		return "", Spend{}, fmt.Errorf("Claude: %w", err)
-	}
-	if msg.StopReason == anthropic.StopReasonRefusal {
-		return "", Spend{}, fmt.Errorf("Claude отказался: %s", msg.StopDetails.Explanation)
-	}
-	var out strings.Builder
-	for _, block := range msg.Content {
-		if t, ok := block.AsAny().(anthropic.TextBlock); ok {
-			out.WriteString(t.Text)
-		}
-	}
-	text := strings.TrimSpace(out.String())
-	if text == "" {
-		return "", Spend{}, fmt.Errorf("Claude вернул пустую справку")
-	}
-	spend := computeSpend(cfg, cfg.Claude.Model,
-		msg.Usage.InputTokens, msg.Usage.OutputTokens,
-		msg.Usage.CacheReadInputTokens, msg.Usage.CacheCreationInputTokens)
 	return text, spend, nil
 }
 

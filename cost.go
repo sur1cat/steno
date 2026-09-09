@@ -65,6 +65,14 @@ func computeSpend(cfg *Config, model string, in, out, cacheRead, cacheWrite int6
 }
 
 func (s Spend) String() string {
+	// Токенов может не быть вовсе: не всякий источник их отдаёт, а «вход 0,
+	// выход 0 — $0.069» читается как ошибка учёта, хотя цена тут верная.
+	if s.Input == 0 && s.Output == 0 && s.CacheRead == 0 && s.CacheWrite == 0 {
+		if !s.PriceKnown {
+			return "неизвестен"
+		}
+		return fmt.Sprintf("$%.3f", s.USD)
+	}
 	base := fmt.Sprintf("вход %d, выход %d", s.Input, s.Output)
 	if s.CacheRead > 0 || s.CacheWrite > 0 {
 		base += fmt.Sprintf(", кеш %d/%d", s.CacheRead, s.CacheWrite)
