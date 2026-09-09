@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ThemeToggle } from "@/components/layout/theme-toggle";
 
 // Пароль общий на команду: заводить учётку каждому ради архива созвонов —
 // работа, которую никто не сделает, а без неё панель просто не откроют.
@@ -17,6 +18,13 @@ export function LoginPage() {
 
   return (
     <div className="grid h-screen place-items-center bg-[var(--background)] px-5">
+      {/* Выбор темы доступен и до входа: вход — первое, что человек видит, и
+          если панель открыли ночью на светлой системе, менять тему поздно
+          будет уже после того, как в глаза ударил белый экран. */}
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
+
       <Card className="w-full max-w-sm p-7">
         <h1 className="text-2xl tracking-tight">
           ste<span className="text-primary">no</span>

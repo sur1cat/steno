@@ -28,8 +28,12 @@ export function Layout({ children }: { children: ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Header onOpenNav={() => setNavOpen(true)} />
+        {/* max-w-4xl, а не во всю ширину: на 1440 строка списка растягивалась
+            на 1200 пикселей ради текста, который кончался на трети, и остаток
+            оставался пустым полем. Ширина колонки текста здесь та же, что у
+            расшифровки, — читать её всё равно придётся глазами. */}
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">{children}</div>
+          <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 sm:py-8">{children}</div>
         </main>
       </div>
 

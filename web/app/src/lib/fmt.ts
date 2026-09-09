@@ -46,6 +46,28 @@ export function dayRu(unix: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${weekday}`;
 }
 
+/** «сегодня, вторник» / «вчера» / «6 сентября, суббота» — заголовок дня в
+ *  списке того, что уже прошло. Отдельно от dayRu: там впереди «завтра»,
+ *  которого в архиве быть не может, и там же нет года — а созвон
+ *  позапрошлогодний от сегодняшнего должен отличаться на глаз. */
+export function dayHeadRu(unix: number): string {
+  const d = new Date(unix * 1000);
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
+  const weekday = d.toLocaleDateString("ru-RU", { weekday: "long" });
+  if (sameDay(d, now)) return `сегодня, ${weekday}`;
+  if (sameDay(d, yesterday)) return `вчера, ${weekday}`;
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${weekday}`;
+  }
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** Разбивка по дням: ключ группы. Календарный день, не сутки от «сейчас». */
+export function dayKey(unix: number): string {
+  return new Date(unix * 1000).toDateString();
+}
+
 export function timeRu(unix: number): string {
   return hhmm(new Date(unix * 1000));
 }
@@ -57,15 +79,21 @@ export function durRu(seconds: number | null | undefined): string {
   return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
 }
 
+/** Слово, согласованное с числом: «задача», «задачи», «задач». Отдельно от
+ *  plural — карточке проекта нужно крупное число само по себе, а подпись под
+ *  ним отдельной строкой. */
+export function pluralWord(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
 /** «1 задача», «2 задачи», «5 задач». Без согласования интерфейс выглядит
  *  машинным переводом, а этот текст видно на каждой странице. */
 export function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  let w = many;
-  if (m10 === 1 && m100 !== 11) w = one;
-  else if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) w = few;
-  return `${n} ${w}`;
+  return `${n} ${pluralWord(n, one, few, many)}`;
 }
 
 /** Таймкод в записи: 00:12:34. */
@@ -94,6 +122,7 @@ export function overdue(due: string): boolean {
 
 export function statusRu(s: string): string {
   const map: Record<string, string> = {
+    uploading: "разбираю файл",
     recording: "идёт запись",
     recorded: "записан",
     transcribed: "расшифрован",
@@ -108,7 +137,14 @@ export function statusRu(s: string): string {
 /** Незаконченное или сорвавшееся подсвечиваем: обрезанная запись снаружи
  *  выглядит как нормальная, и это надо видеть. */
 export function statusAlarm(s: string): boolean {
-  return s === "failed" || s === "publish_failed" || s === "recording";
+  return s === "failed" || s === "publish_failed" || s === "recording" || s === "uploading";
+}
+
+/** Состояния, которые кончатся сами. Список созвонов, пока такие есть,
+ *  перечитывается сам: загрузили запись — и человек ждёт не обновления
+ *  страницы, а того, что «разбираю файл» сменится на «расшифрован». */
+export function statusPending(s: string): boolean {
+  return s === "uploading" || s === "recording";
 }
 
 /** Ключи публикаций хранятся идентификаторами, показывать их человеку в таком

@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 // Тема панели: светлая, тёмная или «как в системе».
 //
@@ -56,29 +56,28 @@ export function applyTheme(choice: ThemeChoice): void {
   root.style.colorScheme = dark ? "dark" : "light";
 }
 
-const listeners = new Set<() => void>();
-
-function emit() {
-  for (const l of listeners) l();
+// Слушатель системной темы ставится один раз на модуль, а не на каждого
+// подписчика: при выборе «как в системе» тема обязана меняться сама, и зависеть
+// это не должно от того, висит ли сейчас на экране переключатель. Раньше эту
+// работу делал скрипт в index.html; он её отдал, чтобы не спорить с ручным
+// выбором, — и подобрать её больше некому.
+if (typeof window !== "undefined") {
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  mq.addEventListener("change", () => {
+    if (readTheme() === "system") applyTheme("system");
+    window.dispatchEvent(new Event(THEME_EVENT));
+  });
+  // Смена темы в соседней вкладке — тот же выбор того же человека.
+  window.addEventListener("storage", (e) => {
+    if (e.key !== null && e.key !== THEME_STORAGE_KEY) return;
+    applyTheme(readTheme());
+    window.dispatchEvent(new Event(THEME_EVENT));
+  });
 }
 
 function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  window.addEventListener("storage", cb);
-  // При выборе «как в системе» смена темы в macOS обязана долетать сама.
-  const mq = window.matchMedia("(prefers-color-scheme: dark)");
-  const onSystem = () => {
-    if (readTheme() === "system") applyTheme("system");
-    cb();
-  };
-  mq.addEventListener("change", onSystem);
   window.addEventListener(THEME_EVENT, cb);
-  return () => {
-    listeners.delete(cb);
-    window.removeEventListener("storage", cb);
-    mq.removeEventListener("change", onSystem);
-    window.removeEventListener(THEME_EVENT, cb);
-  };
+  return () => window.removeEventListener(THEME_EVENT, cb);
 }
 
 /**
@@ -90,7 +89,7 @@ function subscribe(cb: () => void): () => void {
  * браузер рисует ::view-transition-*: масштаб интерфейса ставит `zoom` на
  * <html>, а getBoundingClientRect отдаёт пиксели уже после него.
  */
-export function revealGeometry(
+function revealGeometry(
   box: { left: number; top: number; width: number; height: number },
   viewport: { width: number; height: number },
   zoom: number,
@@ -125,7 +124,6 @@ function write(choice: ThemeChoice) {
     // Не сохранилось — тема всё равно сменится, просто до перезагрузки.
   }
   applyTheme(choice);
-  emit();
   window.dispatchEvent(new Event(THEME_EVENT));
 }
 
@@ -178,5 +176,5 @@ export function useTheme(): {
     () => (document.documentElement.classList.contains("dark") ? "dark" : "light"),
     () => "light" as const,
   );
-  return { choice, resolved, setTheme: useCallback(setTheme, []) };
+  return { choice, resolved, setTheme };
 }

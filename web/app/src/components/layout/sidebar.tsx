@@ -102,9 +102,9 @@ export function Wordmark({ onClick }: { onClick?: () => void }) {
     <Link
       to="/"
       onClick={onClick}
-      className="flex h-14 shrink-0 items-center gap-2 border-b border-[var(--sidebar-border)] px-5 text-lg tracking-tight text-[var(--sidebar-logo-text)]"
+      className="flex h-14 shrink-0 items-center border-b border-[var(--sidebar-border)] px-5 text-lg tracking-tight text-[var(--sidebar-logo-text)]"
     >
-      ste<span className="-ml-2 text-[var(--sidebar-active-text)]">no</span>
+      ste<span className="text-[var(--sidebar-active-text)]">no</span>
     </Link>
   );
 }

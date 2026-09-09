@@ -5,7 +5,7 @@ import { api, type ProjectItem } from "@/lib/api";
 import { dateRu, dueRu, overdue } from "@/lib/fmt";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Empty, Failed, Loading, PageHead } from "@/components/layout";
+import { Empty, Failed, GroupHead, Loading, PageHead } from "@/components/layout";
 
 export function ProjectPage() {
   const { name = "" } = useParams();
@@ -52,9 +52,9 @@ export function ProjectPage() {
       {items.length === 0 && <Empty>По проекту пока ничего не накопилось.</Empty>}
 
       {tasks.length > 0 && (
-        <Section title="Задачи">
+        <Section title="Задачи" count={tasks.length}>
           {tasks.map((it) => (
-            <Row key={it.id} item={it}>
+            <Row key={it.id}>
               <div>
                 {it.text}
                 {it.owner && <span className="text-[var(--muted-foreground)]"> · {it.owner}</span>}
@@ -72,7 +72,7 @@ export function ProjectPage() {
                 <Button
                   variant="link"
                   size="sm"
-                  className="h-auto p-0 text-[13px]"
+                  className="h-auto p-0 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   onClick={() => close.mutate(it.id)}
                 >
                   закрыть
@@ -85,9 +85,9 @@ export function ProjectPage() {
       )}
 
       {questions.length > 0 && (
-        <Section title="Открытые вопросы">
+        <Section title="Открытые вопросы" count={questions.length}>
           {questions.map((it) => (
-            <Row key={it.id} item={it}>
+            <Row key={it.id}>
               <div>
                 {it.text}
                 {it.owner && (
@@ -98,7 +98,7 @@ export function ProjectPage() {
                 <Button
                   variant="link"
                   size="sm"
-                  className="h-auto p-0 text-[13px]"
+                  className="h-auto p-0 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   onClick={() => close.mutate(it.id)}
                 >
                   закрыть
@@ -110,9 +110,9 @@ export function ProjectPage() {
       )}
 
       {decisions.length > 0 && (
-        <Section title="Решения">
+        <Section title="Решения" count={decisions.length}>
           {decisions.map((it) => (
-            <Row key={it.id} item={it}>
+            <Row key={it.id}>
               <div>
                 <b>{it.text}</b>
                 {it.quote && <span className="text-[var(--muted-foreground)]"> — {it.quote}</span>}
@@ -124,9 +124,9 @@ export function ProjectPage() {
       )}
 
       {closed.length > 0 && (
-        <Section title="Закрыто">
+        <Section title="Закрыто" count={closed.length}>
           {closed.map((it) => (
-            <Row key={it.id} item={it}>
+            <Row key={it.id}>
               <div className="opacity-65">
                 {it.text}
                 <span className="text-[var(--muted-foreground)]">
@@ -145,7 +145,7 @@ export function ProjectPage() {
                 <Button
                   variant="link"
                   size="sm"
-                  className="h-auto p-0 text-[13px]"
+                  className="h-auto p-0 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   onClick={() => reopen.mutate(it.id)}
                 >
                   вернуть в работу
@@ -159,12 +159,10 @@ export function ProjectPage() {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   return (
-    <section className="mb-6">
-      <h2 className="mb-2 text-sm uppercase tracking-wide text-[var(--muted-foreground)]">
-        {title}
-      </h2>
+    <section className="mb-7">
+      <GroupHead title={title} count={count} />
       <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
         {children}
       </div>
@@ -172,24 +170,30 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ item, children }: { item: ProjectItem; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-4 px-5 py-4 text-sm">
-      <div className="min-w-0 flex-1 space-y-1">{children}</div>
-      <span className="shrink-0 font-mono text-xs text-[var(--muted-foreground)]">{item.id}</span>
-    </div>
-  );
+// Идентификатор больше не висит одиноким столбиком у правого края: на широком
+// экране он оказывался в полуметре от строки, к которой относится, и добавлял
+// в список ещё одну вертикаль ни о чём. Его место — в служебной строке снизу,
+// вместе с датой и ссылкой на созвон.
+function Row({ children }: { children: React.ReactNode }) {
+  return <div className="max-w-prose space-y-1 px-4 py-3.5 text-sm leading-relaxed sm:px-5">{children}</div>;
 }
 
 function Meta({ item, children }: { item: ProjectItem; children?: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[13px] text-[var(--muted-foreground)]">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-[var(--muted-foreground)]">
       <span>с {dateRu(item.openedAt)}</span>
       {item.openedIn && (
-        <Link to={`/m/${item.openedIn}`} className="text-primary underline-offset-4 hover:underline">
-          созвон
-        </Link>
+        <>
+          <span aria-hidden="true">·</span>
+          <Link
+            to={`/m/${item.openedIn}`}
+            className="text-primary underline-offset-4 hover:underline"
+          >
+            созвон
+          </Link>
+        </>
       )}
+      <span className="font-mono text-xs text-[var(--muted-foreground)]/60">{item.id}</span>
       {children}
     </div>
   );

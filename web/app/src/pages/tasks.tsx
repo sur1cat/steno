@@ -4,7 +4,7 @@ import { api, type TaskRow } from "@/lib/api";
 import { dateRu, dueRu, overdue, plural } from "@/lib/fmt";
 import { cn } from "@/lib/utils";
 import { SelectMenu } from "@/components/ui/select-menu";
-import { Empty, Failed, Loading, PageHead } from "@/components/layout";
+import { Empty, Failed, GroupHead, Loading, PageHead } from "@/components/layout";
 
 const UNASSIGNED = "не назначен";
 
@@ -66,16 +66,17 @@ export function TasksPage() {
       {groups.length === 0 ? (
         <Empty>Задач пока нет.</Empty>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-7">
           {groups.map((g) => (
             <section key={g.owner}>
-              <h2 className="mb-2 text-sm uppercase tracking-wide text-[var(--muted-foreground)]">
-                {g.owner}
-              </h2>
+              <GroupHead
+                title={g.owner}
+                count={plural(g.tasks.length, "задача", "задачи", "задач")}
+              />
               <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
                 {g.tasks.map((t, i) => (
-                  <div key={i} className="px-5 py-4 text-sm">
-                    <div>
+                  <div key={i} className="px-4 py-3.5 text-sm sm:px-5">
+                    <div className="max-w-prose leading-relaxed">
                       {t.what}{" "}
                       <span
                         className={cn(
@@ -96,7 +97,7 @@ export function TasksPage() {
                       · {dateRu(t.meetingAt)}
                     </div>
                     {t.quote && (
-                      <div className="mt-1.5 border-l-2 border-[var(--border)] pl-3 text-[13px] italic text-[var(--muted-foreground)]">
+                      <div className="mt-1.5 max-w-prose border-l-2 border-[var(--border)] pl-3 text-[13px] italic leading-relaxed text-[var(--muted-foreground)]">
                         {t.quote}
                       </div>
                     )}
