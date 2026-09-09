@@ -46,14 +46,20 @@ release:
   draft: false
   prerelease: auto
 
-# Раньше здесь была секция brews. Она объявлена устаревшей: goreleaser собирал
-# формулу, которая делает вид, что собирает из исходников, хотя ставит готовый
-# бинарник. Casks для этого и предназначены.
+# Формула, а не cask, и это выяснено опытом.
 #
-# Плата за переход — casks работают только на macOS. Для Linux остаётся архив
-# из релиза и сборка из исходников; на сервере brew всё равно почти никто не
-# держит, а бот там и так запускается контейнером.
-homebrew_casks:
+# goreleaser объявил brews устаревшим в пользу homebrew_casks, и первый релиз
+# так и был сделан. Установка получилась нерабочей: cask вешает на скачанный
+# бинарник com.apple.quarantine, а снять его должен постустановочный блок,
+# который goreleaser умеет писать только устаревшим ключом postflight — и
+# Homebrew этот ключ больше не выполняет, только предупреждает о нём. В итоге
+# `brew install` ставил бинарник, который macOS убивает сигналом на запуске.
+# Проверено: xattr -dr com.apple.quarantine чинит, значит причина именно в нём.
+#
+# Формула этой болезни лишена: она распаковывает архив сама и карантин не вешает.
+# Ключ brews помечен устаревшим, но работает; вернуться к cask будет можно, когда
+# goreleaser научится писать postflight_steps.
+brews:
   - name: steno
     repository:
       owner: sur1cat
@@ -62,7 +68,7 @@ homebrew_casks:
       # Токен с правом записи в репозиторий тапа. Обычный GITHUB_TOKEN заперт
       # в этом репозитории и в чужой запушить не может.
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Casks
+    directory: Formula
     homepage: "https://github.com/sur1cat/steno"
     description: "Meeting notes and follow-ups: a bot joins your calls, records, transcribes, publishes"
     license: MIT
@@ -74,17 +80,9 @@ homebrew_casks:
     # только тем, кто распознаёт локально, поэтому они в подсказке, а не здесь:
     # тянуть их тому, кто выбрал Groq или субтитры, незачем.
     dependencies:
-      - formula: ffmpeg
-    # Бинарник не подписан и не нотаризован, поэтому macOS вешает на скачанное
-    # карантин и отказывается запускать. Без этого первая же команда упирается
-    # в «steno нельзя открыть, разработчик не может быть проверен».
-    hooks:
-      post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr",
-                           args: ["-dr", "com.apple.quarantine", "#{staged_path}/steno"]
-          end
+      - name: ffmpeg
+    test: |
+      assert_match "steno", shell_output("#{bin}/steno help")
     caveats: |
       Настройка одной командой — она спросит всё нужное и проверит по ходу:
 
