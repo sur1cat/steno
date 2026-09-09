@@ -223,6 +223,21 @@ export interface Settings {
   channels: Channel[];
 }
 
+/**
+ * Доступ в Google — один на всю панель, а не на канал: календарь, почта бота и
+ * документы ходят под одним и тем же согласием. Поэтому поле «google» есть у
+ * трёх каналов, а состояние спрашивается одно.
+ */
+export interface GoogleStatus {
+  /** Вход по кнопке заведён вообще. false — кнопку не рисуем, только `why`. */
+  ready: boolean;
+  connected: boolean;
+  /** Почта того, кто подключился. Пусто, пока не подключён. */
+  account: string;
+  /** Готовый текст для человека. Показывать как есть, ничего не дописывая. */
+  why: string;
+}
+
 export interface ScheduleEntry {
   key: string;
   calendarId: string;
@@ -334,6 +349,14 @@ export const api = {
     post<{ status: string }>(`/api/projects/${encodeURIComponent(name)}/context`),
 
   settings: () => get<Settings>("/api/settings"),
+
+  googleStatus: () => get<GoogleStatus>("/api/google/status"),
+  // Возвращает адрес согласия Google. Уводить туда надо эту же вкладку:
+  // вернётся человек по адресу, который Google знает, — в новой вкладке он
+  // окажется в чужой копии панели, а исходная так и останется неподключённой.
+  googleConnect: () => post<{ url: string }>("/api/google/connect"),
+  googleDisconnect: () => post<{ ok: boolean }>("/api/google/disconnect"),
+
   saveChannel: (key: string, enabled: boolean, values: Record<string, string>) =>
     post<{ ok: boolean }>(`/api/channels/${encodeURIComponent(key)}`, { enabled, values }),
 

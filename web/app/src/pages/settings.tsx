@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, X } from "lucide-react";
 import { api, type Channel, type SettingsProject } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Empty, Failed, Loading, PageHead } from "@/components/layout";
 import { ProjectDialog } from "@/components/project-dialog";
 import { ChannelDialog } from "@/components/channel-dialog";
+import { GOOGLE_STATUS_KEY } from "@/components/google-connect";
 
 // Настройки разложены по разделам, а не идут одной простынёй: раньше всё шло
 // подряд одним свитком, и до нужного места приходилось проматывать остальные.
@@ -23,10 +24,33 @@ type TabKey = "projects" | "channels";
 
 export function SettingsPage() {
   const q = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const [editing, setEditing] = useState<SettingsProject | null>(null);
   const [projectOpen, setProjectOpen] = useState(false);
   const [channel, setChannel] = useState<Channel | null>(null);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Сюда возвращается человек после согласия у Google: сервер приводит его на
+  // /settings?google=ok или ?google=fail&why=…
+  //
+  // Параметры сразу убираем из адреса — иначе обновление страницы через час
+  // снова объявит о том, что случилось один раз, — и заодно переключаем на
+  // «Каналы»: ушёл человек из модалки канала, и возвращать его на «Проекты»
+  // значит заставить искать, куда он шёл.
+  useEffect(() => {
+    const g = params.get("google");
+    if (!g) return;
+    const why = params.get("why") ?? "";
+    setNotice(
+      g === "ok"
+        ? { ok: true, text: "Google подключён." }
+        : { ok: false, text: why || "Подключить Google не получилось." },
+    );
+    qc.invalidateQueries({ queryKey: GOOGLE_STATUS_KEY });
+    qc.invalidateQueries({ queryKey: ["settings"] });
+    setParams({ tab: "channels" }, { replace: true });
+  }, [params, setParams, qc]);
 
   if (q.isPending) return <Loading />;
   if (q.isError) return <Failed error={q.error} />;
@@ -54,6 +78,30 @@ export function SettingsPage() {
         title="Настройки"
         sub="Проекты — чтобы steno понимал, о чём речь на созвоне. Каналы — откуда он берёт созвоны и куда потом присылает итог."
       />
+
+      {/* Про итог возвращения из Google говорим строкой на странице, а не
+          тостом: при отказе здесь лежит объяснение сервера, и уехать оно не
+          должно раньше, чем его дочитают. */}
+      {notice && (
+        <div
+          className={cn(
+            "mb-5 flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm leading-relaxed",
+            notice.ok
+              ? "border-primary/30 bg-primary/5 text-[var(--foreground)]"
+              : "border-[var(--destructive)]/30 bg-[var(--destructive)]/5 text-[var(--destructive)]",
+          )}
+        >
+          <span className="min-w-0 flex-1">{notice.text}</span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            aria-label="Скрыть сообщение"
+            className="shrink-0 rounded-lg p-0.5 opacity-60 transition-opacity hover:opacity-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* w-fit: полоса разделов обнимает свои три кнопки. Растянутая во всю
           ширину, она читается как пустая панель с кнопками в углу. */}

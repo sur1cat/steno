@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, type Channel } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ChipsInput, submittedFromChips } from "@/components/ui/chips-input";
+import { GoogleConnect } from "@/components/google-connect";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -97,14 +98,20 @@ export function ChannelDialog({
           <Switch checked={enabled} onCheckedChange={setEnabled} />
         </div>
 
-        {/* «google» — не поле, а кнопка «Подключить Google»; значения оно не
-            хранит, и текстовым полем его рисовать нельзя: получилась бы пустая
-            строка ввода, в которую нечего вписать. До готового обмена с
-            бэкендом раздел просто не рисуется — пустое место честнее мёртвого
-            поля. */}
-        {channel.fields.filter((f) => f.kind !== "google").map((f) => (
+        {channel.fields.map((f) => (
           <div key={f.key}>
-            {f.kind === "switch" ? (
+            {/* «google» — не поле, а кнопка: значения оно не хранит, и в
+                values его ключа нет. Согласие одно на все каналы Google,
+                поэтому состояние компонент спрашивает сам, а не берёт из
+                канала. */}
+            {f.kind === "google" ? (
+              <>
+                <div className="mb-1.5 text-sm font-light text-[var(--muted-foreground)]">
+                  {f.label}
+                </div>
+                <GoogleConnect hint={f.hint} />
+              </>
+            ) : f.kind === "switch" ? (
               <div className="flex items-start justify-between gap-4">
                 <div className="text-sm">
                   {f.label}
