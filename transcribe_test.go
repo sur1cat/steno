@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -226,5 +228,90 @@ func TestSilentWAVIsValid(t *testing.T) {
 	}
 	if ch := uint16(b[22]) | uint16(b[23])<<8; ch != 1 {
 		t.Errorf("каналов %d", ch)
+	}
+}
+
+// На large-v3 одна расшифровка занимает машину на минуты. Четыре созвона,
+// кончившиеся в одну минуту, положили бы её целиком, поэтому расшифровки идут
+// по очереди — и очередь не должна ни терять работу, ни пропускать лишних.
+func TestTranscribeQueueSerializes(t *testing.T) {
+	resizeTranscribeQueue(1)
+	t.Cleanup(func() { resizeTranscribeQueue(1) })
+
+	dir := t.TempDir()
+	// Адаптер, который отмечается о своём входе и выходе.
+	script := filepath.Join(dir, "adapter.sh")
+	marks := filepath.Join(dir, "marks")
+	mustWriteFile(t, script, "#!/bin/sh\necho in >> "+marks+"\nsleep 0.3\necho out >> "+marks+
+		"\necho '{\"segments\":[{\"start\":0,\"end\":1,\"text\":\"тест\"}]}'\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := defaultConfig()
+	cfg.Transcribe.Cmd = []string{script, "{{audio}}"}
+	cfg.Transcribe.Nice = false
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, err := runTranscriber(context.Background(), cfg, "нет-файла.ogg"); err != nil {
+				t.Errorf("расшифровка сорвалась: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	raw, err := os.ReadFile(marks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// При очереди в один поток отметки обязаны идти строго парами in/out.
+	lines := strings.Fields(string(raw))
+	if len(lines) != 8 {
+		t.Fatalf("отметок %d, ожидали 8: %v", len(lines), lines)
+	}
+	for i := 0; i < len(lines); i += 2 {
+		if lines[i] != "in" || lines[i+1] != "out" {
+			t.Fatalf("расшифровки пошли внахлёст: %v", lines)
+		}
+	}
+}
+
+// Ожидание в очереди не должно съедать таймаут расшифровки: созвон, простоявший
+// час, обязан начать считаться, а не сорваться, не начавшись.
+func TestQueueWaitIsNotCountedInTimeout(t *testing.T) {
+	resizeTranscribeQueue(1)
+	t.Cleanup(func() { resizeTranscribeQueue(1) })
+
+	dir := t.TempDir()
+	script := filepath.Join(dir, "adapter.sh")
+	mustWriteFile(t, script, "#!/bin/sh\nsleep 0.4\necho '{\"segments\":[{\"start\":0,\"end\":1,\"text\":\"тест\"}]}'\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := defaultConfig()
+	cfg.Transcribe.Cmd = []string{script, "{{audio}}"}
+	cfg.Transcribe.Nice = false
+	cfg.Transcribe.Timeout = Duration(2 * time.Second)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 3)
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := runTranscriber(context.Background(), cfg, "x.ogg")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("расшифровка сорвалась из-за ожидания в очереди: %v", err)
+		}
 	}
 }

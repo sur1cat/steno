@@ -56,7 +56,7 @@ func TestPipelineWithoutClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	segs, err := runTranscriber(context.Background(), cfg, m.AudioPath)
+	segs, _, err := runTranscriber(context.Background(), cfg, m.AudioPath)
 	if err != nil {
 		t.Fatalf("адаптер расшифровки: %v", err)
 	}

@@ -148,6 +148,7 @@ func open(configPath string) (*Config, *Store, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	resizeTranscribeQueue(cfg.Transcribe.MaxConcurrent)
 	if n, err := importProjects(st, cfg); err != nil {
 		st.Close()
 		return nil, nil, fmt.Errorf("перенос проектов из конфига: %w", err)
@@ -620,9 +621,12 @@ func transcribeMeeting(ctx context.Context, cfg *Config, m *Meeting) ([]Segment,
 		return segmentsFromCaptions(m.CaptionsPath)
 	}
 	log.Printf("расшифровываю %s", m.AudioPath)
-	segs, err := runTranscriber(ctx, cfg, m.AudioPath)
+	segs, notes, err := runTranscriber(ctx, cfg, m.AudioPath)
 	if err != nil {
 		return nil, err
+	}
+	for _, line := range lastLines(notes, 4) {
+		log.Printf("  %s", line)
 	}
 	utts, uerr := readUtterances(m.CaptionsPath)
 	if uerr != nil {

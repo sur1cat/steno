@@ -52,6 +52,17 @@ type Config struct {
 		// заставляет whisper переводить вторую половину вместо расшифровки.
 		Language string   `json:"language"`
 		Timeout  Duration `json:"timeout"`
+		// Сколько расшифровок идёт одновременно. По умолчанию одна: на
+		// large-v3 она занимает всю машину на минуты, а четыре созвона,
+		// кончившиеся в одну минуту, положили бы её целиком. Аудио лежит на
+		// диске и никуда не денется — очередь просто рассосётся.
+		MaxConcurrent int `json:"max_concurrent"`
+		// Сколько ядер отдавать. 0 — решает сам адаптер (обычно все). На
+		// рабочем ноуте разумно оставить половину.
+		Threads int `json:"threads"`
+		// Запускать через nice: расшифровка не срочная и должна уступать
+		// интерактивной работе.
+		Nice bool `json:"nice"`
 	} `json:"transcribe"`
 
 	Claude struct {
@@ -262,7 +273,11 @@ func defaultConfig() *Config {
 	c.Transcribe.Source = "command"
 	c.Transcribe.Cmd = []string{"./adapters/whisper-cpp.sh", "{{audio}}", "{{language}}"}
 	c.Transcribe.Language = ""
-	c.Transcribe.Timeout = Duration(2 * time.Hour)
+	// large-v3 без GPU расшифровывает час созвона дольше часа — потолок должен
+	// это переживать, иначе сервис убьёт работу на середине.
+	c.Transcribe.Timeout = Duration(4 * time.Hour)
+	c.Transcribe.MaxConcurrent = 1
+	c.Transcribe.Nice = true
 	c.Claude.APIKeyEnv = "ANTHROPIC_API_KEY"
 	c.Claude.Model = "claude-opus-5"
 	c.Claude.Effort = "high"

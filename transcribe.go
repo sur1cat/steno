@@ -52,9 +52,30 @@ func segmentsFromCaptions(captionsPath string) ([]Segment, error) {
 	return segs, nil
 }
 
-func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segment, error) {
+// Расшифровки идут по очереди. На large-v3 одна занимает машину на минуты, и
+// четыре созвона, кончившиеся в одну минуту, положили бы её целиком. Ожидание
+// ничего не стоит: аудио уже на диске.
+var transcribeQueue = make(chan struct{}, 1)
+
+func init() { transcribeQueue <- struct{}{} }
+
+// resizeTranscribeQueue настраивает, сколько расшифровок идёт одновременно.
+func resizeTranscribeQueue(n int) {
+	if n < 1 {
+		n = 1
+	}
+	transcribeQueue = make(chan struct{}, n)
+	for i := 0; i < n; i++ {
+		transcribeQueue <- struct{}{}
+	}
+}
+
+// runTranscriber возвращает ещё и то, что адаптер написал в stderr: там он
+// сообщает, какой моделью работал и какой язык определил. Это ровно те два
+// факта, по которым потом понимаешь, почему расшифровка вышла такой.
+func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segment, string, error) {
 	if len(cfg.Transcribe.Cmd) == 0 {
-		return nil, fmt.Errorf("не настроен transcribe.cmd")
+		return nil, "", fmt.Errorf("не настроен transcribe.cmd")
 	}
 	args := make([]string, len(cfg.Transcribe.Cmd))
 	for i, a := range cfg.Transcribe.Cmd {
@@ -63,13 +84,32 @@ func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segme
 		args[i] = a
 	}
 
+	// Ждём очереди до того, как заводить таймаут: иначе созвон, простоявший в
+	// очереди час, сорвётся по таймауту, не начав расшифровываться.
+	select {
+	case <-transcribeQueue:
+		defer func() { transcribeQueue <- struct{}{} }()
+	case <-ctx.Done():
+		return nil, "", ctx.Err()
+	}
+
 	if d := cfg.Transcribe.Timeout.D(); d > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()
 	}
 
+	// nice: расшифровка не срочная и должна уступать интерактивной работе.
+	if cfg.Transcribe.Nice {
+		if _, err := exec.LookPath("nice"); err == nil {
+			args = append([]string{"nice", "-n", "10"}, args...)
+		}
+	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	if n := cfg.Transcribe.Threads; n > 0 {
+		// Адаптеры читают это и не занимают машину целиком.
+		cmd.Env = append(os.Environ(), fmt.Sprintf("WHISPER_THREADS=%d", n))
+	}
 	// По таймауту гасим всю группу процессов мягко, чтобы обёртка успела
 	// убрать временный WAV, а whisper не остался сиротой.
 	setProcessGroup(cmd)
@@ -80,12 +120,12 @@ func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segme
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("адаптер расшифровки %v: %w\n%s", args, err, tail(stderr.String(), 800))
+		return nil, "", fmt.Errorf("адаптер расшифровки %v: %w\n%s", args, err, tail(stderr.String(), 800))
 	}
 
 	var out transcriptOut
 	if err := json.Unmarshal([]byte(stdout.String()), &out); err != nil {
-		return nil, fmt.Errorf("адаптер вернул не тот JSON: %w\n%s", err, tail(stdout.String(), 400))
+		return nil, "", fmt.Errorf("адаптер вернул не тот JSON: %w\n%s", err, tail(stdout.String(), 400))
 	}
 	segs := make([]Segment, 0, len(out.Segments))
 	for _, s := range out.Segments {
@@ -96,7 +136,7 @@ func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segme
 		segs = append(segs, Segment{Start: s.Start, End: s.End, Text: txt})
 	}
 	sort.Slice(segs, func(i, j int) bool { return segs[i].Start < segs[j].Start })
-	return segs, nil
+	return segs, strings.TrimSpace(stderr.String()), nil
 }
 
 func readUtterances(path string) ([]Utterance, error) {

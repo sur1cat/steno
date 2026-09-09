@@ -52,7 +52,9 @@ fi
 MODEL="$WHISPER_MODEL"
 echo "whisper: модель $(basename "$MODEL")" >&2
 
-THREADS="${WHISPER_THREADS:-$( (nproc 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4) )}"
+# Число ядер. WHISPER_THREADS ставит сервис: расшифровка не должна занимать
+# машину целиком, если она же используется для работы.
+THREADS="${WHISPER_THREADS:-$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 
 # VAD не обязателен: без него адаптер работает как раньше, только хуже и
 # медленнее. Поэтому не падаем, а один раз говорим, чего не хватает.

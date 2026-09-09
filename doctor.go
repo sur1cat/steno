@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -172,11 +173,26 @@ func probeTranscriber(cfg *Config) (string, error) {
 	defer cancel()
 	probe := *cfg
 	probe.Transcribe.Timeout = Duration(3 * time.Minute)
-	if _, err := runTranscriber(ctx, &probe, wav); err != nil {
+	_, notes, err := runTranscriber(ctx, &probe, wav)
+	if err != nil {
 		return "", err
+	}
+	// Адаптер сообщает, какой моделью работал. Мелкая модель — рабочая, но на
+	// русском созвоне выдаёт кашу, из которой Claude уверенно сочинит смысл,
+	// которого не было. Это опаснее пустоты, и молчать об этом нельзя.
+	if m := modelRe.FindStringSubmatch(notes); m != nil {
+		if smallModelRe.MatchString(m[1]) {
+			return "работает на " + m[1] + " — для русских созвонов мало, нужна large-v3", nil
+		}
+		return "адаптер отработал, модель " + m[1], nil
 	}
 	return "адаптер отработал на пробной записи", nil
 }
+
+var (
+	modelRe      = regexp.MustCompile(`модель\s+(\S+)`)
+	smallModelRe = regexp.MustCompile(`(?i)tiny|base|small`)
+)
 
 // silentWAV — 16 кГц моно PCM: ровно то, что адаптеры и ожидают на входе.
 func silentWAV(d time.Duration) []byte {

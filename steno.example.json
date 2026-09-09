@@ -92,7 +92,10 @@
       "{{language}}"
     ],
     "language": "",
-    "timeout": "2h"
+    "timeout": "4h",
+    "max_concurrent": 1,
+    "threads": 0,
+    "nice": true
   },
   "claude": {
     "api_key_env": "ANTHROPIC_API_KEY",
