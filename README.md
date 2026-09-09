@@ -13,7 +13,7 @@ $ steno serve
 calendar: watching 12 calendars, polling every 2m0s
 mail: watching invitations to steno@company.com
 telegram: listening for meeting links
-panel: listening on :8080
+panel: listening on :8422
 joining "Release planning" (reason: calendar, owner@company.com)
 bot: muted mic and camera
 bot: in the call

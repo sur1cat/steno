@@ -86,7 +86,7 @@ func newPanel(cfg *Config, st *Store, lg *log.Logger) (*Panel, error) {
 func (p *Panel) Run(ctx context.Context) error {
 	addr := p.cfg.Panel.Addr
 	if addr == "" {
-		addr = ":8080"
+		addr = ":8422"
 	}
 	srv := &http.Server{Addr: addr, Handler: p.handler(), ReadHeaderTimeout: 10 * time.Second}
 	// Shutdown обязан завершиться до выхода из Run: иначе Run возвращается,

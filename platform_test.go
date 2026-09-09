@@ -303,6 +303,12 @@ func TestPollJSContract(t *testing.T) {
 	if len(st.Lines) != 1 || st.Lines[0].Speaker != "Участник А" || st.Lines[0].Text != "привет" {
 		t.Errorf("реплики не доехали до Go: %+v", st.Lines)
 	}
+	// Подсветка говорящего — второй источник имён, и без него сегодняшний
+	// случай (субтитры пустые, имена всё равно нужны) не работает вовсе.
+	// Разъехаться поле может так же молча, как и остальные.
+	if len(st.Speaking) != 1 || st.Speaking[0] != "Участник А" {
+		t.Errorf("подсветка говорящего не доехала до Go: %+v", st.Speaking)
+	}
 }
 
 func requireNode(t *testing.T) {

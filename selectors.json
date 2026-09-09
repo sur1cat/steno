@@ -31,10 +31,54 @@
     "you have been removed",
     "вас удалили"
   ],
+  "speakingSelectors": [],
+  "speakingJsnames": [
+    "QgSmzd"
+  ],
+  "speakingColors": [
+    "rgb(11, 87, 208)",
+    "rgb(168, 199, 250)",
+    "rgb(26, 115, 232)",
+    "rgba(26, 115, 232, 0.9)"
+  ],
+  "speakingLabels": [
+    "is speaking",
+    "говорит",
+    "spricht"
+  ],
+  "peoplePanelLabels": [
+    "participants",
+    "people",
+    "show everyone",
+    "показать всех",
+    "участники",
+    "teilnehmer"
+  ],
   "captionSettingsLabels": [
     "caption settings",
     "настройки субтитр",
     "субтитры: настройки"
+  ],
+  "moreOptionsLabels": [
+    "more options",
+    "ещё",
+    "другие действия",
+    "weitere optionen"
+  ],
+  "settingsMenuTexts": [
+    "settings",
+    "настройки",
+    "einstellungen"
+  ],
+  "captionsTabTexts": [
+    "captions",
+    "субтитры",
+    "untertitel"
+  ],
+  "captionLanguageLabels": [
+    "language",
+    "язык",
+    "sprache"
   ],
   "captionLanguages": {
     "ru": [

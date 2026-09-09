@@ -570,9 +570,14 @@ func (p *Panel) apiGoogleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p.googleState())
 }
 
-func (p *Panel) googleState() googleState {
-	s := googleState{Ready: googleOAuthReady(p.cfg), Severity: googleInfo}
-	if t, err := loadGoogleToken(p.cfg); err == nil {
+// googleState — состояние доступа в Google. Свободной функцией, а не только
+// методом панели: то же самое показывает терминальный интерфейс, а второй
+// экземпляр этих правил разошёлся бы с первым на ближайшей правке.
+func (p *Panel) googleState() googleState { return googleStatus(p.cfg) }
+
+func googleStatus(cfg *Config) googleState {
+	s := googleState{Ready: googleOAuthReady(cfg), Severity: googleInfo}
+	if t, err := loadGoogleToken(cfg); err == nil {
 		s.Connected, s.Account = true, t.Account
 		// Согласие бывает частичным: галочки на экране Google снимаются
 		// поодиночке. Молчать об этом нельзя — канал просто не заработает, и
@@ -587,7 +592,7 @@ func (p *Panel) googleState() googleState {
 	switch {
 	// Ключ организации проверяем первым: если доступ уже есть, человеку не о чем
 	// беспокоиться, даже когда кнопка рядом тоже заведена.
-	case credentialsFile(p.cfg.Calendar.CredentialsFile, p.cfg.GoogleDocs.CredentialsFile) != "":
+	case credentialsFile(cfg.Calendar.CredentialsFile, cfg.GoogleDocs.CredentialsFile) != "":
 		s.Why = "Доступ уже выдан ключом организации — подключать ничего не нужно."
 	case !s.Ready:
 		// Доступа нет, и добыть его отсюда нельзя: кнопки не будет, пока её не
@@ -700,8 +705,8 @@ func (p *Panel) googleBack(w http.ResponseWriter, r *http.Request, why string) {
 
 // googleRedirect — адрес, на который Google вернёт человека.
 //
-// Берётся из запроса, а не из конфига: панель, открытую как localhost:8080,
-// браузер не считает тем же местом, что 127.0.0.1:8080, — cookie туда не
+// Берётся из запроса, а не из конфига: панель, открытую как localhost:8422,
+// браузер не считает тем же местом, что 127.0.0.1:8422, — cookie туда не
 // поедет, и возврат от Google упёрся бы в форму входа. Конфиг остаётся запасным
 // ответом на случай запроса без адреса.
 //
@@ -723,7 +728,7 @@ func panelPort(addr string) string {
 	if _, port, err := net.SplitHostPort(addr); err == nil && port != "" {
 		return port
 	}
-	return "8080"
+	return "8422"
 }
 
 // --- расписание --------------------------------------------------------------

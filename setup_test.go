@@ -33,6 +33,9 @@ func withStdin(t *testing.T, input string, fn func()) {
 
 func TestSetupWritesConfigAndSecrets(t *testing.T) {
 	dir := t.TempDir()
+	// Свой HOME: мастер запоминает путь к настройке в ~/.config/steno/path, и
+	// без подмены тест затирал бы указатель того, кто гоняет тесты.
+	t.Setenv("HOME", t.TempDir())
 	out := filepath.Join(dir, "steno.json")
 
 	// Небольшая команда · данные по умолчанию · Groq · ключ · Claude по ключу ·
@@ -119,6 +122,9 @@ func TestSetupWritesConfigAndSecrets(t *testing.T) {
 // нужно ни одного ключа и ни одного отдельного счёта.
 func TestSetupPersonalProfile(t *testing.T) {
 	dir := t.TempDir()
+	// Свой HOME: мастер запоминает путь к настройке в ~/.config/steno/path, и
+	// без подмены тест затирал бы указатель того, кто гоняет тесты.
+	t.Setenv("HOME", t.TempDir())
 	out := filepath.Join(dir, "steno.json")
 	// Личный профиль · данные по умолчанию · субтитры · подписка Claude ·
 	// sonnet · дальше всё «нет».

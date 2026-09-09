@@ -51,6 +51,10 @@ type BotOptions struct {
 type BotResult struct {
 	AudioPath    string
 	CaptionsPath string
+	// SpeakersPath — лента подсветки говорящего рядом с субтитрами. Пишется
+	// всегда, когда площадка умеет её отдавать: имена нужны и тогда, когда
+	// субтитры оказались пустыми.
+	SpeakersPath string
 	Participants []string
 	Started      time.Time
 	Ended        time.Time
@@ -77,6 +81,10 @@ type pollState struct {
 	MuteState    string        `json:"muteState"`
 	Participants []string      `json:"participants"`
 	Lines        []CaptionLine `json:"lines"`
+	// Speaking — кого площадка подсвечивает как говорящего прямо сейчас.
+	// Второй, независимый от распознавания источник имён: он не зависит ни от
+	// языка субтитров, ни от того, включены ли они вообще.
+	Speaking []string `json:"speaking"`
 }
 
 // Часть методов есть не у всех площадок — спрашиваем их через opt(), иначе
@@ -85,7 +93,7 @@ type pollState struct {
 const pollJS = `(() => {
   const s = window.__steno;
   if (!s) return {inCall:false,left:false,captionsOn:false,captionsUnavailable:false,
-                  muteState:"unknown",participants:[],lines:[]};
+                  muteState:"unknown",participants:[],lines:[],speaking:[]};
   const opt = (name, fallback) =>
     typeof s[name] === "function" ? s[name]() : fallback;
   const c = s.captions();
@@ -97,6 +105,7 @@ const pollJS = `(() => {
     muteState: opt("muteState", "unknown"),
     participants: s.participants(),
     lines: c.lines,
+    speaking: opt("speaking", []),
   };
 })()`
 
@@ -201,15 +210,17 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 	}
 	lg.Printf("пишу звук в %s", audioPath)
 
-	// Субтитры — единственный источник имён говорящих. Включение у всех
-	// площадок это тумблер, а не выключатель, поэтому жмём только когда
-	// области нет, и проверяем результат.
-	enableCaptions(browserCtx, plat, lg)
+	// Субтитры — главный источник имён говорящих: имя там привязано к
+	// конкретной фразе. Подсветка плитки достраивает их там, где субтитры
+	// молчат, но заменить не может. Включение у всех площадок это тумблер, а
+	// не выключатель, поэтому жмём только когда области нет, и проверяем
+	// результат.
+	capOn := enableCaptions(browserCtx, plat, lg)
 	if o.CaptionLanguage != "" {
 		plat.SetCaptionLanguage(browserCtx, o.Selectors, o.CaptionLanguage, lg)
 	}
 
-	res, err := recordLoop(browserCtx, o, plat, rec, lg)
+	res, err := recordLoop(browserCtx, o, plat, rec, capOn, lg)
 	stopErr := rec.Stop()
 	if err != nil {
 		return nil, err
@@ -296,34 +307,98 @@ func confirmMuted(ctx context.Context) bool {
 	return state == "muted"
 }
 
+// captionPollInterval — как часто спрашиваем страницу. Meet переписывает
+// строку субтитров по несколько раз в секунду, и на полутора секундах короткая
+// реплика — «да, успею» — успевает появиться и исчезнуть между двумя опросами,
+// унеся с собой имя говорящего. Полсекунды стоят одного крошечного вызова в
+// страницу, а точность границ реплики растёт вместе с частотой: конец реплики
+// берётся из времени, когда текст последний раз менялся.
+const captionPollInterval = 500 * time.Millisecond
+
+const (
+	// captionToggleTries — сколько раз пробовать переключатель. Прежние пять
+	// слепых нажатий подряд — это ещё и пять шансов выключить субтитры,
+	// которые уже работали: у всех площадок это тумблер, а не выключатель.
+	// Два нажатия — чётное число: если мы сдались, площадка осталась ровно в
+	// том состоянии, в каком была до нас.
+	captionToggleTries = 2
+	// captionSettleWait — сколько ждать появления области после нажатия. На
+	// живом созвоне Meet показал её через три секунды после последнего
+	// нажатия; полутора секунд, которые ждал прежний код, не хватало.
+	captionSettleWait = 5 * time.Second
+	captionSettleStep = 500 * time.Millisecond
+)
+
+// captionPage — то немногое, что enableCaptions делает со страницей.
+// Вынесено за функции ради теста: сама логика «нажать и убедиться» и есть то,
+// что соврало на живом созвоне, а поднимать браузер на каждый go test нельзя.
+type captionPage struct {
+	// state: включены ли субтитры; знает ли страница, что их не будет;
+	// удалось ли вообще спросить.
+	state  func() (on, unavailable, ok bool)
+	toggle func() error
+	wait   func(time.Duration)
+}
+
 // enableCaptions добивается того, чтобы область субтитров появилась. Если
 // аккаунт бота уже включал их раньше, площадка помнит настройку — и одно
 // слепое переключение их бы выключило.
-func enableCaptions(ctx context.Context, plat Platform, lg *log.Logger) {
-	for i := 0; i < 5; i++ {
-		var st pollState
-		if err := chromedp.Run(ctx, chromedp.Evaluate(pollJS, &st)); err == nil {
-			if st.CaptionsOn {
-				if i > 0 {
-					lg.Printf("субтитры включены")
-				}
-				return
+func enableCaptions(ctx context.Context, plat Platform, lg *log.Logger) bool {
+	return enableCaptionsOn(captionPage{
+		state: func() (bool, bool, bool) {
+			var st pollState
+			if err := chromedp.Run(ctx, chromedp.Evaluate(pollJS, &st)); err != nil {
+				return false, false, false
 			}
-			// Страница знает, что субтитров не будет: на публичном meet.jit.si
-			// они выключены на сервере. Жать там нечего, и пять слепых
-			// нажатий подряд — это пять случайных кнопок в чужом созвоне.
-			if st.CaptionsUnavailable {
-				lg.Printf("субтитры на этом сервере выключены — расшифровка будет по звуку, без имён")
-				return
+			return st.CaptionsOn, st.CaptionsUnavailable, true
+		},
+		toggle: func() error { return plat.ToggleCaptions(ctx) },
+		wait:   time.Sleep,
+	}, lg)
+}
+
+// enableCaptionsOn — сам цикл. Возвращает, появилась ли область субтитров.
+//
+// Прежний код печатал «субтитры включить не удалось» сразу после последнего
+// нажатия, ни разу больше не заглянув на страницу. На живом созвоне субтитры
+// появились через три секунды после этой строчки, и в логе остались оба
+// сообщения разом: «включить не удалось» в начале и «субтитры сняты, имена
+// говорящих есть» в конце. Человек, который такое читает, ищет поломку,
+// которой нет, — и проходит мимо настоящей.
+func enableCaptionsOn(p captionPage, lg *log.Logger) bool {
+	pressed := false
+	for i := 0; i < captionToggleTries; i++ {
+		on, unavailable, ok := p.state()
+		if ok && on {
+			if pressed {
+				lg.Printf("субтитры включены")
 			}
+			return true
 		}
-		if err := plat.ToggleCaptions(ctx); err != nil {
+		// Страница знает, что субтитров не будет: на публичном meet.jit.si
+		// они выключены на сервере. Жать там нечего, и слепые нажатия — это
+		// случайные кнопки в чужом созвоне.
+		if ok && unavailable {
+			lg.Printf("субтитры на этом сервере выключены — расшифровка будет по звуку, без имён")
+			return false
+		}
+		if err := p.toggle(); err != nil {
 			lg.Printf("не удалось переключить субтитры: %v", err)
-			return
+			return false
 		}
-		time.Sleep(1500 * time.Millisecond)
+		pressed = true
+		// Ждём именно появления области, а не фиксированную паузу: пока её
+		// нет, следующее нажатие выключит только что включённые субтитры.
+		for waited := time.Duration(0); waited < captionSettleWait; waited += captionSettleStep {
+			p.wait(captionSettleStep)
+			if on, _, ok := p.state(); ok && on {
+				lg.Printf("субтитры включены")
+				return true
+			}
+		}
 	}
 	lg.Printf("субтитры включить не удалось — расшифровка будет без имён")
+	return false
 }
 
 // muteSelf возвращает, сколько кнопок удалось выключить. Ноль — это не «всё
@@ -372,7 +447,11 @@ func waitAdmission(ctx context.Context, timeout time.Duration, lg *log.Logger) e
 	return fmt.Errorf("хост не впустил бота за %s", timeout)
 }
 
-func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder, lg *log.Logger) (*BotResult, error) {
+// capOn — что вышло у enableCaptions до начала цикла. Нужно, чтобы не
+// оставлять в логе одинокое «включить не удалось», когда субтитры всё-таки
+// появились: два взаимоисключающих сообщения про один созвон — это дороже,
+// чем оба по отдельности.
+func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder, capOn bool, lg *log.Logger) (*BotResult, error) {
 	capPath := filepath.Join(o.OutDir, "captions.jsonl")
 	capFile, err := os.Create(capPath)
 	if err != nil {
@@ -381,7 +460,35 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	defer capFile.Close()
 	enc := json.NewEncoder(capFile)
 
+	// Лента подсветки говорящего — отдельным файлом. Она не реплики: у неё нет
+	// текста, другая задержка и другая достоверность, и складывать её в тот же
+	// файл значило бы потом гадать, что было субтитрами, а что рамкой вокруг
+	// плитки. Ошибку создания глотать нельзя молча, но и запись из-за неё
+	// ронять незачем: звук и субтитры дороже.
+	spkPath := filepath.Join(o.OutDir, speakersFileName)
+	spkEnc := (*json.Encoder)(nil)
+	if f, err := os.Create(spkPath); err != nil {
+		lg.Printf("лента говорящих не пишется (%v) — имена будут только из субтитров", err)
+		spkPath = ""
+	} else {
+		defer f.Close()
+		spkEnc = json.NewEncoder(f)
+	}
+
 	var tracker CaptionTracker
+	var speakers SpeakerTracker
+	var coverage SpeakerCoverage
+	// Подсветка либо есть на площадке, либо её признак переехал. Разница видна
+	// только по времени: за полминуты разговора вдвоём кто-нибудь
+	// подсвечивается обязательно.
+	//
+	// Считаем именно «видели хоть раз», а не закрытые отрезки: отрезок
+	// закрывается, только когда человек замолчал, и на монологе счётчик
+	// отрезков стоял бы на нуле всю первую минуту — бот пожаловался бы на
+	// исправно работающую подсветку.
+	sawSpeaking := false
+	toldNoSpeaking := false
+	openedPeople := false
 	seen := map[string]bool{}
 	aloneSince := time.Time{}
 	warnedNoCaptions := false
@@ -397,11 +504,21 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	// Плитки участников на один такт пропадают при внутреннем переходе Meet и
 	// при переподключении WebRTC. Выход по одному замеру обрезал бы час
 	// разговора на двенадцатой минуте, и снаружи это выглядело бы как
-	// нормально завершённая запись.
-	notInCall := 0
-	const notInCallLimit = 4 // ~6 секунд подряд
+	// нормально завершённая запись. Считаем временем, а не тактами: частота
+	// опроса — настройка съёма субтитров, и менять из-за неё то, через сколько
+	// бот считает себя выведенным из звонка, нельзя.
+	notInCallSince := time.Time{}
+	const notInCallLimit = 6 * time.Second
+	// Сколько текста дали субтитры. Считается по ходу: «реплик ноль» бывает и
+	// у молчаливого созвона, а вот «за четыре минуты речи тридцать букв» —
+	// это уже сломанное распознавание, и человек должен увидеть это в логе,
+	// а не в follow-up с чужими исполнителями.
+	var yield CaptionYield
+	// Про неудачу с субтитрами уже сказано — значит, про их появление тоже
+	// надо сказать, иначе в логе останутся два противоположных сообщения.
+	toldCaptionsFailed := !capOn
 
-	ticker := time.NewTicker(1500 * time.Millisecond)
+	ticker := time.NewTicker(captionPollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -425,8 +542,25 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 		}
 
 		for _, u := range tracker.Update(st.Lines, now) {
+			yield.Add(u)
 			if err := enc.Encode(u); err != nil {
 				lg.Printf("не записал реплику: %v", err)
+			}
+		}
+		// Молчащий бот тоже участник, и площадка иногда подсвечивает
+		// собственную плитку. Себя из ленты убираем и здесь, а не только в
+		// странице: у страницы для этого один признак, а имя бота мы знаем
+		// наверняка.
+		speakingNow := withoutSelf(st.Speaking, o.DisplayName)
+		if len(speakingNow) > 0 {
+			sawSpeaking = true
+		}
+		for _, s := range speakers.Update(speakingNow, now) {
+			coverage.Add(s)
+			if spkEnc != nil {
+				if err := spkEnc.Encode(s); err != nil {
+					lg.Printf("не записал отрезок говорящего: %v", err)
+				}
 			}
 		}
 		for _, p := range st.Participants {
@@ -434,13 +568,35 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 				seen[p] = true
 			}
 		}
-		// Субтитры — единственный источник имён, поэтому возвращаем их столько
+		// Полоски микрофона, по которым видно говорящего, Meet рисует в
+		// строках панели «Участники», а плитки в сетке виртуализируются:
+		// говорящего может не быть в сетке вовсе. Панель открываем не сразу и
+		// только когда подсветка молчит — если она и так работает, лишний
+		// клик в чужом созвоне ни к чему.
+		if !openedPeople && !sawSpeaking && len(seen) > 0 &&
+			rec.Elapsed() > 20*time.Second {
+			openedPeople = true
+			openPeoplePanel(ctx, lg)
+		}
+		// Сказать о неработающей подсветке надо один раз и по делу: пока в
+		// звонке никого нет, молчание — это не поломка.
+		if !toldNoSpeaking && !sawSpeaking && len(seen) > 0 &&
+			rec.Elapsed() > 45*time.Second {
+			toldNoSpeaking = true
+			lg.Printf("подсветка говорящего ни разу не сработала за %s — либо в звонке "+
+				"молчат, либо её признак переехал. Устойчивого признака у Meet нет, "+
+				"чинится это по дампу: перезапусти с --debug-captions и положи "+
+				"увиденное в speakingJsnames или speakingSelectors в selectors.json",
+				rec.Elapsed().Round(time.Second))
+		}
+		// Субтитры — главный источник имён, поэтому возвращаем их столько
 		// раз, сколько понадобится. Раньше защёлка срабатывала однажды: одна
 		// перерисовка Meet на тридцатой секунде — и весь четырёхчасовой созвон
 		// расшифровывался без единого имени.
 		if o.DebugCaptions && time.Since(lastDebug) > 8*time.Second {
 			lastDebug = time.Now()
 			dumpCaptionDOM(ctx, lg)
+			dumpSpeakingDOM(ctx, lg)
 		}
 		if st.CaptionsUnavailable {
 			pageSaysNone = true
@@ -451,6 +607,12 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 		switch {
 		case st.CaptionsOn:
 			warnedNoCaptions = false
+			if toldCaptionsFailed {
+				// Прежде чем это появилось, лог утверждал обратное: сначала
+				// «включить не удалось», а в конце записи — «субтитры сняты».
+				lg.Printf("субтитры всё-таки появились — имена говорящих будут")
+				toldCaptionsFailed = false
+			}
 		case pageSaysNone:
 			// Возвращать нечего. Один раз сказать — и больше не дёргать
 			// страницу: иначе бот всю запись жмёт кнопки, которых нет.
@@ -464,17 +626,18 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 				warnedNoCaptions = true
 			}
 			lastCaptionTry = time.Now()
-			enableCaptions(ctx, plat, lg)
+			toldCaptionsFailed = !enableCaptions(ctx, plat, lg)
 		}
 
 		if st.Left || !st.InCall {
-			notInCall++
-			if notInCall >= notInCallLimit {
+			if notInCallSince.IsZero() {
+				notInCallSince = time.Now()
+			} else if time.Since(notInCallSince) >= notInCallLimit {
 				reason = "бота вывели из звонка"
 				break
 			}
 		} else {
-			notInCall = 0
+			notInCallSince = time.Time{}
 		}
 		if len(st.Participants) <= 1 {
 			if aloneSince.IsZero() {
@@ -493,7 +656,14 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	}
 
 	for _, u := range tracker.Flush(rec.Elapsed().Seconds()) {
+		yield.Add(u)
 		_ = enc.Encode(u)
+	}
+	for _, s := range speakers.Flush(rec.Elapsed().Seconds()) {
+		coverage.Add(s)
+		if spkEnc != nil {
+			_ = spkEnc.Encode(s)
+		}
 	}
 
 	people := make([]string, 0, len(seen))
@@ -506,9 +676,18 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	lg.Printf("запись окончена: %s, %s, участников %d",
 		reason, rec.Elapsed().Round(time.Second), len(people))
 	lg.Printf("субтитры: %s", capState.Explain(plat))
+	if r := yield.Report(rec.Elapsed(), o.CaptionLanguage); r != "" {
+		lg.Printf("%s", r)
+	}
+	// Про подсветку говорим всегда: именно она отвечает на вопрос «будут ли
+	// имена», когда субтитры оказались пустыми.
+	if r := coverage.Report(rec.Elapsed().Seconds()); r != "" {
+		lg.Printf("%s", r)
+	}
 
 	return &BotResult{
 		CaptionsPath: capPath,
+		SpeakersPath: spkPath,
 		Participants: people,
 		Started:      rec.Started,
 		Ended:        time.Now(),
@@ -516,6 +695,51 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 		Platform:     plat.ID(),
 		Captions:     capState,
 	}, nil
+}
+
+// openPeoplePanel открывает панель участников — там, где площадка её вообще
+// имеет. Панель локальная, другие участники её не видят; нужна она потому, что
+// подсветку говорящего Meet рисует в строках этой панели, а сетка плиток
+// показывает не всех.
+//
+// «Метода нет» и «кнопки не нашёл» здесь разные вещи, и путать их нельзя: у
+// Jitsi панель не нужна, и жаловаться там не на что. Поэтому площадка, не
+// умеющая этого, отвечает "no-method" и молчит — цикл записи остаётся общим и
+// про площадки по-прежнему ничего не знает.
+func openPeoplePanel(ctx context.Context, lg *log.Logger) {
+	var res string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(
+		`window.__steno && window.__steno.openPeoplePanel
+			? window.__steno.openPeoplePanel() : "no-method"`, &res)); err != nil {
+		return
+	}
+	switch res {
+	case "clicked":
+		lg.Printf("открыл панель участников: подсветку говорящего площадка рисует в ней")
+	case "":
+		lg.Printf("не нашёл кнопку панели участников — подсветка говорящего может не сработать; " +
+			"смотри peoplePanelLabels в selectors.json")
+	}
+}
+
+// withoutSelf убирает бота из ленты подсветки. Бот сидит в звонке молча, но
+// участником быть не перестаёт, и его собственная плитка иногда загорается —
+// от щелчка в наушниках оператора под --local до просто чужого решения
+// площадки. Имя в ленте — это имя в follow-up, поэтому фильтруем в двух
+// местах: в странице по её признаку своей плитки и здесь по имени, которым бот
+// представился.
+func withoutSelf(names []string, self string) []string {
+	if self == "" {
+		return names
+	}
+	out := names[:0:0]
+	for _, n := range names {
+		if n == self {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // captionOutcome — итог по субтитрам. Отдельной функцией, чтобы у него был
@@ -575,6 +799,45 @@ func dumpCaptionDOM(ctx context.Context, lg *log.Logger) {
 	for _, j := range out.Jsnames {
 		if j.Found {
 			lg.Printf("[дамп] jsname=%s текст=%q", j.Jsname, j.Sample)
+		}
+	}
+}
+
+// dumpSpeakingDOM печатает всё, чем плитки участников могли бы помечать
+// говорящего: сырые атрибуты и классы. Устойчивого признака у Meet нет, и когда
+// нынешний переедет, чинить его будут по этому дампу — одним заходом в живой
+// звонок, а не десятью.
+//
+// Форма ответа у площадок разная (у Jitsi это состояние стора, а не плитки),
+// поэтому разбираем в свободную структуру и печатаем что нашлось.
+func dumpSpeakingDOM(ctx context.Context, lg *log.Logger) {
+	var out struct {
+		How        string   `json:"how"`
+		Store      bool     `json:"store"`
+		DominantID string   `json:"dominantId"`
+		Speaking   []string `json:"speaking"`
+		Tiles      []struct {
+			ID      string   `json:"id"`
+			Name    string   `json:"name"`
+			Self    bool     `json:"self"`
+			How     string   `json:"how"`
+			Classes []string `json:"classes"`
+			Attrs   []string `json:"attrs"`
+		} `json:"tiles"`
+	}
+	js := `(() => (window.__steno && window.__steno.debugSpeaking) ? window.__steno.debugSpeaking() : null)()`
+	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &out)); err != nil {
+		lg.Printf("[дамп] подсветка: не вышло: %v", err)
+		return
+	}
+	lg.Printf("[дамп] говорят сейчас: %v", out.Speaking)
+	if out.How != "" {
+		lg.Printf("[дамп] источник подсветки: %s (стор %v, id %q)", out.How, out.Store, out.DominantID)
+	}
+	for _, t := range out.Tiles {
+		lg.Printf("[дамп] плитка %q свой=%v признак=%q классы=%v", t.Name, t.Self, t.How, t.Classes)
+		if len(t.Attrs) > 0 {
+			lg.Printf("[дамп]   атрибуты: %v", t.Attrs)
 		}
 	}
 }

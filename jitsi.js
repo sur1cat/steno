@@ -115,6 +115,77 @@ try {
     return { speaker: raw.slice(0, i).trim(), text: raw.slice(i + 2).trim() };
   };
 
+  // --- кто говорит прямо сейчас ----------------------------------------------
+  //
+  // На публичном meet.jit.si субтитров нет вовсе (transcription.enabled=false),
+  // а значит и имён говорящих взять неоткуда: whisper слышит речь, но не знает,
+  // кто говорит. Доминантный говорящий — единственный источник имён на этой
+  // площадке, и он же страховка на Meet, где субтитры зависят от того, тем ли
+  // языком слушает распознавание.
+  //
+  // Спрашиваем сначала приложение, потом DOM, и порядок здесь не вкусовщина.
+  // Поле dominantSpeaker в сторе — ровно то место, откуда его берут собственные
+  // e2e-тесты Jitsi (tests/specs/media/activeSpeaker.spec.ts). А класс на
+  // плитке отсутствует сразу в трёх законных случаях: при
+  // interfaceConfig.DISABLE_DOMINANT_SPEAKER_INDICATOR, во время доставки
+  // перевода (Thumbnail.tsx ставит вместо него рамку перевода) и когда плитки
+  // просто нет — лента участников виртуализируется, и говорящего за пределами
+  // видимой части в DOM не будет.
+  //
+  // "" означает «никто не говорит», null — «спросить не у кого». Разница
+  // важна: на null мы идём в DOM, на "" — нет.
+  const dominantFromStore = () => {
+    const store = window.APP && window.APP.store;
+    if (!store || typeof store.getState !== "function") return null;
+    let st = null;
+    try {
+      st = store.getState()["features/base/participants"];
+    } catch (e) {
+      return null;
+    }
+    if (!st) return null;
+    const id = st.dominantSpeaker;
+    if (!id) return "";
+    // Конференцию здесь берём напрямую, а не через conf(): тот считает объект
+    // годным только при наличии isLocalAudioMuted, и переименование метода про
+    // микрофон утащило бы за собой имена говорящих. Каждый метод спрашивается
+    // сам за себя.
+    const c = (window.APP && window.APP.conference) || null;
+    // Себя в ленту не пускаем: молчащий бот всё равно участник, и его имя в
+    // ленте — это его имя в follow-up.
+    if (c && typeof c.getMyUserId === "function" && c.getMyUserId() === id) return "";
+    if (st.local && st.local.id === id) return "";
+    // remote — это Map, а не объект: индексация по ключу вернула бы undefined
+    // всегда, и имя молча не находилось бы никогда.
+    const p = st.remote && typeof st.remote.get === "function" ? st.remote.get(id) : null;
+    if (p && p.name) return String(p.name).trim();
+    // Имя участника в сторе бывает пустым — тогда спрашиваем конференцию.
+    if (c && typeof c.getParticipantById === "function") {
+      const jp = c.getParticipantById(id);
+      if (jp && typeof jp.getDisplayName === "function") {
+        return String(jp.getDisplayName() || "").trim();
+      }
+    }
+    return "";
+  };
+
+  // Запасной путь: литеральный класс dominant-speaker на плитке
+  // (Thumbnail.tsx). Не сгенерированный — соседний класс подсветки как раз
+  // хешируется tss-react и меняется от сборки к сборке. На dominant-speaker
+  // опирается собственный e2e-набор Jitsi, и сильнее гарантии снаружи не бывает.
+  const dominantFromDOM = () => {
+    const out = [];
+    for (const tile of document.querySelectorAll(".videocontainer.dominant-speaker")) {
+      if (String(tile.id || "").indexOf("localVideoContainer") === 0) continue;
+      const n = tile.querySelector(".displayname");
+      const t = n ? (n.innerText || "").trim() : "";
+      // Одного участника Jitsi рисует дважды — в основной ленте и в stage, —
+      // поэтому по имени дедуплицируем.
+      if (t && t !== myName && out.indexOf(t) < 0) out.push(t);
+    }
+    return out;
+  };
+
   const setInputValue = (el, value) => {
     const setter = Object.getOwnPropertyDescriptor(
       window.HTMLInputElement.prototype, "value").set;
@@ -268,6 +339,15 @@ try {
       return out;
     },
 
+    // Кого Jitsi считает говорящим прямо сейчас. Отрезки «с какой по какую
+    // секунду говорил кто» собираются в Go (speakers.go): здесь состояния нет,
+    // поэтому перезагрузка страницы ничего не ломает.
+    speaking() {
+      const one = dominantFromStore();
+      if (one !== null) return one === "" ? [] : [one];
+      return dominantFromDOM();
+    },
+
     // Текущие видимые строки субтитров. Сшивку в реплики делает Go: здесь нет
     // состояния, поэтому перезагрузка страницы ничего не ломает.
     captions() {
@@ -345,6 +425,33 @@ try {
           .map(label)
           .filter((l) => CC_LABEL.test(l) || MORE_ACTIONS.test(l))
           .slice(0, 6),
+      };
+    },
+
+    // Отладка подсветки: видно ли стор, что в нём лежит и что говорит DOM.
+    // Без этого «имён нет» неотличимо от «в звонке молчали».
+    debugSpeaking() {
+      const store = window.APP && window.APP.store;
+      let hasStore = false;
+      let dominant = "";
+      if (store && typeof store.getState === "function") {
+        try {
+          const st = store.getState()["features/base/participants"];
+          hasStore = !!st;
+          dominant = (st && st.dominantSpeaker) || "";
+        } catch (e) {
+          hasStore = false;
+        }
+      }
+      return {
+        how: hasStore ? "store" : "dom",
+        store: hasStore,
+        dominantId: String(dominant),
+        speaking: this.speaking(),
+        tiles: [...document.querySelectorAll(".videocontainer")].slice(0, 8).map((t) => ({
+          id: String(t.id || ""),
+          classes: String(t.getAttribute("class") || ""),
+        })),
       };
     },
   };

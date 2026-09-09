@@ -129,7 +129,7 @@
   },
   "panel": {
     "enabled": true,
-    "addr": ":8080",
+    "addr": ":8422",
     "password_env": "STENO_PANEL_PASSWORD",
     "secure": false
   },

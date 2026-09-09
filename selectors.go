@@ -31,9 +31,44 @@ type Selectors struct {
 	// для каждого кода держим оба варианта.
 	CaptionLanguages     map[string][]string `json:"captionLanguages"`
 	CaptionRegionJsnames []string            `json:"captionRegionJsnames"`
-	JoinButtonTexts      []string            `json:"joinButtonTexts"`
-	NameInputLabels      []string            `json:"nameInputLabels"`
-	LeftMeetingTexts     []string            `json:"leftMeetingTexts"`
+	// Путь к языку субтитров в нынешнем Meet: ⋮ («Ещё») → «Настройки» →
+	// вкладка «Субтитры». Отдельной кнопки настроек субтитров там больше нет,
+	// а подписи на этом пути зависят от языка интерфейса — поэтому здесь.
+	MoreOptionsLabels     []string `json:"moreOptionsLabels"`
+	SettingsMenuTexts     []string `json:"settingsMenuTexts"`
+	CaptionsTabTexts      []string `json:"captionsTabTexts"`
+	CaptionLanguageLabels []string `json:"captionLanguageLabels"`
+
+	JoinButtonTexts  []string `json:"joinButtonTexts"`
+	NameInputLabels  []string `json:"nameInputLabels"`
+	LeftMeetingTexts []string `json:"leftMeetingTexts"`
+
+	// Чем Meet помечает говорящего прямо сейчас. Устойчивого признака у него
+	// нет: подсветка рисуется элементом с обфусцированным классом, а такие
+	// классы меняются от релиза к релизу. Поэтому список пустой по умолчанию —
+	// скрипт сперва пробует общие признаки (атрибут про речь, подпись для
+	// скринридера), а сюда кладут то, что видно на живом созвоне через дамп
+	// `--debug-captions`. Правится без пересборки, как и всё остальное здесь.
+	//
+	// Селекторы ищутся ВНУТРИ плитки [data-participant-id]; плитка считается
+	// говорящей, если найденный элемент виден.
+	SpeakingSelectors []string `json:"speakingSelectors"`
+	// jsname контейнера с полосками микрофона. Meet гонит прозрачность его
+	// обёртки от 0 к 1, пока человек говорит. jsname генерируется Closure, но
+	// живёт заметно дольше имён классов — на том же основании здесь уже есть
+	// captionRegionJsnames.
+	SpeakingJsnames []string `json:"speakingJsnames"`
+	// Цвета, которыми Meet заливает подсветку говорящего, ровно в том виде, в
+	// каком их отдаёт getComputedStyle. Последний рубеж: цвет меняется реже
+	// имени класса, но всё-таки меняется — в ноябре 2025 менялся.
+	SpeakingColors []string `json:"speakingColors"`
+	// Подписи для скринридера, которыми площадка сообщает, что человек
+	// говорит. Зависят от языка интерфейса — потому здесь.
+	SpeakingLabels []string `json:"speakingLabels"`
+	// Подписи панели «Участники» и кнопки, которая её открывает. Полоски
+	// микрофона Meet рисует в строках этой панели, а плитки в сетке
+	// виртуализируются — говорящего может не быть в сетке вовсе.
+	PeoplePanelLabels []string `json:"peoplePanelLabels"`
 
 	// Jitsi — своя секция: другая вёрстка, другие подписи и, в отличие от
 	// Meet, список адресов. Одного канонического адреса у Jitsi нет, его

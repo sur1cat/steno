@@ -412,7 +412,7 @@ func (s *setupState) askTargets(ctx context.Context) error {
 func (s *setupState) askPanel(ctx context.Context) error {
 	section("Панель")
 	s.cfg.Panel.Enabled = true
-	s.cfg.Panel.Addr = s.ask("Адрес", "127.0.0.1:8080")
+	s.cfg.Panel.Addr = s.ask("Адрес", "127.0.0.1:8422")
 	pass := s.askSecret("Пароль (общий на команду)", "")
 	if pass == "" {
 		pass = randomPassword()
@@ -463,6 +463,9 @@ func (s *setupState) write(configPath string) error {
 		return err
 	}
 	fmt.Println(ok(configPath))
+	// Запоминаем, где настройка: иначе команды, набранные из другого каталога,
+	// берут умолчания и ведут себя так, будто настройки не было.
+	rememberConfigPath(configPath)
 
 	// .gitignore рядом с секретами — чтобы они не уехали в первый же коммит.
 	gi := filepath.Join(s.dir, ".gitignore")

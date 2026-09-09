@@ -523,10 +523,30 @@ func (s *Store) Publications(meetingID string) (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// EventSeen — идёт ли уже бот на этот созвон.
+//
+// Отметка держится, только пока созвон в работе. Раньше она держалась до конца
+// получасового окна, и после сорвавшейся записи позвать бота снова было нельзя
+// до самого конца окна — а в ответ приходило «уже иду», хотя не шёл никто.
+// Ключ склеен из ссылки и получаса как раз затем, чтобы два приглашения подряд
+// не привели двух ботов; когда первый ушёл, второму мешать нечему.
 func (s *Store) EventSeen(key string) (bool, error) {
-	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM seen_events WHERE key=?`, key).Scan(&n)
-	return n > 0, err
+	var status string
+	err := s.db.QueryRow(`SELECT COALESCE(m.status, '')
+		FROM seen_events e LEFT JOIN meetings m ON m.id = e.meeting_id
+		WHERE e.key = ?`, key).Scan(&status)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	switch status {
+	case "recording", "starting":
+		return true, nil
+	}
+	// Созвон кончился, сорвался или строку о нём убрали — путь свободен.
+	return false, nil
 }
 
 // UnmarkEvent снимает отметку. Нужен, когда созвон не поехал в работу по
@@ -540,8 +560,21 @@ func (s *Store) UnmarkEvent(key string) error {
 // MarkEventSeen возвращает, удалось ли занять ключ. Без этого проверка через
 // EventSeen и последующая вставка — это два шага, между которыми пролезает
 // второй источник: оба читают «не видели», оба заводят бота.
+// MarkEventSeen занимает ключ. Вернуть true может только тот, кто занял его сам,
+// — на этом держится защита от двух ботов при одновременных приглашениях.
+//
+// Строка от закончившегося созвона занять ключ не мешает: она перезаписывается.
+// Условие требует, чтобы прошлый созвон в базе **был** и был закончен: на момент
+// занятия ключа строки созвона ещё нет, и «нет строки» здесь значит «занимают
+// прямо сейчас», а не «свободно». Иначе восемь одновременных приглашений завели
+// бы восемь ботов — это ровно то, что проверяет TestStartIsAtomicUnderRace.
 func (s *Store) MarkEventSeen(key, meetingID string) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO seen_events (key,meeting_id,created_at) VALUES (?,?,?)`,
+	res, err := s.db.Exec(`INSERT INTO seen_events (key,meeting_id,created_at)
+		VALUES (?,?,?)
+		ON CONFLICT(key) DO UPDATE SET meeting_id=excluded.meeting_id, created_at=excluded.created_at
+		WHERE EXISTS (
+			SELECT 1 FROM meetings m
+			WHERE m.id = seen_events.meeting_id AND m.status NOT IN ('recording','starting'))`,
 		key, meetingID, time.Now().Unix())
 	if err != nil {
 		return false, err
@@ -662,4 +695,15 @@ func (s *Store) TaskOwners() ([]string, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return lessOwner(out[i], out[j]) })
 	return out, nil
+}
+
+// LatestMeeting — самый свежий созвон: то, с чем человек почти всегда и хочет
+// работать, набирая команду без аргумента.
+func (s *Store) LatestMeeting() (id, title string, err error) {
+	err = s.db.QueryRow(
+		`SELECT id, title FROM meetings ORDER BY started_at DESC LIMIT 1`).Scan(&id, &title)
+	if err == sql.ErrNoRows {
+		return "", "", nil
+	}
+	return id, title, err
 }

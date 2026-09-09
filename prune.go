@@ -71,6 +71,14 @@ func prune(st *Store, cfg *Config, lg *log.Logger) (PruneResult, error) {
 	}
 
 	if d := cfg.Retention.Events.D(); d > 0 {
+		// Заодно сироты: ключ, чей созвон удалён, держит ссылку занятой и
+		// отвечает «уже иду» на приглашение, хотя идти некому.
+		if r, err := st.db.Exec(`DELETE FROM seen_events WHERE meeting_id NOT IN
+			(SELECT id FROM meetings)`); err == nil {
+			if n, _ := r.RowsAffected(); n > 0 {
+				fmt.Printf("отметок без созвона: %d\n", n)
+			}
+		}
 		r, err := st.db.Exec(`DELETE FROM seen_events WHERE created_at < ?`,
 			time.Now().Add(-d).Unix())
 		if err != nil {

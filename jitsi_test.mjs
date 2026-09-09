@@ -406,6 +406,172 @@ const captionsBox = (lines) =>
   assert.strictEqual(steno.muteState(), "muted");
 }
 
+// --- кто говорит прямо сейчас ------------------------------------------------
+// На публичном meet.jit.si субтитров нет вовсе, и доминантный говорящий —
+// единственный источник имён: whisper слышит речь, но не знает, кто говорит.
+//
+// Спрашиваем сначала стор приложения, и это не вкусовщина. Класс на плитке
+// отсутствует в трёх законных случаях: при
+// interfaceConfig.DISABLE_DOMINANT_SPEAKER_INDICATOR, во время доставки
+// перевода и когда плитки просто нет — лента участников виртуализируется.
+
+// Стор Jitsi: срез features/base/participants. remote — это Map, а не объект;
+// фикстура повторяет это буквально, иначе тест разрешил бы коду индексацию по
+// ключу, которой живой стор не разрешит.
+const store = (dominant, { local = { id: "me", name: "Steno" }, remote = [] } = {}) => ({
+  getState: () => ({
+    "features/base/participants": {
+      dominantSpeaker: dominant,
+      local,
+      remote: new Map(remote.map((p) => [p.id, p])),
+    },
+  }),
+});
+
+// Говорит один.
+{
+  const steno = boot(inCallBody());
+  steno.setName("Steno · идёт запись");
+  window.APP = {
+    store: store("aaa", { remote: [{ id: "aaa", name: "Участник А" }] }),
+    conference: { getMyUserId: () => "me" },
+  };
+  assert.deepStrictEqual(steno.speaking(), ["Участник А"]);
+}
+
+// Говорят двое подряд: лента должна ехать за сменой доминантного.
+{
+  const steno = boot(inCallBody());
+  const remote = [{ id: "aaa", name: "Участник А" }, { id: "bbb", name: "Участник Б" }];
+  window.APP = { store: store("aaa", { remote }), conference: { getMyUserId: () => "me" } };
+  assert.deepStrictEqual(steno.speaking(), ["Участник А"]);
+  window.APP = { store: store("bbb", { remote }), conference: { getMyUserId: () => "me" } };
+  assert.deepStrictEqual(steno.speaking(), ["Участник Б"], "смена говорящего не заметна");
+}
+
+// Никто не говорит. Это самое частое состояние созвона, и ошибка здесь
+// размазала бы одно имя по всей расшифровке.
+{
+  const steno = boot(inCallBody());
+  window.APP = { store: store(undefined), conference: { getMyUserId: () => "me" } };
+  assert.deepStrictEqual(steno.speaking(), []);
+}
+
+// Говорит сам бот. Он сидит молча, но участником быть не перестаёт, и его имя
+// в ленте — это его имя в follow-up. Себя узнаём двумя способами, и проверять
+// их надо по отдельности: иначе одна оставшаяся защита прикрывает поломку
+// другой, и обе выглядят рабочими.
+
+// В обоих случаях конференция готова назвать имя бота. Так и надо проверять:
+// то, что lib-jitsi-meet сегодня не отдаёт локального участника по id, —
+// подробность реализации, а не договор. Начнёт отдавать — и между ботом и его
+// собственным именем в follow-up останется только эта проверка.
+const selfNamer = { getDisplayName: () => "Steno · идёт запись" };
+
+// Только по id конференции: срез local в сторе бывает пустым, пока участник
+// не доехал.
+{
+  const steno = boot(inCallBody());
+  steno.setName("Steno · идёт запись");
+  window.APP = {
+    // null, а не undefined: undefined в деструктуризации подменяется
+    // значением по умолчанию, и срез local остался бы на месте — проверка
+    // «узнаём ли себя по id конференции» тогда ничего бы не проверяла.
+    store: store("me", { local: null }),
+    conference: {
+      getMyUserId: () => "me",
+      getParticipantById: (id) => (id === "me" ? selfNamer : null),
+    },
+  };
+  assert.deepStrictEqual(steno.speaking(), [],
+    "бот попал в собственную ленту говорящих: не спросили свой id у конференции");
+}
+
+// Только по своему участнику в сторе: APP.conference доезжает позже стора, и
+// getMyUserId на первых опросах ещё не отвечает.
+{
+  const steno = boot(inCallBody());
+  steno.setName("Steno · идёт запись");
+  window.APP = {
+    store: store("me", { local: { id: "me", name: "Steno · идёт запись" } }),
+    conference: { getParticipantById: (id) => (id === "me" ? selfNamer : null) },
+  };
+  assert.deepStrictEqual(steno.speaking(), [],
+    "бот попал в собственную ленту говорящих: не узнали себя по срезу local");
+}
+
+// Стор говорит «никто не говорит», а класс на плитке ещё висит: подсветка
+// гаснет не мгновенно. Верить надо стору — иначе имя замолчавшего человека
+// заедет на следующего.
+{
+  const body = inCallBody();
+  const steno = boot(body);
+  body.querySelector("#participant_aaa").attrs.class = "videocontainer dominant-speaker";
+  window.APP = { store: store(undefined), conference: { getMyUserId: () => "me" } };
+  assert.deepStrictEqual(steno.speaking(), [],
+    "поверили залипшему классу вместо стора");
+}
+
+// Имени в сторе нет — спрашиваем конференцию. Пустое имя в сторе бывает, пока
+// участник не представился, а имя нам нужно любое настоящее.
+{
+  const steno = boot(inCallBody());
+  window.APP = {
+    store: store("aaa", { remote: [{ id: "aaa" }] }),
+    conference: {
+      getMyUserId: () => "me",
+      getParticipantById: (id) => (id === "aaa" ? { getDisplayName: () => "Участник А" } : null),
+    },
+  };
+  assert.deepStrictEqual(steno.speaking(), ["Участник А"],
+    "не спросили имя у конференции, когда в сторе его нет");
+}
+
+// Стора нет вовсе — остаётся класс dominant-speaker на плитке. Литерал из
+// Thumbnail.tsx, на который опирается собственный e2e-набор Jitsi.
+{
+  const body = inCallBody();
+  const steno = boot(body);
+  steno.setName("Steno · идёт запись");
+  const film = body.querySelector(".filmstrip");
+  film.querySelector("#participant_aaa").attrs.class = "videocontainer dominant-speaker";
+  assert.deepStrictEqual(steno.speaking(), ["Участник А"],
+    "не нашли говорящего по классу плитки");
+}
+
+// Своя плитка тоже получает этот класс — и её надо пропустить: она
+// #localVideoContainer, а не #participant_<id>.
+{
+  const body = inCallBody();
+  const steno = boot(body);
+  steno.setName("Steno · идёт запись");
+  body.querySelector("#localVideoContainer").attrs.class = "videocontainer dominant-speaker";
+  assert.deepStrictEqual(steno.speaking(), [],
+    "бот попал в ленту через свою плитку");
+}
+
+// Одного участника Jitsi рисует дважды — в основной ленте и в stage. Оба узла
+// получают класс, а человек в ленте должен быть один.
+{
+  const body = inCallBody();
+  const steno = boot(body);
+  const film = body.querySelector(".filmstrip");
+  film.querySelector("#participant_aaa").attrs.class = "videocontainer dominant-speaker";
+  const stage = new N("span", { id: "participant_aaa_stage", class: "videocontainer dominant-speaker" }, [
+    new N("span", { class: "displayname" }, ["Участник А"]),
+  ]);
+  film.children.push(stage);
+  film.childNodes.push(stage);
+  assert.deepStrictEqual(steno.speaking(), ["Участник А"],
+    "один говорящий попал в ленту дважды");
+}
+
+// Подсветки нет ни на одной плитке — пусто, а не «все».
+{
+  const steno = boot(inCallBody());
+  assert.deepStrictEqual(steno.speaking(), []);
+}
+
 // --- мусор в selectors.json --------------------------------------------------
 {
   // Скобка в подписи — обычное дело. Раньше такая строка роняла весь скрипт:
@@ -442,9 +608,13 @@ const POLL_JS = (() => {
 })();
 
 function pollOnFixture() {
-  const steno = boot(inCallBody({ captions: captionsBox(["Участник А: привет"]) }));
+  const body = inCallBody({ captions: captionsBox(["Участник А: привет"]) });
+  const steno = boot(body);
   steno.setName("Steno · идёт запись");
   window.config = { transcription: { enabled: false } };
+  // Подсветка говорящего — второй источник имён, и до Go он должен доезжать
+  // так же, как реплики: имя поля задано дважды, в pollJS и в теге pollState.
+  body.querySelector("#participant_aaa").attrs.class = "videocontainer dominant-speaker";
   return eval(POLL_JS);
 }
 
@@ -456,6 +626,7 @@ function pollOnFixture() {
   assert.strictEqual(st.captionsUnavailable, true);
   assert.strictEqual(st.muteState, "muted");
   assert.deepStrictEqual(st.lines, [{ speaker: "Участник А", text: "привет" }]);
+  assert.deepStrictEqual(st.speaking, ["Участник А"]);
   assert.ok(st.participants.includes("Участник А"));
 }
 
@@ -467,6 +638,7 @@ function pollOnFixture() {
   const st = eval(POLL_JS);
   assert.strictEqual(st.inCall, false);
   assert.deepStrictEqual(st.lines, []);
+  assert.deepStrictEqual(st.speaking, [], "без скрипта страницы лента должна быть пустой");
 }
 
 if (process.argv.includes("--print-poll")) {

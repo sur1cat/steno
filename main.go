@@ -23,15 +23,24 @@ import (
 const usage = `steno — заметки и follow-up с созвонов.
 
   steno setup                настроить всё: спросит по одному и проверит
-  steno serve                слушать все источники и ходить на созвоны
+  steno ui                   всё в терминале: созвоны, задачи, проекты,
+                             поиск и каналы. ? внутри — клавиши, q — выход;
+                             serve для этого запускать не нужно
+  steno start                запустить фоном: слушать источники и ходить
+                             на созвоны. Останов — steno stop
+  steno serve                то же, но не отпуская терминал
+  steno stop                 остановить фоновый steno, дав дописать созвоны
+  steno status               работает ли, с какого времени, где лог
+  steno autostart on|off     запускать при входе в систему
   steno join <meet-url>      зайти в созвон, записать и разослать follow-up
                              --record-only  только запись
                              --no-followup  запись и расшифровка, без Claude
                              --captions     текст из субтитров Meet
-  steno process <id>         расшифровать и разослать уже записанный созвон
-  steno publish <id>         разослать готовый follow-up ещё раз
-  steno show <id>            показать follow-up
-  steno transcript <id>      показать расшифровку
+  steno process [id]         расшифровать и разослать записанный созвон
+                             без id — последний
+  steno publish [id]         разослать готовый follow-up ещё раз
+  steno show [id]            показать follow-up
+  steno transcript [id]      показать расшифровку
   steno list                 последние созвоны
   steno prune                удалить старые записи по срокам из конфига
   steno doctor               проверить, чего не хватает для запуска
@@ -67,8 +76,24 @@ func main() {
 	switch cmd {
 	case "setup":
 		err = cmdSetup(ctx, args)
+	case "start":
+		// `steno start` — то же, что `serve -d`, но словом, которого от службы и
+		// ждут. Пара start/stop очевидна, а «serve с флагом» надо вспоминать.
+		args = append([]string{"-d"}, args...)
+		fallthrough
 	case "serve":
+		// Фоновый режим и замок на pid-файле — до всего остального: см. daemon.go.
+		if done, derr := daemonize(args); done || derr != nil {
+			err = derr
+			break
+		}
 		err = cmdServe(ctx, args)
+	case "stop":
+		err = cmdStop(args)
+	case "status":
+		err = cmdStatus(args)
+	case "autostart":
+		err = cmdAutostart(args)
 	case "join":
 		err = cmdJoin(ctx, args)
 	case "process":
@@ -93,6 +118,8 @@ func main() {
 		err = cmdContext(ctx, args)
 	case "prune":
 		err = cmdPrune(args)
+	case "ui":
+		err = cmdUI(ctx, args)
 	case "bot":
 		err = cmdBot(ctx, args)
 	case "-h", "--help", "help":
@@ -150,6 +177,11 @@ func open(configPath string) (*Config, *Store, error) {
 		_ = loadDotEnv(filepath.Join(filepath.Dir(abs), ".env"))
 	}
 
+	if p := resolveConfigPath(configPath); p != configPath {
+		configPath = p
+		log.Printf("настройка: %s", configPath)
+		_ = loadDotEnv(filepath.Join(filepath.Dir(p), ".env"))
+	}
 	if _, err := os.Stat(configPath); err != nil {
 		// Умолчания подставляем, только если человек не называл файл сам.
 		// Иначе опечатка в -c тихо запускала бы сервис без единого адресата:
@@ -419,7 +451,10 @@ func runBotInDocker(ctx context.Context, cfg *Config, meetingID, meetURL, outDir
 	if err != nil {
 		return nil, err
 	}
-	if err := ensureBotImage(ctx, cfg.Bot.Image, log.Default()); err != nil {
+	// Имя берём то, которое вернули: подмена внутри функции не помогала бы —
+	// запуск контейнера ниже всё равно взял бы старое из конфига.
+	image, err := ensureBotImage(ctx, cfg.Bot.Image, log.Default())
+	if err != nil {
 		return nil, err
 	}
 	// Имя и метка нужны, чтобы контейнер можно было найти и погасить снаружи:
@@ -463,7 +498,7 @@ func runBotInDocker(ctx context.Context, cfg *Config, meetingID, meetURL, outDir
 		args = append(args, "-v", selAbs+":/selectors.json:ro")
 		botArgs = append(botArgs, "--selectors", "/selectors.json")
 	}
-	args = append(args, cfg.Bot.Image)
+	args = append(args, image)
 	args = append(args, botArgs...)
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
@@ -572,21 +607,22 @@ func cmdProcess(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) < 1 {
-		return fmt.Errorf("нужен id созвона")
-	}
 	cfg, st, err := open(*cfgPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
+	id, err := meetingArg(st, rest)
+	if err != nil {
+		return err
+	}
 	if *useCaptions {
 		cfg.Transcribe.Source = "captions"
 	}
 	if *noFollowup {
-		return transcribeOnly(ctx, cfg, st, rest[0])
+		return transcribeOnly(ctx, cfg, st, id)
 	}
-	return processMeeting(ctx, cfg, st, rest[0], *noPublish)
+	return processMeeting(ctx, cfg, st, id, *noPublish)
 }
 
 func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPublish bool) error {
@@ -690,7 +726,11 @@ func transcribeMeeting(ctx context.Context, cfg *Config, m *Meeting) ([]Segment,
 	if uerr != nil {
 		log.Printf("субтитры не прочитались (%v) — расшифровка будет без имён", uerr)
 	}
-	return alignSpeakers(segs, utts), nil
+	// Третий источник имён — лента активного говорящего, снятая ботом со
+	// страницы. Она нужна там, где субтитров нет или почти нет: у Jitsi их на
+	// публичном сервере не бывает вовсе, а Meet на неверном языке распознаёт
+	// так мало, что имён не хватает даже на треть разговора.
+	return alignSpeakers(segs, utts, readSpeakerSpans(m.CaptionsPath)...), nil
 }
 
 func namedCount(segs []Segment) int {
@@ -710,15 +750,15 @@ func cmdPublish(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) < 1 {
-		return fmt.Errorf("нужен id созвона")
-	}
 	cfg, st, err := open(*cfgPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	id := rest[0]
+	id, err := meetingArg(st, rest)
+	if err != nil {
+		return err
+	}
 	m, err := st.Meeting(id)
 	if err != nil {
 		return err
@@ -747,15 +787,15 @@ func cmdShow(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) < 1 {
-		return fmt.Errorf("нужен id созвона")
-	}
 	_, st, err := open(*cfgPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	id := rest[0]
+	id, err := meetingArg(st, rest)
+	if err != nil {
+		return err
+	}
 	m, err := st.Meeting(id)
 	if err != nil {
 		return err
@@ -1010,20 +1050,21 @@ func cmdTranscript(args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) < 1 {
-		return fmt.Errorf("нужен id созвона")
-	}
 	_, st, err := open(*cfgPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	segs, err := st.Segments(rest[0])
+	id, err := meetingArg(st, rest)
+	if err != nil {
+		return err
+	}
+	segs, err := st.Segments(id)
 	if err != nil {
 		return err
 	}
 	if len(segs) == 0 {
-		return fmt.Errorf("расшифровки для %s ещё нет", rest[0])
+		return fmt.Errorf("расшифровки для %s ещё нет", id)
 	}
 	fmt.Print(renderTranscript(segs))
 	return nil
@@ -1287,21 +1328,58 @@ func (l *stringList) Set(v string) error {
 //
 // Локально собранный образ (steno-bot:latest) не трогаем: у него нет реестра,
 // откуда тянуть, и попытка скачивания только запутает сообщением об ошибке.
-func ensureBotImage(ctx context.Context, image string, log *log.Logger) error {
-	if err := exec.CommandContext(ctx, "docker", "image", "inspect", image).Run(); err == nil {
-		return nil
+func ensureBotImage(ctx context.Context, image string, log *log.Logger) (string, error) {
+	// Со сроком: зависший демон Docker не отвечает и не отваливается, а
+	// `docker image inspect` ждёт его вечно. На живом созвоне это выглядело
+	// так: steno написал «иду на созвон» и замер навсегда, ничего не объяснив.
+	look, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if haveImage(look, image) {
+		return image, nil
+	}
+	if look.Err() != nil && ctx.Err() == nil {
+		return "", fmt.Errorf("docker не отвечает уже 20 секунд — похоже, он завис;\n" +
+			"  перезапусти Docker Desktop и попробуй снова")
 	}
 	if !strings.Contains(image, "/") {
-		return fmt.Errorf("нет образа %s — он собирается из исходников:\n"+
-			"  git clone https://github.com/sur1cat/steno && cd steno && make bot-image", image)
+		// Настройки, написанные до появления образа в реестре, хранят имя
+		// «steno-bot:latest». Такое имя некуда тянуть — но это не повод
+		// отправлять человека собирать гигабайт руками: у его версии есть
+		// готовый образ, и правильнее взять его, сказав об этом вслух.
+		reg := defaultBotImage()
+		if !strings.Contains(reg, "/") {
+			return "", fmt.Errorf("нет образа %s — он собирается из исходников:\n"+
+				"  git clone https://github.com/sur1cat/steno && cd steno && make bot-image", image)
+		}
+		log.Printf("в настройке образ %s, которого нет; беру %s", image, reg)
+		image = reg
+		if haveImage(ctx, image) {
+			return image, nil
+		}
 	}
 	log.Printf("образа %s нет, скачиваю (около гигабайта, один раз)", image)
-	cmd := exec.CommandContext(ctx, "docker", "pull", image)
+	// Скачивание — дело долгое (гигабайт), но не бесконечное.
+	pullCtx, cancelPull := context.WithTimeout(ctx, 20*time.Minute)
+	defer cancelPull()
+	cmd := exec.CommandContext(pullCtx, "docker", "pull", image)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("не скачался образ %s: %s\n"+
+		return "", fmt.Errorf("не скачался образ %s: %s\n"+
 			"  можно собрать самому: git clone https://github.com/sur1cat/steno && cd steno && make bot-image",
 			image, tail(string(out), 300))
 	}
 	log.Printf("образ %s готов", image)
-	return nil
+	return image, nil
+}
+
+// haveImage — есть ли образ на машине.
+//
+// Через `docker images -q`, а не `docker image inspect`: Docker Desktop с новым
+// хранилищем образов кладёт собранное BuildKit так, что inspect по имени его не
+// находит, хотя `docker images` показывает, а контейнер из него запускается.
+// Проверено на живой машине: inspect по имени — «No such image», по
+// идентификатору — находит. Из-за этого steno отказывался идти на созвон,
+// требуя собрать образ, который уже был собран.
+func haveImage(ctx context.Context, image string) bool {
+	out, err := exec.CommandContext(ctx, "docker", "images", "-q", image).Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }

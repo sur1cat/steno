@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -83,6 +85,7 @@ func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segme
 		a = strings.ReplaceAll(a, "{{language}}", cfg.Transcribe.Language)
 		args[i] = a
 	}
+	args[0] = adapterPath(args[0])
 
 	// Ждём очереди до того, как заводить таймаут: иначе созвон, простоявший в
 	// очереди час, сорвётся по таймауту, не начав расшифровываться.
@@ -164,57 +167,232 @@ func readUtterances(path string) ([]Utterance, error) {
 
 // captionLag — субтитры Meet появляются позже самой речи: распознаванию нужно
 // время. Сдвигаем их назад, иначе имена уезжают на следующего говорящего.
+//
+// У подсветки говорящего задержка своя и другая — она загорается почти сразу и
+// гаснет с опозданием. Поэтому два источника нельзя сложить в одну кучу и
+// сдвинуть общим числом: их приводят к времени речи по отдельности, здесь и в
+// normalizeSpans, и только потом сравнивают.
 const captionLag = 1.5
 
 // nearestWindow — насколько далеко от сегмента ещё допустимо брать имя, если
 // прямого пересечения нет. Дальше лучше без имени, чем с чужим.
 const nearestWindow = 3.0
 
-// alignSpeakers ставит имена из субтитров Meet на сегменты whisper: текст
-// берём у whisper (он точнее), имя — у Meet (оно достоверно).
-func alignSpeakers(segs []Segment, utts []Utterance) []Segment {
-	if len(utts) == 0 {
+// minSolidOverlap — пересечение короче этого считаем касанием краёв, а не
+// попаданием. Нужно ровно в одном месте: реплика субтитров, задевшая сегмент
+// на пять сотых секунды краем, не должна перебивать подсветку, накрывшую тот же
+// сегмент целиком.
+const minSolidOverlap = 0.25
+
+// namedSpan — отрезок с именем. Сюда одинаково ложатся и реплика субтитров, и
+// подсветка говорящего: дальше их различает только то, кто в каком списке.
+type namedSpan struct {
+	speaker    string
+	start, end float64
+}
+
+// spanFinder — окно, едущее по отсортированной ленте. Обе последовательности
+// идут по времени, поэтому смотреть каждый отрезок для каждого сегмента
+// незачем. На часовом созвоне это тысячи сегментов против тысяч отрезков.
+type spanFinder struct {
+	spans []namedSpan
+	lo    int
+}
+
+// match — что лента дала для одного сегмента whisper. overlap > 0 означает
+// настоящее пересечение, dist > 0 — что имя взято от ближайшего по времени
+// отрезка, а не от накрывающего.
+type match struct {
+	speaker string
+	overlap float64
+	dist    float64
+	ok      bool
+}
+
+func (f *spanFinder) find(s Segment) match {
+	// Отрезки, кончившиеся до окна допуска, больше не понадобятся никогда:
+	// сегменты дальше только позже.
+	for f.lo < len(f.spans) && f.spans[f.lo].end < s.Start-nearestWindow {
+		f.lo++
+	}
+	best, bestOverlap := -1, 0.0
+	nearest, dist := -1, nearestWindow
+	for j := f.lo; j < len(f.spans) && f.spans[j].start <= s.End+nearestWindow; j++ {
+		u := f.spans[j]
+		if ov := overlap(s.Start, s.End, u.start, u.end); ov > bestOverlap {
+			best, bestOverlap = j, ov
+		}
+		if d := gap(s.Start, s.End, u.start, u.end); d < dist {
+			nearest, dist = j, d
+		}
+	}
+	if best >= 0 {
+		return match{speaker: f.spans[best].speaker, overlap: bestOverlap, ok: true}
+	}
+	// Пересечения нет — берём ближайший по времени отрезок, но только если он
+	// рядом: иначе лучше без имени, чем с чужим.
+	if nearest >= 0 {
+		return match{speaker: f.spans[nearest].speaker, dist: dist, ok: true}
+	}
+	return match{}
+}
+
+// solidOverlap — сколько пересечения довольно, чтобы считать попадание
+// настоящим. У очень коротких сегментов порогом становится их половина: иначе
+// реплика в четверть секунды не смогла бы попасть никуда.
+func solidOverlap(s Segment) float64 {
+	if half := (s.End - s.Start) / 2; half < minSolidOverlap {
+		return half
+	}
+	return minSolidOverlap
+}
+
+// alignSpeakers ставит имена на сегменты whisper: текст берём у whisper (он
+// точнее), имя — у площадки.
+//
+// Источников имени два, и они складываются, а не заменяют друг друга.
+//
+// Субтитры точнее: строка субтитров появляется потому, что площадка распознала
+// речь и привязала её к конкретному участнику, — это имя привязано к фразе.
+// Поэтому субтитры остаются основным источником.
+//
+// Подсветка говорящего слабее: она реагирует на громкость, а не на слова.
+// Её ловит кашель и стук по клавиатуре, при перекрёстных репликах она скачет,
+// а границы у неё грубее — опрос идёт раз в полсекунды. Зато она не зависит от
+// языка распознавания и работает там, где субтитров нет вовсе (публичный
+// Jitsi). Поэтому подсветка — запасной источник там, где субтитры молчат.
+//
+// При разногласии на одном отрезке выигрывают субтитры. Единственное
+// исключение — когда субтитры лишь задели сегмент краем (меньше
+// solidOverlap), а подсветка накрыла его по-настоящему: тогда речь идёт не о
+// разногласии двух мнений об одном отрезке, а о том, что реплика субтитров
+// относится к соседнему куску разговора.
+//
+// Расхождения не заминаются, а считаются: если субтитры систематически
+// разъезжаются с подсветкой, это видно строкой в логе, а не по чужим фамилиям
+// в follow-up.
+//
+// Третий параметр вариативный не для красоты: main.go зовёт alignSpeakers
+// двумя аргументами, и над ним сейчас работают, — так подсветка включается
+// правкой одной строки, а сборка не ломается ни на минуту.
+func alignSpeakers(segs []Segment, utts []Utterance, tiles ...SpeakerSpan) []Segment {
+	caps := make([]namedSpan, 0, len(utts))
+	for _, u := range utts {
+		// Субтитры отстают от речи — сдвигаем их назад к тому времени, когда
+		// слова были сказаны.
+		caps = append(caps, namedSpan{u.Speaker, u.Start - captionLag, u.End - captionLag})
+	}
+	sort.Slice(caps, func(i, j int) bool { return caps[i].start < caps[j].start })
+
+	// Лента подсветки к времени речи приводится своим способом — в
+	// normalizeSpans. Общим сдвигом их путать нельзя: у субтитров задержка
+	// одна, у подсветки другая, и смешать их значит получить имена, съехавшие
+	// ровно на эту разницу.
+	norm := normalizeSpans(tiles)
+	tls := make([]namedSpan, 0, len(norm))
+	for _, s := range norm {
+		tls = append(tls, namedSpan{s.Speaker, s.Start, s.End})
+	}
+
+	if len(caps) == 0 && len(tls) == 0 {
 		return segs
 	}
-	shifted := make([]Utterance, len(utts))
-	for i, u := range utts {
-		u.Start -= captionLag
-		u.End -= captionLag
-		shifted[i] = u
-	}
-	// Обе последовательности идут по времени, поэтому смотреть каждую реплику
-	// для каждого сегмента незачем: окно только едет вперёд. На часовом
-	// созвоне это тысячи сегментов против тысяч реплик.
-	sort.Slice(shifted, func(i, j int) bool { return shifted[i].Start < shifted[j].Start })
+
+	capFinder := &spanFinder{spans: caps}
+	tileFinder := &spanFinder{spans: tls}
+	var mix speakerMix
 
 	out := make([]Segment, len(segs))
-	lo := 0
 	for i, s := range segs {
 		out[i] = s
-		// Реплики, закончившиеся до окна допуска, больше не понадобятся
-		// никогда: сегменты дальше только позже.
-		for lo < len(shifted) && shifted[lo].End < s.Start-nearestWindow {
-			lo++
+		c := capFinder.find(s)
+		t := tileFinder.find(s)
+		solid := solidOverlap(s)
+		capSolid := c.ok && c.overlap > 0 && c.overlap >= solid
+		tileSolid := t.ok && t.overlap > 0 && t.overlap >= solid
+		if capSolid && tileSolid && c.speaker != t.speaker {
+			mix.Conflicts++
 		}
-		best, bestOverlap := -1, 0.0
-		nearest, dist := -1, nearestWindow
-		for j := lo; j < len(shifted) && shifted[j].Start <= s.End+nearestWindow; j++ {
-			u := shifted[j]
-			if ov := overlap(s.Start, s.End, u.Start, u.End); ov > bestOverlap {
-				best, bestOverlap = j, ov
-			}
-			if d := gap(s.Start, s.End, u.Start, u.End); d < dist {
-				nearest, dist = j, d
-			}
+		switch {
+		case capSolid:
+			out[i].Speaker = c.speaker
+			mix.FromCaptions++
+		case t.ok && t.overlap > 0:
+			// Субтитры сюда не попали или только задели краем, а подсветка
+			// накрыла — это её случай.
+			out[i].Speaker = t.speaker
+			mix.FromTiles++
+		case c.ok:
+			out[i].Speaker = c.speaker
+			mix.FromCaptions++
+		case t.ok:
+			out[i].Speaker = t.speaker
+			mix.FromTiles++
+		default:
+			mix.Unnamed++
 		}
-		if best < 0 {
-			// Пересечения нет — берём ближайшую по времени реплику, но только
-			// если она рядом: иначе лучше без имени, чем с чужим.
-			best = nearest
+	}
+	if len(tls) > 0 {
+		log.Printf("%s", mix.Report())
+	}
+	return out
+}
+
+// speakerMix — откуда взялись имена. Нужен, чтобы человек видел, работает ли
+// подсветка вообще и не разъезжается ли она с субтитрами: молча выбранный
+// источник — это чужие фамилии в follow-up без единого следа в логе.
+type speakerMix struct {
+	FromCaptions int
+	FromTiles    int
+	Unnamed      int
+	Conflicts    int
+}
+
+func (m speakerMix) Report() string {
+	msg := fmt.Sprintf("имена: %d от субтитров, %d от подсветки говорящего, %d без имени",
+		m.FromCaptions, m.FromTiles, m.Unnamed)
+	if m.Conflicts > 0 {
+		msg += fmt.Sprintf("; разошлись на %d сегментах — там взято имя из субтитров", m.Conflicts)
+	}
+	return msg
+}
+
+// speakerTimelinePath — лента подсветки лежит рядом с субтитрами и пишется тем
+// же ботом. Отдельным файлом, а не строчками в captions.jsonl: реплика
+// субтитров и отрезок подсветки — разные вещи с разными задержками, и
+// смешивать их в одном файле значит потом гадать, что было чем. Заодно
+// «реплик в субтитрах» остаётся честным числом.
+func speakerTimelinePath(captionsPath string) string {
+	return filepath.Join(filepath.Dir(captionsPath), speakersFileName)
+}
+
+// speakersFileName — имя ленты. Одно на двоих: бот его пишет (meet_bot.go),
+// расшифровка читает. Разъехавшиеся строковые литералы здесь означали бы, что
+// лента пишется и молча никем не читается.
+const speakersFileName = "speakers.jsonl"
+
+// readSpeakerSpans читает ленту подсветки. Ошибку не возвращает намеренно:
+// её отсутствие — обычное дело (старая запись, площадка без подсветки), и
+// расшифровка от этого не должна падать.
+func readSpeakerSpans(captionsPath string) []SpeakerSpan {
+	f, err := os.Open(speakerTimelinePath(captionsPath))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []SpeakerSpan
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
 		}
-		if best >= 0 {
-			out[i].Speaker = shifted[best].Speaker
+		var s SpeakerSpan
+		if err := json.Unmarshal([]byte(line), &s); err != nil {
+			continue // одна битая строка не повод терять всю ленту
 		}
+		out = append(out, s)
 	}
 	return out
 }

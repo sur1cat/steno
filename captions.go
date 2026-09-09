@@ -14,7 +14,9 @@ package main
 // конвейера, и чинить её надо в одном месте.
 
 import (
+	"fmt"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -45,8 +47,12 @@ type liveUtt struct {
 	text    string
 	// segStart — начало ещё не отданного куска.
 	segStart float64
-	// emitted — сколько рун текста уже ушло в файл.
-	emitted int
+	// sent — текст, уже ушедший в файл. Именно текст, а не счётчик рун:
+	// счётчик — это позиция в старой строке, применённая к новой, и он врёт
+	// каждый раз, когда Meet не дописывает строку, а переписывает её.
+	// Строка стала короче отданного — счётчик молча глотает весь новый текст;
+	// строку переписали с середины — счётчик срезает начало нового.
+	sent string
 	// changed — когда текст последний раз менялся.
 	changed float64
 }
@@ -57,21 +63,50 @@ type liveUtt struct {
 const idleFinalize = 4.0
 
 func (l *liveUtt) pending() string {
-	r := []rune(l.text)
-	if l.emitted >= len(r) {
-		return ""
+	if l.sent == "" {
+		return strings.TrimSpace(l.text)
 	}
-	return strings.TrimSpace(string(r[l.emitted:]))
+	if strings.HasPrefix(l.text, l.sent) {
+		return strings.TrimSpace(l.text[len(l.sent):])
+	}
+	// Строку переписали или сдвинули окно. Общее начало отдавать заново не
+	// надо, а вот терять хвост нельзя: лучше повтор в расшифровке, который
+	// видно, чем тихо пропавшие слова, которых не хватишься.
+	n := commonPrefixLen(l.sent, l.text)
+	return strings.TrimSpace(string([]rune(l.text)[n:]))
 }
 
-// emit отдаёт накопленное и запоминает, докуда отдано.
-func (l *liveUtt) emit(at float64) (Utterance, bool) {
+// visibleEnd — чем закрыть реплику, строка которой ещё была на экране в
+// момент at. Дальше последнего изменения текста реплика может тянуться только
+// пока строка висит, и не дольше idleFinalize: ровно столько мы и сами ждём,
+// прежде чем счесть, что человек замолчал.
+func (l *liveUtt) visibleEnd(at float64) float64 {
+	end := l.changed + idleFinalize
+	if end > at {
+		end = at
+	}
+	return end
+}
+
+// emit отдаёт накопленное и запоминает, докуда отдано. end задаётся снаружи,
+// потому что «строка исчезла» и «строка стоит без изменений» закрываются
+// по-разному.
+//
+// Это не косметика: alignSpeakers раздаёт имена по пересечению отрезков, и
+// реплика, растянутая на тишину после себя, забирает слова следующего
+// говорящего. На живом созвоне реплика из двух слов получила отрезок в 13,5
+// секунды ровно так — потому что закрывалась временем, когда мы заметили
+// тишину, а не временем, когда текст перестал меняться.
+func (l *liveUtt) emit(at, end float64) (Utterance, bool) {
 	txt := l.pending()
 	if txt == "" {
 		return Utterance{}, false
 	}
-	u := Utterance{Speaker: l.speaker, Text: txt, Start: l.segStart, End: at}
-	l.emitted = len([]rune(l.text))
+	if end < l.segStart {
+		end = l.segStart
+	}
+	u := Utterance{Speaker: l.speaker, Text: txt, Start: l.segStart, End: end}
+	l.sent = l.text
 	l.segStart = at
 	return u, true
 }
@@ -129,7 +164,11 @@ func (t *CaptionTracker) Update(lines []CaptionLine, at float64) []Utterance {
 	// Строка ушла из области — реплика закончилась.
 	for j, u := range t.live {
 		if !used[j] {
-			if e, ok := u.emit(at); ok {
+			// Строка исчезла: до at она ещё висела, поэтому закрываем её
+			// по visibleEnd, а не временем последнего изменения — иначе
+			// строка, которую нарисовали и убрали за один такт, получила бы
+			// отрезок нулевой длины и не пересеклась бы ни с чем у whisper.
+			if e, ok := u.emit(at, u.visibleEnd(at)); ok {
 				done = append(done, e)
 			}
 		}
@@ -159,8 +198,10 @@ func (t *CaptionTracker) Update(lines []CaptionLine, at float64) []Utterance {
 		} else if at-u.changed >= idleFinalize {
 			// Текст стоит на месте — человек замолчал. Отдаём накопленное, не
 			// дожидаясь, пока строка исчезнет: при монологе она не исчезает
-			// минутами, а падение бота унесло бы всё несохранённое.
-			if e, ok := u.emit(at); ok {
+			// минутами, а падение бота унесло бы всё несохранённое. Закрываем
+			// временем последнего изменения: тишина после реплики принадлежит
+			// не ей, а следующему говорящему.
+			if e, ok := u.emit(at, u.changed); ok {
 				done = append(done, e)
 			}
 		}
@@ -174,7 +215,7 @@ func (t *CaptionTracker) Update(lines []CaptionLine, at float64) []Utterance {
 func (t *CaptionTracker) Flush(at float64) []Utterance {
 	var done []Utterance
 	for _, u := range t.live {
-		if e, ok := u.emit(at); ok {
+		if e, ok := u.emit(at, u.visibleEnd(at)); ok {
 			done = append(done, e)
 		}
 	}
@@ -229,4 +270,112 @@ func commonPrefixLen(a, b string) int {
 		i++
 	}
 	return i
+}
+
+// --- сколько текста дали субтитры -------------------------------------------
+
+// CaptionYield считает, сколько текста субтитры дали за запись и какой он
+// письменности.
+//
+// Считать это нужно ровно за одним. Язык распознавания у Meet свой, задаётся в
+// его настройках и от whisper не зависит. Когда он не тот, субтитры отдают не
+// мусор, а почти ничего: на живом созвоне 232 секунды русской речи дали 31
+// букву — «But. Dorian.», «Show. Release.», «He.», и всё это в первые 39
+// секунд. Имена говорящих при этом были верные, поэтому снаружи запись
+// выглядела рабочей, а follow-up получил одного говорящего на весь созвон и
+// расставил задачи не на тех людей.
+//
+// Молчать об этом нельзя, а определить надёжно можно только по самому тексту:
+// спросить у Meet, каким языком он слушает, не всегда выходит.
+type CaptionYield struct {
+	Utterances int
+	Latin      int
+	Cyrillic   int
+}
+
+func (y *CaptionYield) Add(u Utterance) {
+	y.Utterances++
+	for _, r := range u.Text {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		switch {
+		case r < 128:
+			y.Latin++
+		case unicode.Is(unicode.Cyrillic, r):
+			y.Cyrillic++
+		case unicode.Is(unicode.Latin, r):
+			y.Latin++
+		}
+	}
+}
+
+func (y CaptionYield) letters() int { return y.Latin + y.Cyrillic }
+
+// minLettersToJudge — меньше этого о письменности говорить нечего: одно
+// случайное слово ничего не значит.
+const minLettersToJudge = 12
+
+// Script — «латиница», «кириллица», «вперемешку» или пустая строка, если букв
+// слишком мало, чтобы судить.
+func (y CaptionYield) Script() string {
+	n := y.letters()
+	if n < minLettersToJudge {
+		return ""
+	}
+	switch {
+	case y.Cyrillic*5 >= n*4:
+		return "кириллица"
+	case y.Latin*5 >= n*4:
+		return "латиница"
+	}
+	return "вперемешку"
+}
+
+// langScript — какой письменностью пишут на языке с этим кодом. Список
+// короткий нарочно: он нужен не для классификации языков, а чтобы поймать
+// самый частый и самый дорогой случай — говорят по-русски, а Meet слушает
+// по-английски.
+var langScript = map[string]string{
+	"ru": "кириллица", "uk": "кириллица", "be": "кириллица", "bg": "кириллица",
+	"sr": "кириллица", "mk": "кириллица", "kk": "кириллица", "ky": "кириллица",
+	"en": "латиница", "de": "латиница", "fr": "латиница", "es": "латиница",
+	"it": "латиница", "pt": "латиница", "nl": "латиница", "pl": "латиница",
+	"tr": "латиница", "cs": "латиница", "ro": "латиница", "id": "латиница",
+	"sv": "латиница", "fi": "латиница", "da": "латиница", "no": "латиница",
+}
+
+// sparseCaptions — букв в минуту, ниже которых субтитры перестают быть
+// расшифровкой. Обычная речь даёт 600–900; 150 — это уже не тихий созвон, а
+// распознавание, которое не работает.
+const sparseCaptions = 150
+
+// Report — строка в лог о том, что вышло с субтитрами: сколько текста, какой
+// письменности и не разошлась ли она с языком, который мы просили у Meet.
+// Пустая строка означает «сказать нечего»: записи не было.
+func (y CaptionYield) Report(speech time.Duration, wantLang string) string {
+	if speech <= 0 {
+		return ""
+	}
+	n := y.letters()
+	rate := float64(n) / speech.Minutes()
+	msg := fmt.Sprintf("субтитры: %d реплик, %d букв за %s (%.0f букв в минуту)",
+		y.Utterances, n, speech.Round(time.Second), rate)
+	if s := y.Script(); s != "" {
+		msg += "; письменность — " + s
+	}
+
+	want := langScript[strings.ToLower(wantLang)]
+	got := y.Script()
+	if want != "" && got != "" && got != want {
+		return msg + fmt.Sprintf(". Meet слушает не тот язык: просили %s (%s), "+
+			"а текст идёт %s. Имена говорящих от этого верные, а текст субтитров "+
+			"брать нельзя — язык распознавания ставится в самом Meet: "+
+			"⋮ → Настройки → Субтитры → язык встречи", wantLang, want, got)
+	}
+	if rate < sparseCaptions {
+		return msg + ". Это в разы меньше, чем речи: либо в звонке молчали, " +
+			"либо Meet распознаёт не тот язык — проверь ⋮ → Настройки → Субтитры"
+	}
+	return msg
 }

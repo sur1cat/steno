@@ -53,11 +53,12 @@ func cmdDoctor(args []string) error {
 	// «конфиг steno.json» и тогда, когда файла не было вовсе: doctor показывал
 	// умолчания, человек читал их как свои настройки и не понимал, почему панель
 	// выключена, модель не та, а адаптер не находится.
-	if _, err := os.Stat(*cfgPath); err != nil {
-		fmt.Printf("steno doctor · %s\n", paint("33", "конфига "+*cfgPath+" нет — показываю умолчания"))
+	path := resolveConfigPath(*cfgPath)
+	if _, err := os.Stat(path); err != nil {
+		fmt.Printf("steno doctor · %s\n", paint("33", "конфига "+path+" нет — показываю умолчания"))
 		fmt.Printf("%s\n\n", dim("настроить одной командой:  steno setup"))
 	} else {
-		fmt.Printf("steno doctor · конфиг %s\n\n", *cfgPath)
+		fmt.Printf("steno doctor · конфиг %s\n\n", path)
 	}
 	blocked, broken := false, false
 	for _, c := range cs {
@@ -121,7 +122,12 @@ func checkBot(cfg *Config) check {
 		return check{"бот (docker)", "fail", "docker не найден",
 			[]string{"→ поставь Docker Desktop или задай bot.local = true"}, true}
 	}
-	out, err := exec.Command("docker", "image", "inspect", cfg.Bot.Image, "--format", "{{.Id}}").Output()
+	// Через `docker images -q`: inspect по имени не находит образ, собранный
+	// BuildKit в новом хранилище Docker Desktop. См. haveImage в main.go.
+	out, err := exec.Command("docker", "images", "-q", cfg.Bot.Image).Output()
+	if err == nil && strings.TrimSpace(string(out)) == "" {
+		err = fmt.Errorf("нет такого образа")
+	}
 	if err != nil {
 		// Отсутствие образа из реестра — не поломка: steno скачает его сам перед
 		// первым созвоном. Пугать этим человека, который только что поставил
@@ -136,6 +142,15 @@ func checkBot(cfg *Config) check {
 			[]string{"→ make bot-image"}, true}
 	}
 	_ = out
+	// Запись, разбор страницы и снятие субтитров живут внутри образа, а не в
+	// этом бинарнике. Обновив steno, легко остаться со вчерашним ботом и
+	// полдня чинить то, что уже починено: человек ставит новую версию, идёт на
+	// созвон и получает прежнее поведение. Молчать об этом нельзя.
+	if age := imageAge(strings.TrimSpace(string(out))); age != "" {
+		return check{"бот (docker)", "fail",
+			"образ " + cfg.Bot.Image + " старше самого steno (" + age + ")",
+			fixes(cfg), false}
+	}
 	return check{"бот (docker)", "ok", "образ " + cfg.Bot.Image + " на месте", nil, true}
 }
 
@@ -149,7 +164,9 @@ func checkTranscribe(cfg *Config) check {
 		return check{"расшифровка", "fail", "не задан transcribe.cmd",
 			[]string{`→ или поставь "source": "captions", чтобы взять текст из субтитров площадки`}, false}
 	}
-	bin := cfg.Transcribe.Cmd[0]
+	// Через adapterPath: путь в конфиге мог указывать в каталог версии, которую
+	// снёс brew upgrade, а адаптер при этом лежит рядом с новой.
+	bin := adapterPath(cfg.Transcribe.Cmd[0])
 	if _, err := exec.LookPath(bin); err != nil {
 		return check{"расшифровка", "fail", "не запускается " + bin,
 			[]string{
@@ -520,4 +537,49 @@ func checkPlatforms(cfg *Config) check {
 			"самом деле, бот пишет строкой «субтитры: …» и полем captions в result.json",
 		"→ свой сервер Jitsi добавляется в selectors.json, ключ jitsi.hosts",
 	}, false}
+}
+
+// fixes — чем чинить отставший образ. Готовый в реестре есть не для всякого
+// имени: локально собранный «steno-bot:latest» тянуть неоткуда, и предлагать
+// это значит послать человека за несуществующим.
+func fixes(cfg *Config) []string {
+	out := []string{"→ пересобрать:  make bot-image"}
+	if reg := defaultBotImage(); strings.Contains(reg, "/") && reg != cfg.Bot.Image {
+		out = append(out, "→ или взять готовый:  docker pull "+reg)
+	}
+	return append(out,
+		"запись и разбор страницы идут внутри образа — старый образ ведёт себя по-старому")
+}
+
+// imageAge — насколько образ старше бинарника. Пустая строка, если не старше
+// или если сравнить не с чем.
+//
+// Сравниваем со временем сборки самого steno: у собранного из исходников номера
+// версии нет, а дата есть всегда. Порог в час — чтобы обычная разница между
+// сборкой образа и бинарника в одном заходе не считалась расхождением.
+func imageAge(imageID string) string {
+	if imageID == "" {
+		return ""
+	}
+	out, err := exec.Command("docker", "image", "inspect", imageID, "--format", "{{.Created}}").Output()
+	if err != nil {
+		return ""
+	}
+	built, err := time.Parse(time.RFC3339, strings.TrimSpace(string(out)))
+	if err != nil {
+		return ""
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	st, err := os.Stat(self)
+	if err != nil {
+		return ""
+	}
+	d := st.ModTime().Sub(built)
+	if d < time.Hour {
+		return ""
+	}
+	return "на " + sinceText(d) + " старше"
 }

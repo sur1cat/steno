@@ -163,14 +163,16 @@ func (s *syncer) once(ctx context.Context) {
 				commits = append(commits, res.Commits...)
 			}
 		}
-		if !changed {
-			continue
+		if changed {
+			s.log.Printf("репозитории: %s — новых коммитов %d", p.Name, len(commits))
+			if err := s.closeByCommits(ctx, p, commits); err != nil {
+				s.log.Printf("репозитории: сверка задач по %s: %v", p.Name, err)
+			}
 		}
-		s.log.Printf("репозитории: %s — новых коммитов %d", p.Name, len(commits))
-
-		if err := s.closeByCommits(ctx, p, commits); err != nil {
-			s.log.Printf("репозитории: сверка задач по %s: %v", p.Name, err)
-		}
+		// Справку проверяем всегда, а не только при новых коммитах: код мог не
+		// меняться, а README, сайт или описание — да, и тогда словарь тихо
+		// устаревает. Лишних трат это не даёт: внутри стоит сверка отпечатка,
+		// и на неизменившемся материале поход в Claude не случается.
 		s.maybeRebuild(ctx, p, len(commits))
 	}
 }

@@ -50,24 +50,64 @@ func (meetPlatform) ToggleCaptions(ctx context.Context) error {
 	return chromedp.Run(ctx, chromedp.KeyEvent("c"))
 }
 
-// SetCaptionLanguage переключает язык субтитров. Без этого Meet распознаёт
-// речь языком по умолчанию — обычно английским, — и русский разговор приходит
-// набором похоже звучащих английских слов. Имена говорящих при этом остаются
-// верными, поэтому в связке с whisper это не смертельно; смертельно, когда
-// текст берётся прямо из субтитров.
+// Язык субтитров. Meet распознаёт речь тем языком, который стоит в его
+// настройках, а не тем, на котором говорят, — и при чужом языке отдаёт не
+// мусор, а почти пустоту: на живом созвоне 232 секунды русской речи дали 31
+// букву английских слов. Имена говорящих остаются верными, но их почти не на
+// что вешать, и расшифровка теряет самое ценное — кто что сказал.
+//
+// Путь к языку в нынешнем Meet — три нажатия: ⋮ («Ещё») → «Настройки» →
+// вкладка «Субтитры». Между ними Meet рисует меню и диалог, поэтому шаги
+// разнесены и каждому дано время появиться.
+const (
+	captionSettingsTries = 6
+	captionSettingsPause = 900 * time.Millisecond
+)
+
+// manualLanguageHint — что делать человеку, когда автоматика не дошла. Язык
+// субтитров запоминается за аккаунтом Meet, поэтому выставленный один раз
+// руками он останется и на следующих созвонах: это надёжнее любого клика по
+// чужой вёрстке.
+const manualLanguageHint = "поставь язык вручную в аккаунте бота: " +
+	"⋮ → Настройки → Субтитры → язык встречи. Meet его запоминает, хватит одного раза"
+
 func (meetPlatform) SetCaptionLanguage(ctx context.Context, sel *Selectors, lang string, lg *log.Logger) {
 	names := sel.CaptionLanguages[lang]
 	if len(names) == 0 {
 		names = []string{lang} // код не из таблицы — пробуем как есть
 	}
 
-	var opened bool
-	if err := chromedp.Run(ctx, chromedp.Evaluate(
-		"window.__steno ? window.__steno.openCaptionSettings() : false", &opened)); err != nil || !opened {
-		lg.Printf("не нашёл настройки субтитров — язык остаётся тем, что стоит в Meet")
+	var step struct {
+		State   string   `json:"state"`
+		Done    bool     `json:"done"`
+		Tabs    []string `json:"tabs"`
+		Buttons []string `json:"buttons"`
+	}
+	opened := false
+	for i := 0; i < captionSettingsTries && !opened; i++ {
+		if err := chromedp.Run(ctx, chromedp.Evaluate(
+			`window.__steno && window.__steno.captionSettingsStep
+				? window.__steno.captionSettingsStep() : {state:"нет скрипта страницы"}`,
+			&step)); err != nil {
+			lg.Printf("настройки субтитров: %v", err)
+			return
+		}
+		if step.Done {
+			opened = true
+			break
+		}
+		time.Sleep(captionSettingsPause)
+	}
+
+	if !opened {
+		// Именно так и выглядела поломка на живом созвоне: искали кнопку
+		// «настройки субтитров», которой в нынешнем Meet уже нет.
+		lg.Printf("не дошёл до настроек субтитров (остановился на %q%s) — Meet будет "+
+			"слушать тем языком, который стоит у него сейчас; %s",
+			step.State, describeStep(step.Tabs, step.Buttons), manualLanguageHint)
+		closeCaptionDialog(ctx)
 		return
 	}
-	time.Sleep(1500 * time.Millisecond) // диалог рисуется не мгновенно
 
 	var res struct {
 		OK      bool     `json:"ok"`
@@ -81,17 +121,47 @@ func (meetPlatform) SetCaptionLanguage(ctx context.Context, sel *Selectors, lang
 	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &res)); err != nil {
 		lg.Printf("выбор языка субтитров: %v", err)
 	} else if res.OK {
-		lg.Printf("язык субтитров: %s", res.Picked)
+		lg.Printf("язык субтитров: %s (%s)", res.Picked, res.How)
 	} else {
-		lg.Printf("не нашёл %v среди языков субтитров; выпадашки: %v; варианты: %v",
-			names, res.Combos, res.Options)
+		// Всегда говорим, чем кончилось: молчание здесь означало бы, что про
+		// чужой язык человек узнает только по пустой расшифровке.
+		lg.Printf("не нашёл %v среди языков субтитров; выпадашки: %v; варианты: %v; %s",
+			names, res.Combos, res.Options, manualLanguageHint)
 	}
 
+	var now string
+	_ = chromedp.Run(ctx, chromedp.Evaluate(
+		`window.__steno && window.__steno.captionLanguage ? window.__steno.captionLanguage() : ""`,
+		&now))
+	if now != "" {
+		lg.Printf("Meet слушает языком: %s", now)
+	}
+
+	closeCaptionDialog(ctx)
+}
+
+// describeStep — хвост сообщения с тем, что скрипт видел на странице. Без него
+// «не дошёл до настроек» чинится только заходом в живой звонок руками.
+func describeStep(tabs, buttons []string) string {
+	switch {
+	case len(tabs) > 0:
+		return fmt.Sprintf("; вкладки: %v", tabs)
+	case len(buttons) > 0:
+		return fmt.Sprintf("; кнопки: %v", buttons)
+	}
+	return ""
+}
+
+// closeCaptionDialog убирает всё, что мы открыли. Оставленный диалог
+// перекрывает область субтитров — и тогда мы чиним язык ценой самих субтитров.
+func closeCaptionDialog(ctx context.Context) {
 	var closed bool
 	_ = chromedp.Run(ctx, chromedp.Evaluate(
 		"window.__steno ? window.__steno.closeDialog() : false", &closed))
 	if !closed {
 		_ = chromedp.Run(ctx, chromedp.KeyEvent("\u001b")) // Escape
 	}
+	// Второй Escape закрывает меню ⋮, если до диалога дело не дошло.
+	_ = chromedp.Run(ctx, chromedp.KeyEvent("\u001b"))
 	time.Sleep(700 * time.Millisecond)
 }

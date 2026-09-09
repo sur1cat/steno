@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func lines(pairs ...string) []CaptionLine {
 	var out []CaptionLine
@@ -185,5 +189,176 @@ func TestShortPauseDoesNotSplit(t *testing.T) {
 	tr.Update(lines("Участник А", "давайте начнём"), 10)
 	if got := tr.Update(lines("Участник А", "давайте начнём"), 12); len(got) != 0 {
 		t.Fatalf("разрезали фразу на двухсекундной паузе: %+v", got)
+	}
+}
+
+// --- полнота съёма и границы реплик -----------------------------------------
+
+// Опрос реже, чем Meet переписывает строку, текста не теряет. Проверять это
+// надо явно: по файлу живого созвона казалось, что мы ловим обрывки, — а на
+// деле отданное всегда продолжается с того места, где кончилось прошлое.
+// Если это когда-нибудь перестанет быть правдой, тест поймает.
+func TestSlowPollingLosesNoText(t *testing.T) {
+	full := "давайте начнём с релиза потом обсудим адаптеры и бюджет " +
+		"и решим кто берёт на себя миграцию к четвергу"
+	words := strings.Fields(full)
+
+	var tr CaptionTracker
+	var got []string
+	at := 1.0
+	// Строка растёт скачками по пять слов — как будто между опросами Meet
+	// успел дописать много.
+	for i := 5; i <= len(words); i += 5 {
+		text := strings.Join(words[:i], " ")
+		for _, u := range tr.Update(lines("Участник А", text), at) {
+			got = append(got, u.Text)
+		}
+		at += 1.5
+	}
+	// Договорил и замолчал: строка стоит на месте дольше idleFinalize.
+	text := strings.Join(words, " ")
+	for i := 0; i < 5; i++ {
+		for _, u := range tr.Update(lines("Участник А", text), at) {
+			got = append(got, u.Text)
+		}
+		at += 1.5
+	}
+	for _, u := range tr.Flush(at) {
+		got = append(got, u.Text)
+	}
+
+	joined := strings.Join(strings.Fields(strings.Join(got, " ")), " ")
+	if joined != full {
+		t.Fatalf("текст изменился при сшивке:\nждали: %q\nвышло: %q", full, joined)
+	}
+}
+
+// Строку укоротили, а начало осталось прежним — значит она осталась той же
+// репликой. Прежний счётчик рун указывал за конец нового текста и молча
+// проглатывал его целиком: слова были на экране и не попали никуда.
+func TestShorterLineDoesNotSwallowText(t *testing.T) {
+	var tr CaptionTracker
+	tr.Update(lines("Участник А", "давайте обсудим сроки релиза и бюджет"), 10)
+	if got := tr.Update(lines("Участник А", "давайте обсудим сроки релиза и бюджет"), 15); len(got) != 1 {
+		t.Fatalf("реплика не закрылась по тишине: %+v", got)
+	}
+	// Meet переписал строку короче — но с того же начала.
+	tr.Update(lines("Участник А", "давайте по бюджету"), 16)
+	done := tr.Update(lines("Участник А", "давайте по бюджету"), 21)
+	if len(done) != 1 {
+		t.Fatalf("новый текст пропал целиком: %+v", done)
+	}
+	if done[0].Text != "по бюджету" {
+		t.Fatalf("отдали %q, ждали «по бюджету»", done[0].Text)
+	}
+}
+
+// Meet переписывает строку целиком, уточняя распознавание, и длина при этом
+// меняется. Прежний счётчик рун резал новый текст по позиции из старого — и
+// в файл уходил обрубок с середины слова.
+func TestRewrittenLineIsNotCutMidWord(t *testing.T) {
+	var tr CaptionTracker
+	tr.Update(lines("Участник А", "привет всем"), 10)
+	if got := tr.Update(lines("Участник А", "привет всем"), 15); len(got) != 1 {
+		t.Fatalf("реплика не закрылась: %+v", got)
+	}
+	tr.Update(lines("Участник А", "Привет, всем коллегам, начнём"), 16)
+	done := tr.Update(lines("Участник А", "Привет, всем коллегам, начнём"), 21)
+	if len(done) != 1 {
+		t.Fatalf("уточнённая строка не отдана: %+v", done)
+	}
+	if !strings.Contains(done[0].Text, "коллегам") {
+		t.Fatalf("слово разрезано пополам: %q", done[0].Text)
+	}
+	if strings.HasPrefix(done[0].Text, "м ") {
+		t.Fatalf("текст отдан с середины слова: %q", done[0].Text)
+	}
+}
+
+// Реплика закрывается временем, когда текст перестал меняться, а не временем,
+// когда мы заметили тишину. Разница — четыре секунды idleFinalize, и она
+// решает, кому alignSpeakers отдаст следующие слова.
+//
+// На живом созвоне в субтитрах был только один человек: второй говорил, но
+// Meet его не расшифровал. Раздутый отрезок первого дотягивался до чужих слов,
+// и follow-up поставил все задачи на него — включая те, что он раздавал другим.
+func TestIdleUtteranceDoesNotStealNextSpeaker(t *testing.T) {
+	var tr CaptionTracker
+	var utts []Utterance
+	utts = append(utts, tr.Update(lines("Рустем", "Даурен, возьми на себя адаптеры"), 10)...)
+	utts = append(utts, tr.Update(lines("Рустем", "Даурен, возьми на себя адаптеры"), 12)...)
+	utts = append(utts, tr.Update(lines("Рустем", "Даурен, возьми на себя адаптеры"), 15)...)
+	utts = append(utts, tr.Flush(16)...)
+
+	if len(utts) != 1 {
+		t.Fatalf("ожидали одну реплику, получили %+v", utts)
+	}
+	if utts[0].End != 10 {
+		t.Fatalf("реплика закрыта на %v, а текст перестал меняться на 10", utts[0].End)
+	}
+
+	// Ответ второго человека, которого в субтитрах нет вовсе.
+	answer := []Segment{{Start: 14, End: 17, Text: "да, к четвергу успею"}}
+	if got := alignSpeakers(answer, utts)[0].Speaker; got != "" {
+		t.Errorf("чужие слова подписали именем %q — лучше без имени, чем с чужим", got)
+	}
+	// А своё за ним по-прежнему числится.
+	own := []Segment{{Start: 8, End: 10, Text: "Даурен, возьми на себя адаптеры"}}
+	if got := alignSpeakers(own, utts)[0].Speaker; got != "Рустем" {
+		t.Errorf("своя реплика осталась без имени: %q", got)
+	}
+}
+
+// --- сколько текста дали субтитры -------------------------------------------
+
+func TestCaptionYieldReport(t *testing.T) {
+	// Живой созвон: 232 секунды русской речи, а в субтитрах три обрывка
+	// английских слов. Про это надо сказать словами, иначе человек увидит
+	// поломку только в follow-up с чужими исполнителями.
+	var live CaptionYield
+	for _, s := range []string{"But. Dorian.", "Show. Release.", "He."} {
+		live.Add(Utterance{Text: s})
+	}
+	if got := live.Script(); got != "латиница" {
+		t.Fatalf("письменность определена как %q", got)
+	}
+	r := live.Report(232*time.Second, "ru")
+	for _, want := range []string{"не тот язык", "Настройки", "ru"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("в отчёте нет %q: %s", want, r)
+		}
+	}
+
+	// Нормальный созвон по-русски: жаловаться не на что.
+	var ok CaptionYield
+	for i := 0; i < 20; i++ {
+		ok.Add(Utterance{Text: "давайте обсудим сроки релиза и бюджет проекта"})
+	}
+	r = ok.Report(time.Minute, "ru")
+	if strings.Contains(r, "не тот язык") || strings.Contains(r, "в разы меньше") {
+		t.Errorf("пожаловались на здоровые субтитры: %s", r)
+	}
+
+	// Язык не задан — про чужой язык сказать нечего, но про пустоту сказать
+	// надо: молчание здесь неотличимо от рабочей записи.
+	var few CaptionYield
+	few.Add(Utterance{Text: "ага"})
+	r = few.Report(10*time.Minute, "")
+	if !strings.Contains(r, "в разы меньше") {
+		t.Errorf("не сказали про пустые субтитры: %s", r)
+	}
+
+	// Порог должен что-то отделять: проверяем обе его стороны, иначе он мог бы
+	// стоять где угодно, и тест бы этого не заметил.
+	letters := func(n int) CaptionYield {
+		var y CaptionYield
+		y.Add(Utterance{Text: strings.Repeat("аб", n/2)})
+		return y
+	}
+	if r := letters(sparseCaptions-40).Report(time.Minute, "ru"); !strings.Contains(r, "в разы меньше") {
+		t.Errorf("ниже порога, а жалобы нет: %s", r)
+	}
+	if r := letters(sparseCaptions+40).Report(time.Minute, "ru"); strings.Contains(r, "в разы меньше") {
+		t.Errorf("выше порога, а жалоба есть: %s", r)
 	}
 }
