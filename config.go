@@ -95,6 +95,8 @@ type Config struct {
 		MinAttendees int `json:"min_attendees"`
 		// Пропускать встречи, в названии или описании которых есть это.
 		SkipMarkers []string `json:"skip_markers"`
+		// На сколько дней вперёд собирать расписание для панели.
+		ScheduleDays int `json:"schedule_days"`
 		// Сколько созвонов писать одновременно.
 		MaxConcurrent int `json:"max_concurrent"`
 	} `json:"calendar"`
@@ -200,6 +202,12 @@ type Config struct {
 		Addr     string `json:"addr"`
 		TokenEnv string `json:"token_env"`
 	} `json:"http"`
+
+	// noPublish — флаг командной строки, а не настройка: `steno join
+	// --no-publish` не должен ничего рассылать. Гасить для этого сами каналы
+	// нельзя с тех пор, как они живут в базе: перед рассылкой настройки
+	// перечитываются, и погашенное в памяти тут же вернулось бы включённым.
+	noPublish bool
 }
 
 // Project — то, вокруг чего собираются решения и задачи. Псевдонимы нужны,
@@ -287,6 +295,7 @@ func defaultConfig() *Config {
 	c.Calendar.MinAttendees = 2
 	c.Calendar.SkipMarkers = []string{"#nosteno", "#беззаписи"}
 	c.Calendar.MaxConcurrent = 4
+	c.Calendar.ScheduleDays = 7
 	c.GoogleDocs.Scopes = []string{"https://www.googleapis.com/auth/drive"}
 	c.Slack.TokenEnv = "SLACK_BOT_TOKEN"
 	c.Slack.SigningSecretEnv = "SLACK_SIGNING_SECRET"

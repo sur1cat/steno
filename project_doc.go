@@ -108,6 +108,10 @@ func dueOrText(due string) string {
 // publishProjectDocs переписывает документы всех проектов, которых коснулся
 // созвон. Ошибка по одному проекту не отменяет остальные.
 func publishProjectDocs(ctx context.Context, cfg *Config, st *Store, f *Followup, meetingID string, lg *log.Logger) {
+	if cfg.noPublish {
+		return
+	}
+	cfg = activeChannels(st, cfg)
 	if !cfg.GoogleDocs.Enabled || !cfg.GoogleDocs.ProjectDocs {
 		return
 	}

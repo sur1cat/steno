@@ -106,6 +106,17 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at INTEGER NOT NULL
 );
 
+-- Каналы тоже живут в базе: «завести бота в наш Slack» — работа того, кто в
+-- этом Slack сидит, а не того, кто правит JSON и перезапускает сервис. Из
+-- конфига они переезжают один раз, при первом запуске. Токенов здесь нет:
+-- в настройках лежит имя переменной окружения, значение читается из неё.
+CREATE TABLE IF NOT EXISTS channels (
+  key        TEXT PRIMARY KEY,
+  enabled    INTEGER NOT NULL DEFAULT 0,
+  settings   TEXT NOT NULL DEFAULT '{}',
+  updated_at INTEGER NOT NULL
+);
+
 -- Справка о проекте: выжимка из репозитория, сайта и описания. Собирается
 -- редко, а читается на каждом созвоне, поэтому лежит готовой.
 CREATE TABLE IF NOT EXISTS project_context (
@@ -151,6 +162,13 @@ CREATE INDEX IF NOT EXISTS tasks_owner ON tasks(owner);
 CREATE INDEX IF NOT EXISTS segments_text ON segments(meeting_id, start_s);
 `
 
+func jsonMarshal(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+func jsonUnmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
+
 func openStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "recordings"), 0o755); err != nil {
 		return nil, err
@@ -171,6 +189,9 @@ func openStore(dir string) (*Store, error) {
 	}
 	if _, err := db.Exec(searchSchema); err != nil {
 		return nil, fmt.Errorf("индекс поиска: %w", err)
+	}
+	if _, err := db.Exec(scheduleSchema); err != nil {
+		return nil, fmt.Errorf("схема расписания: %w", err)
 	}
 	if err := migrate(db); err != nil {
 		return nil, err

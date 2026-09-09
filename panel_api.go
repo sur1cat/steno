@@ -30,12 +30,16 @@ func (p *Panel) api() http.Handler {
 	mux.Handle("GET /api/projects", p.apiGuard(p.apiProjects))
 	mux.Handle("GET /api/projects/{name}", p.apiGuard(p.apiProject))
 	mux.Handle("GET /api/settings", p.apiGuard(p.apiSettings))
+	mux.Handle("GET /api/schedule", p.apiGuard(p.apiSchedule))
 
 	mux.Handle("POST /api/projects", p.apiGuard(p.apiSaveProject))
 	mux.Handle("DELETE /api/projects/{name}", p.apiGuard(p.apiDeleteProject))
 	mux.Handle("POST /api/projects/{name}/context", p.apiGuard(p.apiBuildContext))
+	mux.Handle("POST /api/channels/{key}", p.apiGuard(p.apiSaveChannel))
 	mux.Handle("POST /api/items/{id}/close", p.apiGuard(p.apiCloseItem))
 	mux.Handle("POST /api/items/{id}/reopen", p.apiGuard(p.apiReopenItem))
+	mux.Handle("POST /api/schedule/{key}/override", p.apiGuard(p.apiScheduleOverride))
+	mux.Handle("POST /api/invite", p.apiGuard(p.apiInvite))
 	return mux
 }
 
@@ -356,27 +360,138 @@ func (p *Panel) apiSettings(w http.ResponseWriter, r *http.Request) {
 		{"HTTP", p.cfg.HTTP.TokenEnv, envSet(p.cfg.HTTP.TokenEnv)},
 	}
 
-	type channel struct {
-		Key   string `json:"key"`
-		Name  string `json:"name"`
-		Where string `json:"where"`
-		On    bool   `json:"on"`
-		In    bool   `json:"in"`
-		Out   bool   `json:"out"`
-	}
-	channels := []channel{
-		{"calendar", "Календарь", strings.Join(p.cfg.Calendar.Calendars, ", "), p.cfg.Calendar.Enabled, true, false},
-		{"gmail", "Почта бота", p.cfg.Gmail.Account, p.cfg.Gmail.Enabled, true, false},
-		{"telegram", "Telegram", p.cfg.Telegram.ChatID,
-			p.cfg.Telegram.Enabled || p.cfg.Telegram.Listen, p.cfg.Telegram.Listen, p.cfg.Telegram.Enabled},
-		{"slack", "Slack", p.cfg.Slack.Channel, p.cfg.Slack.Enabled, false, p.cfg.Slack.Enabled},
-		{"http", "HTTP", p.cfg.HTTP.Addr, p.cfg.HTTP.Enabled, true, false},
-		{"google_docs", "Google Docs", p.cfg.GoogleDocs.FolderID, p.cfg.GoogleDocs.Enabled, false, true},
-	}
-
 	writeJSON(w, http.StatusOK, map[string]any{
-		"projects": out, "secrets": secrets, "channels": channels,
+		"projects": out, "secrets": secrets,
+		"channels": panelChannels(p.st, p.cfg),
 	})
+}
+
+// apiSaveChannel сохраняет настройки одного канала. Значения приходят строками
+// ровно теми ключами, которые панель получила в описании полей, — разбирает их
+// сам канал, а не форма.
+func (p *Panel) apiSaveChannel(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	def, ok := channelByKey(key)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "нет такого канала"})
+		return
+	}
+	var body struct {
+		Enabled bool              `json:"enabled"`
+		Values  map[string]string `json:"values"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		return
+	}
+	// Берём только описанные поля: лишние ключи из браузера в базу не кладём,
+	// иначе настройка канала станет свалкой, куда можно дописать что угодно.
+	values := map[string]string{}
+	for _, f := range def.fields {
+		values[f.Key] = strings.TrimSpace(body.Values[f.Key])
+	}
+	if err := p.st.SaveChannel(key, body.Enabled, values); err != nil {
+		p.apiFail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// --- расписание --------------------------------------------------------------
+
+func (p *Panel) apiSchedule(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days < 1 || days > 60 {
+		days = 7
+	}
+	// Назад берём два часа: только что начавшийся созвон человек ещё считает
+	// сегодняшним делом, и пропадать из списка он не должен.
+	rows, err := p.st.Schedule(time.Now().Add(-2*time.Hour), time.Now().AddDate(0, 0, days))
+	if err != nil {
+		p.apiFail(w, err)
+		return
+	}
+	type entry struct {
+		Key        string   `json:"key"`
+		CalendarID string   `json:"calendarId"`
+		Title      string   `json:"title"`
+		MeetURL    string   `json:"meetUrl"`
+		StartsAt   int64    `json:"startsAt"`
+		EndsAt     int64    `json:"endsAt"`
+		Attendees  []string `json:"attendees"`
+		Skip       string   `json:"skip"`
+		Override   string   `json:"override"`
+		Recorded   string   `json:"recorded"`
+		WillAttend bool     `json:"willAttend"`
+	}
+	out := make([]entry, 0, len(rows))
+	for _, e := range rows {
+		end := int64(0)
+		if !e.EndsAt.IsZero() {
+			end = e.EndsAt.Unix()
+		}
+		out = append(out, entry{e.Key, e.CalendarID, e.Title, e.MeetURL,
+			e.StartsAt.Unix(), end, e.Attendees, e.Skip, e.Override, e.Recorded,
+			e.WillAttend()})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entries": out, "days": days, "calendarOn": p.cfg.Calendar.Enabled,
+	})
+}
+
+func (p *Panel) apiScheduleOverride(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Decision string `json:"decision"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		return
+	}
+	if err := p.st.SetScheduleOverride(r.PathValue("key"), body.Decision); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// apiInvite зовёт бота на созвон по ссылке. Три исхода различаются словами, а
+// не сваливаются в один «ок»: человеку, чей созвон пропустили из-за нехватки
+// слотов, нельзя отвечать «уже иду».
+func (p *Panel) apiInvite(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		return
+	}
+	if p.d == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "бота зовёт сервис, а он сейчас не запущен"})
+		return
+	}
+	id, res, err := inviteToCall(r.Context(), p.d, body.URL, body.Title, "панель")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	switch res {
+	case Started:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "started", "meetingId": id, "message": "иду на созвон"})
+	case Duplicate:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "duplicate", "message": "на этот созвон уже иду"})
+	case NoCapacity:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "no_capacity",
+			"message": "сейчас пишу максимум созвонов сразу — освободится слот, " +
+				"позови ещё раз"})
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "не смог записать созвон, смотри лог сервиса"})
+	}
 }
 
 func (p *Panel) apiSaveProject(w http.ResponseWriter, r *http.Request) {
@@ -476,6 +591,13 @@ func spaHandler(dist fs.FS) http.Handler {
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p != "" {
 			if _, err := fs.Stat(dist, p); err == nil {
+				// Имена файлов бандла содержат хеш содержимого, поэтому их
+				// можно кэшировать навсегда: новая сборка — новое имя. Без
+				// этого браузер перекачивает четыреста килобайт на каждый
+				// переход по панели.
+				if strings.HasPrefix(p, "assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				files.ServeHTTP(w, r)
 				return
 			}

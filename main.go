@@ -155,6 +155,18 @@ func open(configPath string) (*Config, *Store, error) {
 	} else if n > 0 {
 		log.Printf("перенёс %d проектов из конфига в базу — дальше правь их в панели", n)
 	}
+	if n, err := importChannels(st, cfg); err != nil {
+		st.Close()
+		return nil, nil, fmt.Errorf("перенос каналов из конфига: %w", err)
+	} else if n > 0 {
+		log.Printf("перенёс %d каналов из конфига в базу — дальше правь их в панели", n)
+	}
+	// База главнее конфига: канал, выключенный в панели, должен остаться
+	// выключенным и после перезапуска.
+	if err := applyChannels(st, cfg); err != nil {
+		st.Close()
+		return nil, nil, fmt.Errorf("настройки каналов: %w", err)
+	}
 	return cfg, st, nil
 }
 
@@ -212,9 +224,7 @@ func cmdJoin(ctx context.Context, args []string) error {
 		cfg.Bot.Local = true
 	}
 	if *noPublish || *recordOnly || *noFollowup {
-		cfg.GoogleDocs.Enabled = false
-		cfg.Slack.Enabled = false
-		cfg.Telegram.Enabled = false
+		cfg.noPublish = true
 	}
 	if *useCaptions {
 		cfg.Transcribe.Source = "captions"
@@ -976,7 +986,11 @@ func cmdServe(ctx context.Context, args []string) error {
 	// закрывает запланированное, остальные три — неожиданное.
 	var sources []source
 	if cfg.Calendar.Enabled {
-		sources = append(sources, &calendarSource{cfg: cfg, d: d, log: lg})
+		// Источник и сборщик расписания смотрят в одни и те же календари, но с
+		// разным горизонтом. Клиент Google у них общий: иначе каждый заново
+		// читал бы файл ключа и менял OAuth-токен на каждого сотрудника.
+		cal := &calendarSource{cfg: cfg, d: d, log: lg}
+		sources = append(sources, cal, &schedulePoller{cfg: cfg, st: st, log: lg, src: cal})
 	}
 	if cfg.Telegram.Listen {
 		sources = append(sources, &telegramSource{cfg: cfg, d: d, log: lg})
@@ -997,6 +1011,10 @@ func cmdServe(ctx context.Context, args []string) error {
 		if err != nil {
 			return fmt.Errorf("панель: %w", err)
 		}
+		// Из панели можно позвать бота на созвон — тем же путём, что из
+		// Telegram и по HTTP. Диспетчер отдаётся здесь, а не в newPanel:
+		// у команд без сервиса его нет, а панель они всё равно не поднимают.
+		p.d = d
 		sources = append(sources, p)
 	}
 	if len(sources) == 0 {

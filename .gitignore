@@ -6,4 +6,8 @@ steno.json
 *.ogg
 *.jsonl
 web/app/node_modules/
-web/dist/
+# Бандл панели собирается из web/app и вшивается в бинарник. Сам каталог
+# нужен всегда: без него go:embed не собирается даже на чистом клоне.
+web/dist/*
+!web/dist/.gitkeep
+web/app/tsconfig.tsbuildinfo

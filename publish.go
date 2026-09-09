@@ -22,6 +22,12 @@ import (
 // Но молчать о провале нельзя — вернувшийся список ошибок решает, считать ли
 // созвон опубликованным.
 func publishAll(ctx context.Context, cfg *Config, st *Store, m *Meeting, f *Followup, segs []Segment, lg *log.Logger) []error {
+	if cfg.noPublish {
+		return nil
+	}
+	// Настройки адресатов перечитываются перед каждой рассылкой: включил Slack
+	// в панели — следующий созвон уедет туда, без перезапуска сервиса.
+	cfg = activeChannels(st, cfg)
 	var errs []error
 	fail := func(target string, err error) {
 		if err != nil {

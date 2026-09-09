@@ -266,13 +266,16 @@ func (s *syncer) notify(ctx context.Context, d syncDigest) {
 		return
 	}
 	body := d.text()
-	if s.cfg.Telegram.Enabled && s.cfg.Telegram.ChatID != "" {
-		if err := sendTelegramText(ctx, s.cfg, s.cfg.Telegram.ChatID, body); err != nil {
+	// Каналы перечитываются перед отправкой: сверка идёт раз в сутки, и за это
+	// время адресата в панели могли поменять.
+	cfg := activeChannels(s.st, s.cfg)
+	if cfg.Telegram.Enabled && cfg.Telegram.ChatID != "" {
+		if err := sendTelegramText(ctx, cfg, cfg.Telegram.ChatID, body); err != nil {
 			s.log.Printf("репозитории: telegram: %v", err)
 		}
 	}
-	if s.cfg.Slack.Enabled && s.cfg.Slack.Channel != "" {
-		if err := sendSlackText(ctx, s.cfg, s.cfg.Slack.Channel, body); err != nil {
+	if cfg.Slack.Enabled && cfg.Slack.Channel != "" {
+		if err := sendSlackText(ctx, cfg, cfg.Slack.Channel, body); err != nil {
 			s.log.Printf("репозитории: slack: %v", err)
 		}
 	}

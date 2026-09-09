@@ -141,6 +141,11 @@ func (s *calendarSource) consider(ctx context.Context, calID string, ev *calenda
 	// Одна и та же встреча лежит в календарях всех участников. Ключ по ссылке
 	// и времени начала, а не по id события: так бот заходит один раз.
 	key := plannedKey(meetURL, start)
+	// «Не ходить» из расписания. Смысл кнопки в том, чтобы передумать заранее,
+	// а не выгонять бота из уже идущего звонка на глазах у всех.
+	if s.d.st.ScheduleOverride(key) == "skip" {
+		return
+	}
 	s.d.Start(ctx, key, &Meeting{
 		ID:         newID(start),
 		Title:      ev.Summary,

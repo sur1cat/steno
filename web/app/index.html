@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>steno</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>📝</text></svg>" />
+    <script>
+      // Тема идёт за системной настройкой. Класс ставится до первой отрисовки:
+      // иначе тёмная тема на секунду показывает светлый экран, и это первое,
+      // что видит человек, открывший панель ночью.
+      (function () {
+        var mq = window.matchMedia("(prefers-color-scheme: dark)");
+        var set = function () { document.documentElement.classList.toggle("dark", mq.matches); };
+        set();
+        mq.addEventListener("change", set);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
