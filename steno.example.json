@@ -1,0 +1,123 @@
+{
+  "//": "Четыре независимых источника созвонов. Включай любой набор. Секретов здесь нет — только имена переменных окружения.",
+  "data_dir": "./data",
+  "bot": {
+    "display_name": "Steno · идёт запись",
+    "image": "steno-bot:latest",
+    "admission_timeout": "5m",
+    "empty_for": "2m",
+    "max_duration": "4h",
+    "selectors": "./selectors.json",
+    "local": false,
+    "shutdown_grace": "15m"
+  },
+  "projects": [
+    {
+      "name": "Платежи",
+      "aliases": [
+        "биллинг",
+        "payments"
+      ],
+      "about": "приём денег и подписки"
+    },
+    {
+      "name": "Онбординг",
+      "aliases": [
+        "регистрация",
+        "onboarding"
+      ],
+      "about": "первые экраны нового пользователя"
+    },
+    {
+      "name": "Инфраструктура",
+      "aliases": [
+        "инфра",
+        "деплой"
+      ],
+      "about": "выкаты, мониторинг, очереди"
+    }
+  ],
+  "calendar": {
+    "enabled": true,
+    "credentials_file": "./secrets/google-service-account.json",
+    "calendars": [
+      "ivan@example.com",
+      "anna@example.com"
+    ],
+    "poll_every": "2m",
+    "join_before": "1m",
+    "min_attendees": 2,
+    "skip_markers": [
+      "#nosteno",
+      "#беззаписи"
+    ],
+    "max_concurrent": 4
+  },
+  "gmail": {
+    "enabled": true,
+    "credentials_file": "",
+    "account": "steno@example.com",
+    "allowed_domains": [
+      "example.com"
+    ],
+    "poll_every": "45s"
+  },
+  "http": {
+    "enabled": true,
+    "addr": ":8787",
+    "token_env": "STENO_HTTP_TOKEN"
+  },
+  "telegram": {
+    "enabled": true,
+    "token_env": "TELEGRAM_BOT_TOKEN",
+    "chat_id": "-1001234567890",
+    "listen": true,
+    "allowed_chats": [
+      "-1001234567890"
+    ]
+  },
+  "transcribe": {
+    "source": "command",
+    "cmd": [
+      "./adapters/whisper-cpp.sh",
+      "{{audio}}",
+      "{{language}}"
+    ],
+    "language": "",
+    "timeout": "2h"
+  },
+  "claude": {
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "model": "claude-opus-5",
+    "effort": "high",
+    "output_language": ""
+  },
+  "google_docs": {
+    "enabled": true,
+    "folder_id": "ПОЛОЖИ_СЮДА_ID_ПАПКИ_DRIVE",
+    "credentials_file": "./secrets/google-service-account.json",
+    "subject": "notes@example.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive"
+    ],
+    "project_docs": true
+  },
+  "slack": {
+    "enabled": true,
+    "token_env": "SLACK_BOT_TOKEN",
+    "signing_secret_env": "SLACK_SIGNING_SECRET",
+    "channel": "#созвоны",
+    "dm_owners": true,
+    "thread_full": false
+  },
+  "panel": {
+    "enabled": true,
+    "addr": ":8080",
+    "password_env": "STENO_PANEL_PASSWORD",
+    "secure": false
+  },
+  "retention": {
+    "recordings": "30d",
+    "events": "7d"
+  }
+}

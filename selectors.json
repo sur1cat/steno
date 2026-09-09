@@ -1,0 +1,66 @@
+{
+  "captionRegionLabels": [
+    "caption",
+    "субтитр",
+    "untertitel",
+    "sous-titre",
+    "subtítulo"
+  ],
+  "captionRegionJsnames": [
+    "dsyhDe",
+    "tgcxxc"
+  ],
+  "joinButtonTexts": [
+    "join now",
+    "ask to join",
+    "присоедин",
+    "попросить",
+    "beitreten"
+  ],
+  "nameInputLabels": [
+    "your name",
+    "ваше имя",
+    "имя",
+    "dein name"
+  ],
+  "leftMeetingTexts": [
+    "you've left the meeting",
+    "вы вышли из встречи",
+    "return to home screen",
+    "на главный экран",
+    "you have been removed",
+    "вас удалили"
+  ],
+  "captionSettingsLabels": [
+    "caption settings",
+    "настройки субтитр",
+    "субтитры: настройки"
+  ],
+  "captionLanguages": {
+    "ru": [
+      "Русский",
+      "Russian"
+    ],
+    "en": [
+      "English",
+      "Английский"
+    ],
+    "kk": [
+      "Қазақша",
+      "Kazakh",
+      "Казахский"
+    ],
+    "de": [
+      "Deutsch",
+      "German"
+    ],
+    "fr": [
+      "Français",
+      "French"
+    ],
+    "es": [
+      "Español",
+      "Spanish"
+    ]
+  }
+}

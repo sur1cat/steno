@@ -1,0 +1,311 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config — весь steno настраивается одним JSON-файлом. Секреты берутся из
+// окружения: в файле лежит имя переменной, а не значение, чтобы конфиг можно
+// было держать в репозитории.
+type Config struct {
+	DataDir string `json:"data_dir"` // куда складывать БД и записи
+
+	Bot struct {
+		DisplayName string `json:"display_name"` // как бот подписан в списке участников
+		Image       string `json:"image"`        // docker-образ бота
+		// Сколько ждать, пока хост впустит бота из «комнаты ожидания».
+		AdmissionTimeout Duration `json:"admission_timeout"`
+		// Уйти, если в звонке остался один бот дольше этого времени.
+		EmptyFor Duration `json:"empty_for"`
+		// Аварийный потолок на длину записи.
+		MaxDuration Duration `json:"max_duration"`
+		// Язык субтитров Meet. Он же язык распознавания: по умолчанию там
+		// английский, и русская речь превращается в бессмысленный английский
+		// текст. Пусто — не трогать настройку.
+		CaptionLanguage string `json:"caption_language"`
+		// Путь к selectors.json; пусто — встроенные значения.
+		Selectors string `json:"selectors"`
+		// Запускать бота прямо на хосте, без docker. Нужны Chromium, ffmpeg и
+		// поднятый PulseAudio.
+		Local bool `json:"local"`
+		// Сколько ждать идущие записи при остановке сервиса.
+		ShutdownGrace Duration `json:"shutdown_grace"`
+	} `json:"bot"`
+
+	Transcribe struct {
+		// "command" — внешний адаптер (whisper и подобные).
+		// "captions" — брать текст прямо из субтитров Meet: качество ниже, но
+		// не нужно ничего устанавливать, и имена говорящих уже проставлены.
+		// Годится, чтобы завести конвейер целиком в первый же день.
+		Source string `json:"source"`
+		// Команда-адаптер. Получает путь к аудио как {{audio}} и печатает в
+		// stdout JSON вида {"segments":[{"start":1.2,"end":3.4,"text":"..."}]}.
+		Cmd []string `json:"cmd"`
+		// Язык распознавания. Пусто — определять автоматически: на созвоне,
+		// где переходят с русского на английский, жёстко заданный язык
+		// заставляет whisper переводить вторую половину вместо расшифровки.
+		Language string   `json:"language"`
+		Timeout  Duration `json:"timeout"`
+	} `json:"transcribe"`
+
+	Claude struct {
+		APIKeyEnv string `json:"api_key_env"`
+		Model     string `json:"model"`
+		Effort    string `json:"effort"`
+		// Потолок ответа. Его делят между собой рассуждение модели и сам
+		// follow-up, поэтому на длинных созвонах при высоком effort его
+		// может не хватить.
+		MaxTokens int `json:"max_tokens"`
+		// Язык follow-up. Пусто — язык созвона.
+		OutputLanguage string `json:"output_language"`
+		// Цены за миллион токенов по моделям. Пусто — встроенная таблица.
+		// Вынесено в конфиг, потому что цены меняются чаще релизов.
+		Prices map[string]Price `json:"prices"`
+	} `json:"claude"`
+
+	Calendar struct {
+		Enabled bool `json:"enabled"`
+		// Тот же service-account с domain-wide delegation. Пусто — берётся
+		// ключ из google_docs.
+		CredentialsFile string `json:"credentials_file"`
+		// Чьи календари смотреть. Каждый читается от имени его владельца:
+		// domain-wide delegation позволяет представиться любым сотрудником.
+		Calendars []string `json:"calendars"`
+		PollEvery Duration `json:"poll_every"`
+		// За сколько до начала заводить бота в звонок.
+		JoinBefore Duration `json:"join_before"`
+		// Не ходить на встречи, где меньше стольких участников.
+		MinAttendees int `json:"min_attendees"`
+		// Пропускать встречи, в названии или описании которых есть это.
+		SkipMarkers []string `json:"skip_markers"`
+		// Сколько созвонов писать одновременно.
+		MaxConcurrent int `json:"max_concurrent"`
+	} `json:"calendar"`
+
+	GoogleDocs struct {
+		Enabled bool `json:"enabled"`
+		// ID папки Drive, куда класть документы.
+		FolderID string `json:"folder_id"`
+		// Файл service-account с domain-wide delegation.
+		CredentialsFile string `json:"credentials_file"`
+		// От чьего имени создавать документы (impersonation).
+		Subject string `json:"subject"`
+		// Со scope drive.file приложение видит только те файлы, которые создало
+		// само, — положить документ в заранее созданную руками папку с ним
+		// нельзя. Поэтому по умолчанию берётся полный drive.
+		Scopes []string `json:"scopes"`
+		// Вести отдельный документ на каждый проект: одна ссылка, которая
+		// всегда показывает текущее состояние, вместо тридцати документов по
+		// одному на созвон.
+		ProjectDocs bool `json:"project_docs"`
+	} `json:"google_docs"`
+
+	Slack struct {
+		Enabled  bool   `json:"enabled"`
+		TokenEnv string `json:"token_env"`
+		// Подписывающий секрет приложения Slack. Без него слэш-команды не
+		// принимаются: подтвердить, что запрос пришёл именно от Slack, а не от
+		// того, кто узнал общий токен, больше нечем.
+		SigningSecretEnv string `json:"signing_secret_env"`
+		Channel          string `json:"channel"`     // куда постить итог
+		DMOwners         bool   `json:"dm_owners"`   // писать в личку тем, на ком задача
+		ThreadFull       bool   `json:"thread_full"` // полный транскрипт в тред
+	} `json:"slack"`
+
+	Telegram struct {
+		Enabled  bool   `json:"enabled"`
+		TokenEnv string `json:"token_env"`
+		ChatID   string `json:"chat_id"`
+		// Слушать входящие сообщения: кинул боту ссылку — он пошёл на созвон.
+		Listen bool `json:"listen"`
+		// Из каких чатов принимать ссылки. Пусто — только chat_id.
+		AllowedChats []string `json:"allowed_chats"`
+	} `json:"telegram"`
+
+	// Почта аккаунта бота. Добавил steno@company.com в идущий звонок кнопкой
+	// «Добавить людей» — Google прислал ему письмо со ссылкой, бот пришёл.
+	Gmail struct {
+		Enabled         bool     `json:"enabled"`
+		CredentialsFile string   `json:"credentials_file"`
+		Account         string   `json:"account"`
+		AllowedDomains  []string `json:"allowed_domains"`
+		PollEvery       Duration `json:"poll_every"`
+	} `json:"gmail"`
+
+	// Проекты команды. На одном созвоне обсуждают три-четыре сразу, и без
+	// разметки follow-up превращается в кучу, из которой потом никто не
+	// вытащит, что относилось к чему.
+	Projects []Project `json:"projects"`
+
+	// Веб-панель: список созвонов, поиск по всем расшифровкам, плеер с
+	// таймкодами, страница «кто что должен».
+	Panel struct {
+		Enabled bool   `json:"enabled"`
+		Addr    string `json:"addr"`
+		// Пароль общий на команду: заводить учётку каждому ради архива
+		// созвонов — работа, которую никто не сделает.
+		PasswordEnv string `json:"password_env"`
+		// Ставить cookie только по HTTPS. Включать, когда панель за TLS.
+		Secure bool `json:"secure"`
+	} `json:"panel"`
+
+	// Сколько держать записи и служебные отметки. Час созвона — это ~15 МБ
+	// аудио плюс расшифровка; у команды на сорок созвонов в неделю это
+	// заметный объём, и никто его не чистит, пока не кончится диск.
+	Retention struct {
+		Recordings Duration `json:"recordings"` // 0 — не удалять
+		Events     Duration `json:"events"`
+	} `json:"retention"`
+
+	// Эндпоинт для всего остального: Slack-команда, ярлык на телефоне, curl.
+	HTTP struct {
+		Enabled  bool   `json:"enabled"`
+		Addr     string `json:"addr"`
+		TokenEnv string `json:"token_env"`
+	} `json:"http"`
+}
+
+// Project — то, вокруг чего собираются решения и задачи. Псевдонимы нужны,
+// потому что вслух проект называют не так, как он записан: «биллинг», «платежи»
+// и «payments» — одно и то же.
+type Project struct {
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases"`
+	// Одна строка о том, что это: модель по ней различает похожие проекты.
+	About string `json:"about"`
+	// Материал, по которому собирается справка о проекте. Псевдонимов и одной
+	// строки мало: на созвоне говорят «поправим вебхуки в биллинге», и понять,
+	// что это тот же проект, можно только зная его устройство и слова, которыми
+	// команда о нём говорит.
+	Sources []Source `json:"sources"`
+}
+
+// Source — откуда брать материал о проекте.
+//
+//	{"kind": "text", "value": "Приём платежей, подписки, вебхуки провайдеров"}
+//	{"kind": "path", "value": "~/work/payments"}       — локальный репозиторий
+//	{"kind": "repo", "value": "git@github.com:org/pay"} — склонируем поверхностно
+//	{"kind": "url",  "value": "https://pay.example.com"}
+type Source struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// Duration — time.Duration, который в JSON выглядит как "5m", а не как 300000000000.
+type Duration time.Duration
+
+func (d Duration) D() time.Duration { return time.Duration(d) }
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	// time.ParseDuration не знает про дни, а сроки хранения естественно
+	// задавать именно в днях.
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return fmt.Errorf("длительность %q: %w", s, err)
+		}
+		*d = Duration(time.Duration(days * float64(24*time.Hour)))
+		return nil
+	}
+	v, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("длительность %q: %w", s, err)
+	}
+	*d = Duration(v)
+	return nil
+}
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
+func defaultConfig() *Config {
+	var c Config
+	c.DataDir = "./data"
+	c.Bot.DisplayName = "Steno · идёт запись"
+	c.Bot.Image = "steno-bot:latest"
+	c.Bot.AdmissionTimeout = Duration(5 * time.Minute)
+	c.Bot.EmptyFor = Duration(2 * time.Minute)
+	c.Bot.MaxDuration = Duration(4 * time.Hour)
+	c.Bot.ShutdownGrace = Duration(15 * time.Minute)
+	c.Bot.CaptionLanguage = "ru"
+	c.Transcribe.Source = "command"
+	c.Transcribe.Cmd = []string{"./adapters/whisper-cpp.sh", "{{audio}}", "{{language}}"}
+	c.Transcribe.Language = ""
+	c.Transcribe.Timeout = Duration(2 * time.Hour)
+	c.Claude.APIKeyEnv = "ANTHROPIC_API_KEY"
+	c.Claude.Model = "claude-opus-5"
+	c.Claude.Effort = "high"
+	c.Claude.MaxTokens = 16000
+	c.Calendar.PollEvery = Duration(2 * time.Minute)
+	c.Calendar.JoinBefore = Duration(time.Minute)
+	c.Calendar.MinAttendees = 2
+	c.Calendar.SkipMarkers = []string{"#nosteno", "#беззаписи"}
+	c.Calendar.MaxConcurrent = 4
+	c.GoogleDocs.Scopes = []string{"https://www.googleapis.com/auth/drive"}
+	c.Slack.TokenEnv = "SLACK_BOT_TOKEN"
+	c.Slack.SigningSecretEnv = "SLACK_SIGNING_SECRET"
+	c.Telegram.TokenEnv = "TELEGRAM_BOT_TOKEN"
+	c.Gmail.PollEvery = Duration(45 * time.Second)
+	c.Retention.Recordings = Duration(30 * 24 * time.Hour)
+	c.Retention.Events = Duration(7 * 24 * time.Hour)
+	c.Panel.Addr = ":8080"
+	c.Panel.PasswordEnv = "STENO_PANEL_PASSWORD"
+	c.HTTP.Addr = ":8787"
+	c.HTTP.TokenEnv = "STENO_HTTP_TOKEN"
+	return &c
+}
+
+func loadConfig(path string) (*Config, error) {
+	c := defaultConfig()
+	if path == "" {
+		return c, nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, c); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	// Все пути — относительно самого конфига, а не текущего каталога. Иначе
+	// конфиг в /etc/steno работает ровно до первой записи созвона, а потом
+	// падает на ненайденном адаптере расшифровки — то есть после того, как час
+	// разговора уже записан.
+	base := filepath.Dir(path)
+	rel := []*string{&c.DataDir, &c.Bot.Selectors,
+		&c.GoogleDocs.CredentialsFile, &c.Calendar.CredentialsFile, &c.Gmail.CredentialsFile}
+	for _, p := range rel {
+		if *p != "" && !filepath.IsAbs(*p) {
+			*p = filepath.Join(base, *p)
+		}
+	}
+	// Первый элемент команды расшифровки — тоже путь, если он выглядит как
+	// путь, а не как имя в PATH.
+	if len(c.Transcribe.Cmd) > 0 {
+		if cmd := c.Transcribe.Cmd[0]; strings.ContainsRune(cmd, filepath.Separator) &&
+			!filepath.IsAbs(cmd) {
+			c.Transcribe.Cmd[0] = filepath.Join(base, cmd)
+		}
+	}
+	return c, nil
+}
+
+// secret читает значение по имени переменной окружения из конфига.
+func secret(envName, what string) (string, error) {
+	v := strings.TrimSpace(os.Getenv(envName))
+	if v == "" {
+		return "", fmt.Errorf("%s: переменная окружения %s пуста", what, envName)
+	}
+	return v, nil
+}

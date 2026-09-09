@@ -1,0 +1,29 @@
+{{define "index"}}{{template "head" "Созвоны"}}{{template "nav" .}}
+<main class="wrap">
+  <h1>Созвоны</h1>
+  <p class="sub">{{plural .Total "созвон" "созвона" "созвонов"}} в архиве</p>
+
+  {{if .Meetings}}
+  <div class="list">
+    {{range .Meetings}}
+    <div class="row">
+      <a class="title" href="/m/{{.ID}}">{{if .Title}}{{.Title}}{{else}}Без названия{{end}}</a>
+      <div class="meta">{{dateRu .StartedAt}}{{with durRu .Duration}} · {{.}}{{end}}{{if .Participants}} · {{join ", " .Participants}}{{end}}</div>
+      <div class="right">
+        {{if .Tasks}}<span class="pill">{{plural .Tasks "задача" "задачи" "задач"}}</span>{{end}}
+        {{if statusAlarm .Status}}<span class="pill alarm">{{statusRu .Status}}</span>{{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{if or (gt .Page 1) .HasNext}}
+  <div class="pager">
+    {{if gt .Page 1}}<a href="/?p={{add .Page -1}}">← новее</a>{{end}}
+    {{if .HasNext}}<a href="/?p={{add .Page 1}}">старее →</a>{{end}}
+  </div>
+  {{end}}
+  {{else}}
+  <div class="empty">Пока ни одного созвона.<br>Бот появится здесь, как только сходит на первый.</div>
+  {{end}}
+</main>
+</body></html>{{end}}

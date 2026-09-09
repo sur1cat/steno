@@ -1,0 +1,34 @@
+{{define "tasks"}}{{template "head" "Задачи"}}{{template "nav" .}}
+<main class="wrap">
+  <h1>Задачи</h1>
+  <p class="sub">{{plural .Count "задача" "задачи" "задач"}} со всех созвонов{{if .Owner}} · {{.Owner}}{{end}}</p>
+
+  {{if .Owners}}
+  <div class="owners">
+    <a href="/tasks" {{if not .Owner}}aria-current="page"{{end}}>все</a>
+    {{range .Owners}}<a href="/tasks?owner={{.}}" {{if eq . $.Owner}}aria-current="page"{{end}}>{{.}}</a>{{end}}
+  </div>
+  {{end}}
+
+  {{if .Groups}}
+    {{range .Groups}}
+    <h2>{{.Owner}}</h2>
+    <div class="card">
+      {{range .Tasks}}
+      <div class="item">
+        <div>{{.What}}
+          <span class="when {{if overdue .Due}}late{{end}}">· {{dueRu .Due}}</span></div>
+        <div class="when block">
+          <a href="/m/{{.MeetingID}}?t={{printf "%.0f" .At}}">{{if .MeetingTitle}}{{.MeetingTitle}}{{else}}созвон{{end}}</a>
+          · {{dateRu .MeetingAt}}
+        </div>
+        {{with .Quote}}<div class="quote">{{.}}</div>{{end}}
+      </div>
+      {{end}}
+    </div>
+    {{end}}
+  {{else}}
+  <div class="empty">Задач пока нет.</div>
+  {{end}}
+</main>
+</body></html>{{end}}

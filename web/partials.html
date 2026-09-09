@@ -1,0 +1,25 @@
+{{define "head"}}<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.}} · steno</title>
+<link rel="stylesheet" href="/static/panel.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>📝</text></svg>">
+</head><body>{{end}}
+
+{{define "nav"}}
+<header class="top"><div class="wrap">
+  <a class="brand" href="/">ste<span>no</span></a>
+  <nav class="tabs">
+    <a href="/" {{if eq .Nav "meetings"}}aria-current="page"{{end}}>Созвоны</a>
+    <a href="/tasks" {{if eq .Nav "tasks"}}aria-current="page"{{end}}>Задачи</a>
+    <a href="/projects" {{if eq .Nav "projects"}}aria-current="page"{{end}}>Проекты</a>
+  </nav>
+  <form class="find" action="/search" method="get" role="search">
+    <input name="q" type="search" value="{{.Q}}" placeholder="Поиск по всем расшифровкам…"
+           autocomplete="off" spellcheck="false">
+  </form>
+  <form method="post" action="/logout"><button class="logout" type="submit">выйти</button></form>
+</div></header>
+{{end}}
+

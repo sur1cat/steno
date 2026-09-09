@@ -1,0 +1,7 @@
+data/
+secrets/
+steno
+steno.json
+.git/
+*.ogg
+*.jsonl

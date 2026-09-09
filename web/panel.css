@@ -1,0 +1,223 @@
+/* Панель steno. Тёплая нейтральная палитра: архив созвонов читают подолгу,
+   и синевато-белый корпоративный фон на этом расстоянии утомляет. */
+
+:root {
+  --bg: #faf8f5;
+  --surface: #fff;
+  --surface-2: #f3f0ea;
+  --border: #e6e1d8;
+  --border-strong: #d5cec1;
+  --text: #1b1916;
+  --muted: #6d665c;
+  --accent: #a8481a;
+  --accent-soft: #f6e6dc;
+  --mark: #ffe6a3;
+  --alarm: #9a2f2f;
+  --shadow: 0 1px 2px rgba(28, 24, 18, .06), 0 4px 12px rgba(28, 24, 18, .04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14130f;
+    --surface: #1c1a16;
+    --surface-2: #23211c;
+    --border: #302d26;
+    --border-strong: #423e35;
+    --text: #ece7dd;
+    --muted: #948d80;
+    --accent: #e08a4e;
+    --accent-soft: #2e2318;
+    --mark: #574311;
+    --alarm: #e07a7a;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+
+/* --- шапка --------------------------------------------------------------- */
+
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.top .wrap { display: flex; align-items: center; gap: 18px; height: 58px; }
+
+.brand {
+  font-weight: 620; letter-spacing: -.01em; color: var(--text);
+  font-size: 16px; white-space: nowrap;
+}
+.brand:hover { text-decoration: none; }
+.brand span { color: var(--accent); }
+
+nav.tabs { display: flex; gap: 4px; }
+nav.tabs a {
+  padding: 5px 11px; border-radius: 7px; color: var(--muted);
+  font-size: 14px; font-weight: 500;
+}
+nav.tabs a:hover { background: var(--surface-2); text-decoration: none; }
+nav.tabs a[aria-current] { background: var(--accent-soft); color: var(--accent); }
+
+form.find { flex: 1; display: flex; justify-content: flex-end; }
+form.find input {
+  width: 100%; max-width: 340px;
+  padding: 7px 12px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--surface); color: var(--text); font: inherit; font-size: 14px;
+}
+form.find input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.logout { border: 0; background: none; color: var(--muted); cursor: pointer;
+          font: inherit; font-size: 13px; padding: 4px; }
+.logout:hover { color: var(--text); }
+
+/* --- общее --------------------------------------------------------------- */
+
+main { padding: 34px 0 90px; }
+
+h1 { font-size: 21px; font-weight: 620; letter-spacing: -.015em; margin: 0 0 4px; }
+h2 { font-size: 15px; font-weight: 600; margin: 26px 0 10px;
+     color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.sub { color: var(--muted); font-size: 14px; margin: 0 0 22px; }
+
+.empty {
+  border: 1px dashed var(--border-strong); border-radius: 12px;
+  padding: 40px 24px; text-align: center; color: var(--muted);
+}
+
+.pill {
+  display: inline-block; padding: 1px 8px; border-radius: 20px;
+  background: var(--surface-2); color: var(--muted);
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+}
+.pill.alarm { background: color-mix(in srgb, var(--alarm) 14%, transparent); color: var(--alarm); }
+
+.tc {
+  font-variant-numeric: tabular-nums; font-size: 12.5px;
+  color: var(--muted); background: var(--surface-2);
+  padding: 1px 6px; border-radius: 5px; white-space: nowrap;
+}
+a.tc:hover { background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+
+/* --- список созвонов ------------------------------------------------------ */
+
+.list { border: 1px solid var(--border); border-radius: 12px;
+        background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+.row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 16px;
+  padding: 13px 18px; border-bottom: 1px solid var(--border);
+}
+.row:last-child { border-bottom: 0; }
+.row:hover { background: var(--surface-2); }
+.row .title {
+  grid-area: 1 / 1; color: var(--text);
+  font-weight: 560; letter-spacing: -.005em;
+}
+.row:hover .title { color: var(--accent); }
+.row .meta {
+  grid-area: 2 / 1; color: var(--muted); font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row .right {
+  grid-area: 1 / 2 / 3 / 3; align-self: center; text-align: right;
+  display: flex; flex-direction: column; gap: 5px; align-items: flex-end;
+}
+
+.pager { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
+
+/* --- страница созвона ----------------------------------------------------- */
+
+.cols { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 30px; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; gap: 22px; } }
+
+.card {
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+  padding: 18px 20px; box-shadow: var(--shadow);
+}
+
+.tldr { margin: 0; padding-left: 18px; }
+.tldr li { margin-bottom: 6px; }
+
+.item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px;
+  align-items: start; padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.item > .tc { grid-column: 2; grid-row: 1; }
+.item > .quote, .item > .when.block { grid-column: 1; }
+.item:last-child { border-bottom: 0; padding-bottom: 0; }
+.item:first-child { padding-top: 0; }
+.item .who { font-weight: 600; }
+.item .quote {
+  margin-top: 5px; padding-left: 11px; border-left: 2px solid var(--border-strong);
+  color: var(--muted); font-size: 13.5px;
+}
+.item .when { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.item .when.block { white-space: normal; }
+.item .when.late { color: var(--alarm); font-weight: 550; }
+
+.player { position: sticky; top: 70px; z-index: 5; margin-bottom: 14px; }
+.player audio { width: 100%; height: 36px; display: block; }
+
+.transcript { max-height: none; }
+.line { display: grid; grid-template-columns: 74px 1fr; gap: 12px; padding: 3px 0; }
+.line.you { scroll-margin-top: 130px; }
+.line .sp { font-weight: 560; font-size: 13.5px; }
+.line p { margin: 0 0 2px; }
+.line.hit { background: var(--accent-soft); border-radius: 6px; }
+
+.links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.links a { font-size: 13px; padding: 4px 10px; border: 1px solid var(--border-strong);
+           border-radius: 7px; }
+.links a:hover { border-color: var(--accent); text-decoration: none; }
+
+/* --- поиск ---------------------------------------------------------------- */
+
+mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+.hitgroup { margin-bottom: 22px; }
+.hitgroup .head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 7px; }
+.hitgroup .head a { font-weight: 570; }
+.hit { display: grid; grid-template-columns: 74px 1fr; gap: 12px;
+       padding: 6px 0; border-top: 1px solid var(--border); }
+
+/* --- задачи --------------------------------------------------------------- */
+
+.owners { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 20px; }
+.owners a { padding: 4px 11px; border: 1px solid var(--border-strong);
+            border-radius: 20px; font-size: 13.5px; color: var(--muted); }
+.owners a:hover { border-color: var(--accent); text-decoration: none; }
+.owners a[aria-current] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* --- вход ----------------------------------------------------------------- */
+
+.login { max-width: 340px; margin: 16vh auto; }
+.login .card { padding: 24px; }
+.login input {
+  width: 100%; padding: 9px 12px; font: inherit; margin: 12px 0;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg); color: var(--text);
+}
+.login input:focus { outline: none; border-color: var(--accent);
+                     box-shadow: 0 0 0 3px var(--accent-soft); }
+.login button {
+  width: 100%; padding: 9px; font: inherit; font-weight: 560; cursor: pointer;
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+}
+.login .err { color: var(--alarm); font-size: 13.5px; margin: 0; }

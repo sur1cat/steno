@@ -1,0 +1,32 @@
+{{define "search"}}{{template "head" "Поиск"}}{{template "nav" .}}
+<main class="wrap">
+  <h1>{{if .Q}}«{{.Q}}»{{else}}Поиск{{end}}</h1>
+  <p class="sub">{{if .Q}}{{plural .Count "совпадение" "совпадения" "совпадений"}} в {{plural (len .Groups) "созвоне" "созвонах" "созвонах"}}{{else}}Ищет по расшифровкам и по follow-up сразу{{end}}</p>
+
+  {{if and .Q (not .Groups)}}
+  <div class="empty">Ничего не нашлось.<br>Поиск понимает начало слова: «релиз» найдёт и «релиза», и «релизом».</div>
+  {{end}}
+
+  {{range .Groups}}
+  <div class="hitgroup">
+    <div class="head">
+      <a href="/m/{{.ID}}">{{if .Title}}{{.Title}}{{else}}Без названия{{end}}</a>
+      <span class="pill">{{dateRu .StartedAt}}</span>
+    </div>
+    {{range .Hits}}
+    <div class="hit">
+      <div>
+        {{if eq .Kind "расшифровка"}}
+          <a class="tc" href="/m/{{.MeetingID}}?t={{printf "%.0f" .At}}">{{clock .At}}</a>
+        {{else}}<span class="pill">итог</span>{{end}}
+      </div>
+      <div>
+        {{with .Speaker}}<span class="line-sp"><b>{{.}}</b> · </span>{{end}}
+        {{snippetHTML .Snippet}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</main>
+</body></html>{{end}}

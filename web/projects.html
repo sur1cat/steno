@@ -1,0 +1,26 @@
+{{define "projects"}}{{template "head" "Проекты"}}{{template "nav" .}}
+<main class="wrap">
+  <h1>Проекты</h1>
+  <p class="sub">Что накопилось за все созвоны — не по встречам, а по делу</p>
+
+  {{if .Rows}}
+  <div class="list">
+    {{range .Rows}}
+    <div class="row">
+      <a class="title" href="/p/{{.Name}}">{{.Name}}</a>
+      <div class="meta">
+        {{if .Tasks}}{{plural .Tasks "открытая задача" "открытых задачи" "открытых задач"}}{{else}}открытых задач нет{{end}}
+        {{if .Questions}} · {{plural .Questions "вопрос" "вопроса" "вопросов"}}{{end}}
+        {{if .Decisions}} · {{plural .Decisions "решение" "решения" "решений"}}{{end}}
+      </div>
+      <div class="right">
+        {{if .Closed}}<span class="pill">закрыто {{.Closed}}</span>{{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty">Пока пусто.<br>Проекты появятся, когда пройдёт первый созвон с follow-up.</div>
+  {{end}}
+</main>
+</body></html>{{end}}

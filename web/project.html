@@ -1,0 +1,63 @@
+{{define "project"}}{{template "head" .Name}}{{template "nav" .}}
+<main class="wrap">
+  <h1>{{.Name}}</h1>
+  <p class="sub">Живое состояние: то, что сейчас открыто, и то, что уже закрылось</p>
+
+  {{if .Tasks}}
+  <h2>Задачи</h2>
+  <div class="card">
+    {{range .Tasks}}
+    <div class="item">
+      <div>{{.Text}}
+        {{with .Owner}}<span class="when">· {{.}}</span>{{end}}
+        <span class="when {{if overdue .Due}}late{{end}}">· {{dueRu .Due}}</span></div>
+      <span class="tc">{{.ID}}</span>
+      <div class="when block">с {{dateRu .OpenedAt}}{{with .OpenedIn}} · <a href="/m/{{.}}">созвон</a>{{end}}</div>
+      {{with .Quote}}<div class="quote">{{.}}</div>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if .Questions}}
+  <h2>Открытые вопросы</h2>
+  <div class="card">
+    {{range .Questions}}
+    <div class="item">
+      <div>{{.Text}}{{with .Owner}}<span class="when">· ждём: {{.}}</span>{{end}}</div>
+      <span class="tc">{{.ID}}</span>
+      <div class="when block">с {{dateRu .OpenedAt}}{{with .OpenedIn}} · <a href="/m/{{.}}">созвон</a>{{end}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if .Decisions}}
+  <h2>Решения</h2>
+  <div class="card">
+    {{range .Decisions}}
+    <div class="item">
+      <div><b>{{.Text}}</b>{{with .Quote}} — {{.}}{{end}}</div>
+      <span class="tc">{{.ID}}</span>
+      <div class="when block">{{dateRu .OpenedAt}}{{with .OpenedIn}} · <a href="/m/{{.}}">созвон</a>{{end}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if .Closed}}
+  <h2>Закрыто</h2>
+  <div class="card">
+    {{range .Closed}}
+    <div class="item">
+      <div style="opacity:.65">{{.Text}}
+        <span class="when">· {{if eq .Status "done"}}сделано{{else}}снято{{end}}</span></div>
+      <span class="tc">{{.ID}}</span>
+      {{with .Note}}<div class="when block">{{.}}</div>{{end}}
+      <div class="when block">{{dateRu .UpdatedAt}}{{with .ClosedIn}} · <a href="/m/{{.}}">созвон</a>{{end}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</main>
+</body></html>{{end}}
