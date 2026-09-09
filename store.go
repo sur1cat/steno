@@ -177,8 +177,16 @@ func openStore(dir string) (*Store, error) {
 	// ждать блокировку вместо мгновенного SQLITE_BUSY. Один коннект — потому
 	// что писать в базу одновременно могут четыре записи и четыре источника,
 	// а database/sql иначе раздаёт неограниченный пул.
+	//
+	// _txlock=immediate — не украшение. Без него BEGIN открывает транзакцию
+	// читателем, а первая же запись пытается поднять её до писателя; если между
+	// этими моментами записал кто-то другой, SQLite отвечает SQLITE_BUSY_SNAPSHOT
+	// (517) сразу, и busy_timeout на этот случай не распространяется вовсе. То
+	// есть десять секунд ожидания, прописанные рядом, там просто не действуют.
+	// С immediate блокировка берётся сразу на BEGIN, и ожидание работает.
 	dsn := filepath.Join(dir, "steno.db") +
-		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)"
+		"?_txlock=immediate" +
+		"&_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err

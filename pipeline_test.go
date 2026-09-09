@@ -401,3 +401,64 @@ func TestComputeSpend(t *testing.T) {
 		t.Error("токены неизвестной модели потерялись")
 	}
 }
+
+// Пишущая транзакция обязана брать блокировку сразу на BEGIN, а не при первой
+// записи.
+//
+// Если брать её позже, транзакция открывается читателем и фиксирует снимок
+// базы; попытка стать писателем после того, как записал кто-то другой, даёт
+// SQLITE_BUSY_SNAPSHOT (517) немедленно — busy_timeout на этот случай не
+// распространяется вовсе, и десять секунд ожидания, прописанные в настройках,
+// там не действуют. Ловилось это раньше только гонкой, раз на несколько сотен
+// прогонов, а такой тест начинают перезапускать, и он перестаёт ловить.
+//
+// Здесь проверяется само свойство: пока первый держит транзакцию, запись
+// второго обязана ждать. Если она проходит мгновенно — значит блокировка
+// берётся поздно, и снимок разъедется.
+func TestTransactionTakesWriteLockAtBegin(t *testing.T) {
+	dir := t.TempDir()
+	a, err := openStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := openStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM meetings`).Scan(&n); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+
+	const held = 600 * time.Millisecond
+	go func() {
+		time.Sleep(held)
+		_, _ = tx.Exec(`INSERT INTO meetings (id,meet_url,started_at,status) VALUES (?,?,?,?)`,
+			"первый", "https://meet.google.com/abc-defg-hij", time.Now().Unix(), "recording")
+		_ = tx.Commit()
+	}()
+
+	start := time.Now()
+	err = b.CreateMeeting(&Meeting{ID: "второй",
+		MeetURL:   "https://meet.google.com/abc-defg-hij",
+		StartedAt: time.Now(), Status: "recording"})
+	waited := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("второй процесс не дождался очереди: %v", err)
+	}
+	// Порог с запасом вниз: важно отличить «ждал» от «прошёл сразу», а не
+	// померить точное время.
+	if waited < held/2 {
+		t.Fatalf("запись прошла за %v, не дожидаясь чужой транзакции — "+
+			"значит блокировка берётся не на BEGIN, и снимок может разъехаться", waited)
+	}
+}
