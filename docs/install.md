@@ -78,19 +78,10 @@ steno join --no-followup --captions https://meet.google.com/abc-defg-hij
 The bot knocks as a guest, you let it in, talk for a minute, it prints the
 transcript. No keys, no whisper, no bot account.
 
-## Four ways to use it
+## The menu bar app
 
-One database, four front doors. Three of the four work with the service stopped.
-
-| | | needs the service |
-|---|---|---|
-| ⌨️ **[The CLI](commands.md)** | everything the panel does has a command | no |
-| 🖥️ **`steno ui`** | full-screen terminal: meetings, tasks, projects, search, channels | no |
-| 🌐 **The panel** | `http://127.0.0.1:8422` in a browser | yes |
-| 🍎 **The menu bar** | macOS: today, tasks, projects, one field to send the bot | only to send the bot |
-
-The menu bar app is built separately — it is an app for one person's Mac, not
-part of the service, so `brew install steno` does not touch it:
+Built separately — it is an app for one person's Mac, not part of the service,
+so `brew install steno` does not touch it:
 
 ```console
 cd bar && ./build.sh && open build/StenoBar.app

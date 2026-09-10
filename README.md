@@ -66,6 +66,26 @@ says what is still missing and prints the line that fixes it.
 **Linux, source builds, the interface language, paying for Claude —**
 [docs/install.md](docs/install.md).
 
+## Use it however suits you
+
+**Where it runs** — one binary either way, and the panel is compiled into it, so
+there is nothing to deploy but a file.
+
+| | |
+|---|---|
+| 💻 **Your laptop** | your own meetings. Local whisper plus platform captions and nothing leaves the machine |
+| 🖧 **One cheap VM** | the team's meetings. No GPU needed if transcription goes to Groq |
+
+**How you look at it** — same database underneath; three of the four need no
+service running.
+
+| | | needs the service |
+|---|---|---|
+| ⌨️ **[CLI](docs/commands.md)** | `steno list`, `show`, `projects`, `cost`, `doctor` | no |
+| 🖥️ **[`steno ui`](#tour)** | full-screen terminal: meetings, tasks, projects, search | no |
+| 🌐 **[Panel](#tour)** | a browser, on the machine or over the network | yes |
+| 🍎 **[Menu bar](#in-the-menu-bar)** | macOS: today, tasks, projects, one field to send the bot | only to send the bot |
+
 ## How the bot gets into a call
 
 <div align="center">
