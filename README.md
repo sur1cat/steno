@@ -26,8 +26,8 @@
 </p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-flow-dark.svg">
-  <img src="assets/pipeline-flow-light.svg" width="900" alt="A meeting comes in from the calendar, mail, Telegram or the panel; a bot in a container records it; whisper and the platform's captions become one transcript; Claude writes the follow-up; it lands in Google Docs, Slack, Telegram and the panel">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/intro-dark.svg">
+  <img src="assets/intro-light.svg" width="960" alt="Six steps, and what the meeting has become at each: a row in the calendar, audio and captions, two files on disk, a transcript with names, the follow-up with owners and due dates, and where it was sent">
 </picture>
 
 </div>

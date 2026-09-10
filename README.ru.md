@@ -23,8 +23,8 @@
 [![Релизы](https://img.shields.io/badge/⤓%20%20Релизы-24382E?style=for-the-badge&labelColor=0b0f0d)](https://github.com/sur1cat/steno/releases/latest)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-flow-dark.svg">
-  <img src="assets/pipeline-flow-light.svg" width="900" alt="Созвон приходит из календаря, почты, Telegram или панели; бот в контейнере пишет его; whisper и субтитры площадки складываются в одну расшифровку; Claude собирает follow-up; тот уходит в Google Docs, Slack, Telegram и панель">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/intro-ru-dark.svg">
+  <img src="assets/intro-ru-light.svg" width="960" alt="Шесть шагов и то, чем созвон становится на каждом: строка в календаре, звук и субтитры, два файла на диске, расшифровка с именами, follow-up с исполнителями и сроками, и куда всё это ушло">
 </picture>
 
 </div>
