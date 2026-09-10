@@ -27,7 +27,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/intro-dark.svg">
-  <img src="assets/intro-light.svg" width="960" alt="Six steps, and what the meeting has become at each: a row in the calendar, audio and captions, two files on disk, a transcript with names, the follow-up with owners and due dates, and where it was sent">
+  <img src="assets/intro-light.svg" width="1000" alt="Six steps, and what the meeting has become at each: a row in the calendar, audio and captions, two files on disk, a transcript with names, the follow-up with owners and due dates, and where it was sent">
 </picture>
 
 </div>

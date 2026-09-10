@@ -24,7 +24,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/intro-ru-dark.svg">
-  <img src="assets/intro-ru-light.svg" width="960" alt="Шесть шагов и то, чем созвон становится на каждом: строка в календаре, звук и субтитры, два файла на диске, расшифровка с именами, follow-up с исполнителями и сроками, и куда всё это ушло">
+  <img src="assets/intro-ru-light.svg" width="1000" alt="Шесть шагов и то, чем созвон становится на каждом: строка в календаре, звук и субтитры, два файла на диске, расшифровка с именами, follow-up с исполнителями и сроками, и куда всё это ушло">
 </picture>
 
 </div>
