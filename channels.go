@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -141,184 +142,188 @@ func chDurText(d Duration) string {
 	return v.String()
 }
 
-var channelDefs = []channelDef{
-	{
-		key: "calendar", name: "Календарь", in: true,
-		about: "Смотрит календари команды и заводит бота на встречи со ссылкой на созвон (Google Meet, Jitsi). " +
-			"Это единственный канал, который работает сам, без просьбы человека.",
-		fields: []ChannelField{
-			{Key: "google", Label: "Доступ в Google", Kind: "google",
-				Hint: "Без него встреч не видно."},
-			{Key: "calendars", Label: "Чьи календари смотреть", Kind: "list",
-				Placeholder: "name@example.com",
-				Hint: "Свой календарь виден сразу; чужой — только если человек " +
-					"сам открыл его боту."},
-			{Key: "poll_every", Label: "Как часто заглядывать", Kind: "duration", Placeholder: "2m"},
-			{Key: "join_before", Label: "Заходить заранее", Kind: "duration", Placeholder: "1m",
-				Hint: "За сколько до начала заводить бота в звонок."},
-			{Key: "min_attendees", Label: "Минимум участников", Kind: "number", Placeholder: "2",
-				Hint: "Встречу с одним человеком записывать нечего."},
-			{Key: "skip_markers", Label: "Не ходить, если в названии есть", Kind: "list",
-				Placeholder: "#беззаписи"},
-			{Key: "max_concurrent", Label: "Сколько записей разом", Kind: "number", Placeholder: "4"},
+// См. uiTabTitles: описание каналов собирается лениво и один раз — на языке,
+// который к тому моменту уже прочитан из конфига.
+var channelDefs = sync.OnceValue(func() []channelDef {
+	return []channelDef{
+		{
+			key: "calendar", name: tr("Календарь"), in: true,
+			about: tr("Смотрит календари команды и заводит бота на встречи со ссылкой на созвон (Google Meet, Jitsi). ") +
+				tr("Это единственный канал, который работает сам, без просьбы человека."),
+			fields: []ChannelField{
+				{Key: "google", Label: tr("Доступ в Google"), Kind: "google",
+					Hint: tr("Без него встреч не видно.")},
+				{Key: "calendars", Label: tr("Чьи календари смотреть"), Kind: "list",
+					Placeholder: "name@example.com",
+					Hint: tr("Свой календарь виден сразу; чужой — только если человек ") +
+						tr("сам открыл его боту.")},
+				{Key: "poll_every", Label: tr("Как часто заглядывать"), Kind: "duration", Placeholder: "2m"},
+				{Key: "join_before", Label: tr("Заходить заранее"), Kind: "duration", Placeholder: "1m",
+					Hint: tr("За сколько до начала заводить бота в звонок.")},
+				{Key: "min_attendees", Label: tr("Минимум участников"), Kind: "number", Placeholder: "2",
+					Hint: tr("Встречу с одним человеком записывать нечего.")},
+				{Key: "skip_markers", Label: tr("Не ходить, если в названии есть"), Kind: "list",
+					Placeholder: tr("#беззаписи")},
+				{Key: "max_concurrent", Label: tr("Сколько записей разом"), Kind: "number", Placeholder: "4"},
+			},
+			summary: func(v map[string]string) string { return v["calendars"] },
+			read: func(c *Config) (bool, map[string]string) {
+				return c.Calendar.Enabled, map[string]string{
+					"calendars":      strings.Join(c.Calendar.Calendars, ", "),
+					"poll_every":     chDurText(c.Calendar.PollEvery),
+					"join_before":    chDurText(c.Calendar.JoinBefore),
+					"min_attendees":  strconv.Itoa(c.Calendar.MinAttendees),
+					"skip_markers":   strings.Join(c.Calendar.SkipMarkers, ", "),
+					"max_concurrent": strconv.Itoa(c.Calendar.MaxConcurrent),
+				}
+			},
+			apply: func(c *Config, on bool, v map[string]string) {
+				c.Calendar.Enabled = on
+				c.Calendar.Calendars = chList(v["calendars"])
+				c.Calendar.CredentialsFile = chKept(v, "credentials_file", c.Calendar.CredentialsFile)
+				c.Calendar.PollEvery = chDur(v["poll_every"], c.Calendar.PollEvery)
+				c.Calendar.JoinBefore = chDur(v["join_before"], c.Calendar.JoinBefore)
+				c.Calendar.MinAttendees = chInt(v["min_attendees"], c.Calendar.MinAttendees)
+				c.Calendar.SkipMarkers = chList(v["skip_markers"])
+				c.Calendar.MaxConcurrent = chInt(v["max_concurrent"], c.Calendar.MaxConcurrent)
+			},
 		},
-		summary: func(v map[string]string) string { return v["calendars"] },
-		read: func(c *Config) (bool, map[string]string) {
-			return c.Calendar.Enabled, map[string]string{
-				"calendars":      strings.Join(c.Calendar.Calendars, ", "),
-				"poll_every":     chDurText(c.Calendar.PollEvery),
-				"join_before":    chDurText(c.Calendar.JoinBefore),
-				"min_attendees":  strconv.Itoa(c.Calendar.MinAttendees),
-				"skip_markers":   strings.Join(c.Calendar.SkipMarkers, ", "),
-				"max_concurrent": strconv.Itoa(c.Calendar.MaxConcurrent),
-			}
+		{
+			key: "gmail", name: tr("Почта бота"), in: true,
+			about: tr("Добавил steno@company.com в идущий звонок кнопкой «Добавить людей» — ") +
+				tr("Google прислал ему письмо со ссылкой, бот пришёл."),
+			fields: []ChannelField{
+				{Key: "google", Label: tr("Доступ в Google"), Kind: "google",
+					Hint: tr("Без него письма бота не прочитать.")},
+				{Key: "account", Label: tr("Ящик бота"), Kind: "text", Placeholder: "steno@example.com"},
+				{Key: "allowed_domains", Label: tr("От кого принимать"), Kind: "list",
+					Placeholder: "example.com",
+					Hint: tr("Часть адреса после собаки. Пусто — только те, у кого почта того же ") +
+						tr("вида, что у бота: иначе увести бота на созвон сможет любой, кто ") +
+						tr("узнал адрес.")},
+				{Key: "poll_every", Label: tr("Как часто проверять почту"), Kind: "duration", Placeholder: "45s"},
+			},
+			summary: func(v map[string]string) string { return v["account"] },
+			read: func(c *Config) (bool, map[string]string) {
+				return c.Gmail.Enabled, map[string]string{
+					"account":         c.Gmail.Account,
+					"allowed_domains": strings.Join(c.Gmail.AllowedDomains, ", "),
+					"poll_every":      chDurText(c.Gmail.PollEvery),
+				}
+			},
+			apply: func(c *Config, on bool, v map[string]string) {
+				c.Gmail.Enabled = on
+				c.Gmail.Account = strings.TrimSpace(v["account"])
+				c.Gmail.CredentialsFile = chKept(v, "credentials_file", c.Gmail.CredentialsFile)
+				c.Gmail.AllowedDomains = chList(v["allowed_domains"])
+				c.Gmail.PollEvery = chDur(v["poll_every"], c.Gmail.PollEvery)
+			},
 		},
-		apply: func(c *Config, on bool, v map[string]string) {
-			c.Calendar.Enabled = on
-			c.Calendar.Calendars = chList(v["calendars"])
-			c.Calendar.CredentialsFile = chKept(v, "credentials_file", c.Calendar.CredentialsFile)
-			c.Calendar.PollEvery = chDur(v["poll_every"], c.Calendar.PollEvery)
-			c.Calendar.JoinBefore = chDur(v["join_before"], c.Calendar.JoinBefore)
-			c.Calendar.MinAttendees = chInt(v["min_attendees"], c.Calendar.MinAttendees)
-			c.Calendar.SkipMarkers = chList(v["skip_markers"])
-			c.Calendar.MaxConcurrent = chInt(v["max_concurrent"], c.Calendar.MaxConcurrent)
+		{
+			key: "telegram", name: "Telegram", in: true, out: true, live: true,
+			about: tr("Шлёт follow-up в чат команды. С включённым «слушать» ещё и принимает ") +
+				tr("ссылки: кинул боту ссылку на созвон — он пошёл."),
+			fields: []ChannelField{
+				{Key: "chat_id", Label: tr("Чат для follow-up"), Kind: "text", Placeholder: "-1001234567890",
+					Hint: tr("Номер чата — длинное число со знаком минус.")},
+				{Key: "listen", Label: tr("Слушать входящие"), Kind: "switch",
+					Hint: tr("Применится после перезапуска сервиса.")},
+				{Key: "allowed_chats", Label: tr("Откуда принимать ссылки"), Kind: "list",
+					Placeholder: "-1001234567890",
+					Hint:        tr("Пусто — только чат выше.")},
+			},
+			summary: func(v map[string]string) string { return v["chat_id"] },
+			read: func(c *Config) (bool, map[string]string) {
+				return c.Telegram.Enabled, map[string]string{
+					"chat_id":       c.Telegram.ChatID,
+					"listen":        chFlag(c.Telegram.Listen),
+					"allowed_chats": strings.Join(c.Telegram.AllowedChats, ", "),
+				}
+			},
+			apply: func(c *Config, on bool, v map[string]string) {
+				c.Telegram.Enabled = on
+				c.Telegram.ChatID = strings.TrimSpace(v["chat_id"])
+				c.Telegram.Listen = chBool(v["listen"])
+				c.Telegram.AllowedChats = chList(v["allowed_chats"])
+			},
 		},
-	},
-	{
-		key: "gmail", name: "Почта бота", in: true,
-		about: "Добавил steno@company.com в идущий звонок кнопкой «Добавить людей» — " +
-			"Google прислал ему письмо со ссылкой, бот пришёл.",
-		fields: []ChannelField{
-			{Key: "google", Label: "Доступ в Google", Kind: "google",
-				Hint: "Без него письма бота не прочитать."},
-			{Key: "account", Label: "Ящик бота", Kind: "text", Placeholder: "steno@example.com"},
-			{Key: "allowed_domains", Label: "От кого принимать", Kind: "list",
-				Placeholder: "example.com",
-				Hint: "Часть адреса после собаки. Пусто — только те, у кого почта того же " +
-					"вида, что у бота: иначе увести бота на созвон сможет любой, кто " +
-					"узнал адрес."},
-			{Key: "poll_every", Label: "Как часто проверять почту", Kind: "duration", Placeholder: "45s"},
+		{
+			key: "slack", name: "Slack", out: true, live: true,
+			about: tr("Кладёт итог созвона в канал команды: о чём договорились, кто что должен, ") +
+				tr("что осталось нерешённым."),
+			fields: []ChannelField{
+				{Key: "channel", Label: tr("Канал"), Kind: "text", Placeholder: tr("#созвоны")},
+				{Key: "dm_owners", Label: tr("Писать в личку тем, на ком задача"), Kind: "switch"},
+				{Key: "thread_full", Label: tr("Класть полную расшифровку в тред"), Kind: "switch",
+					Hint: tr("Часовой созвон — это несколько экранов текста в канале.")},
+			},
+			summary: func(v map[string]string) string { return v["channel"] },
+			read: func(c *Config) (bool, map[string]string) {
+				return c.Slack.Enabled, map[string]string{
+					"channel":     c.Slack.Channel,
+					"dm_owners":   chFlag(c.Slack.DMOwners),
+					"thread_full": chFlag(c.Slack.ThreadFull),
+				}
+			},
+			apply: func(c *Config, on bool, v map[string]string) {
+				c.Slack.Enabled = on
+				c.Slack.Channel = strings.TrimSpace(v["channel"])
+				c.Slack.DMOwners = chBool(v["dm_owners"])
+				c.Slack.ThreadFull = chBool(v["thread_full"])
+			},
 		},
-		summary: func(v map[string]string) string { return v["account"] },
-		read: func(c *Config) (bool, map[string]string) {
-			return c.Gmail.Enabled, map[string]string{
-				"account":         c.Gmail.Account,
-				"allowed_domains": strings.Join(c.Gmail.AllowedDomains, ", "),
-				"poll_every":      chDurText(c.Gmail.PollEvery),
-			}
+		{
+			key: "http", name: tr("Вызов по ссылке"), in: true,
+			about: tr("Позвать бота ссылкой из чего угодно: с ярлыка на телефоне, из другой ") +
+				tr("программы, командой в Slack. Пригодится, когда созвона нет в календаре."),
+			fields: []ChannelField{
+				{Key: "addr", Label: tr("Адрес, на котором ждать вызова"), Kind: "text",
+					Placeholder: ":8787",
+					Hint:        tr("Менять есть смысл, только если этот адрес занят другой программой.")},
+			},
+			summary: func(v map[string]string) string { return v["addr"] },
+			read: func(c *Config) (bool, map[string]string) {
+				return c.HTTP.Enabled, map[string]string{"addr": c.HTTP.Addr}
+			},
+			apply: func(c *Config, on bool, v map[string]string) {
+				c.HTTP.Enabled = on
+				if a := strings.TrimSpace(v["addr"]); a != "" {
+					c.HTTP.Addr = a
+				}
+			},
 		},
-		apply: func(c *Config, on bool, v map[string]string) {
-			c.Gmail.Enabled = on
-			c.Gmail.Account = strings.TrimSpace(v["account"])
-			c.Gmail.CredentialsFile = chKept(v, "credentials_file", c.Gmail.CredentialsFile)
-			c.Gmail.AllowedDomains = chList(v["allowed_domains"])
-			c.Gmail.PollEvery = chDur(v["poll_every"], c.Gmail.PollEvery)
+		{
+			key: "google_docs", name: "Google Docs", out: true, live: true,
+			about: tr("Складывает follow-up документами в папку Drive. С «документами проектов» ") +
+				tr("ведёт ещё по одному живому документу на проект — одна ссылка вместо тридцати."),
+			fields: []ChannelField{
+				{Key: "google", Label: tr("Доступ в Google"), Kind: "google",
+					Hint: tr("Документы появятся на том же Drive, к которому подключились.")},
+				{Key: "folder_id", Label: tr("Папка на Drive"), Kind: "text", Placeholder: "1AbC…",
+					Hint: tr("Открой папку на Drive и скопируй сюда хвост адреса — набор букв ") +
+						tr("и цифр после /folders/. Пусто — документы лягут в корень.")},
+				{Key: "project_docs", Label: tr("Вести документ на каждый проект"), Kind: "switch"},
+			},
+			summary: func(v map[string]string) string { return v["folder_id"] },
+			read: func(c *Config) (bool, map[string]string) {
+				return c.GoogleDocs.Enabled, map[string]string{
+					"folder_id":    c.GoogleDocs.FolderID,
+					"project_docs": chFlag(c.GoogleDocs.ProjectDocs),
+				}
+			},
+			apply: func(c *Config, on bool, v map[string]string) {
+				c.GoogleDocs.Enabled = on
+				c.GoogleDocs.FolderID = strings.TrimSpace(v["folder_id"])
+				c.GoogleDocs.CredentialsFile = chKept(v, "credentials_file", c.GoogleDocs.CredentialsFile)
+				c.GoogleDocs.Subject = chKept(v, "subject", c.GoogleDocs.Subject)
+				c.GoogleDocs.ProjectDocs = chBool(v["project_docs"])
+			},
 		},
-	},
-	{
-		key: "telegram", name: "Telegram", in: true, out: true, live: true,
-		about: "Шлёт follow-up в чат команды. С включённым «слушать» ещё и принимает " +
-			"ссылки: кинул боту ссылку на созвон — он пошёл.",
-		fields: []ChannelField{
-			{Key: "chat_id", Label: "Чат для follow-up", Kind: "text", Placeholder: "-1001234567890",
-				Hint: "Номер чата — длинное число со знаком минус."},
-			{Key: "listen", Label: "Слушать входящие", Kind: "switch",
-				Hint: "Применится после перезапуска сервиса."},
-			{Key: "allowed_chats", Label: "Откуда принимать ссылки", Kind: "list",
-				Placeholder: "-1001234567890",
-				Hint:        "Пусто — только чат выше."},
-		},
-		summary: func(v map[string]string) string { return v["chat_id"] },
-		read: func(c *Config) (bool, map[string]string) {
-			return c.Telegram.Enabled, map[string]string{
-				"chat_id":       c.Telegram.ChatID,
-				"listen":        chFlag(c.Telegram.Listen),
-				"allowed_chats": strings.Join(c.Telegram.AllowedChats, ", "),
-			}
-		},
-		apply: func(c *Config, on bool, v map[string]string) {
-			c.Telegram.Enabled = on
-			c.Telegram.ChatID = strings.TrimSpace(v["chat_id"])
-			c.Telegram.Listen = chBool(v["listen"])
-			c.Telegram.AllowedChats = chList(v["allowed_chats"])
-		},
-	},
-	{
-		key: "slack", name: "Slack", out: true, live: true,
-		about: "Кладёт итог созвона в канал команды: о чём договорились, кто что должен, " +
-			"что осталось нерешённым.",
-		fields: []ChannelField{
-			{Key: "channel", Label: "Канал", Kind: "text", Placeholder: "#созвоны"},
-			{Key: "dm_owners", Label: "Писать в личку тем, на ком задача", Kind: "switch"},
-			{Key: "thread_full", Label: "Класть полную расшифровку в тред", Kind: "switch",
-				Hint: "Часовой созвон — это несколько экранов текста в канале."},
-		},
-		summary: func(v map[string]string) string { return v["channel"] },
-		read: func(c *Config) (bool, map[string]string) {
-			return c.Slack.Enabled, map[string]string{
-				"channel":     c.Slack.Channel,
-				"dm_owners":   chFlag(c.Slack.DMOwners),
-				"thread_full": chFlag(c.Slack.ThreadFull),
-			}
-		},
-		apply: func(c *Config, on bool, v map[string]string) {
-			c.Slack.Enabled = on
-			c.Slack.Channel = strings.TrimSpace(v["channel"])
-			c.Slack.DMOwners = chBool(v["dm_owners"])
-			c.Slack.ThreadFull = chBool(v["thread_full"])
-		},
-	},
-	{
-		key: "http", name: "Вызов по ссылке", in: true,
-		about: "Позвать бота ссылкой из чего угодно: с ярлыка на телефоне, из другой " +
-			"программы, командой в Slack. Пригодится, когда созвона нет в календаре.",
-		fields: []ChannelField{
-			{Key: "addr", Label: "Адрес, на котором ждать вызова", Kind: "text",
-				Placeholder: ":8787",
-				Hint:        "Менять есть смысл, только если этот адрес занят другой программой."},
-		},
-		summary: func(v map[string]string) string { return v["addr"] },
-		read: func(c *Config) (bool, map[string]string) {
-			return c.HTTP.Enabled, map[string]string{"addr": c.HTTP.Addr}
-		},
-		apply: func(c *Config, on bool, v map[string]string) {
-			c.HTTP.Enabled = on
-			if a := strings.TrimSpace(v["addr"]); a != "" {
-				c.HTTP.Addr = a
-			}
-		},
-	},
-	{
-		key: "google_docs", name: "Google Docs", out: true, live: true,
-		about: "Складывает follow-up документами в папку Drive. С «документами проектов» " +
-			"ведёт ещё по одному живому документу на проект — одна ссылка вместо тридцати.",
-		fields: []ChannelField{
-			{Key: "google", Label: "Доступ в Google", Kind: "google",
-				Hint: "Документы появятся на том же Drive, к которому подключились."},
-			{Key: "folder_id", Label: "Папка на Drive", Kind: "text", Placeholder: "1AbC…",
-				Hint: "Открой папку на Drive и скопируй сюда хвост адреса — набор букв " +
-					"и цифр после /folders/. Пусто — документы лягут в корень."},
-			{Key: "project_docs", Label: "Вести документ на каждый проект", Kind: "switch"},
-		},
-		summary: func(v map[string]string) string { return v["folder_id"] },
-		read: func(c *Config) (bool, map[string]string) {
-			return c.GoogleDocs.Enabled, map[string]string{
-				"folder_id":    c.GoogleDocs.FolderID,
-				"project_docs": chFlag(c.GoogleDocs.ProjectDocs),
-			}
-		},
-		apply: func(c *Config, on bool, v map[string]string) {
-			c.GoogleDocs.Enabled = on
-			c.GoogleDocs.FolderID = strings.TrimSpace(v["folder_id"])
-			c.GoogleDocs.CredentialsFile = chKept(v, "credentials_file", c.GoogleDocs.CredentialsFile)
-			c.GoogleDocs.Subject = chKept(v, "subject", c.GoogleDocs.Subject)
-			c.GoogleDocs.ProjectDocs = chBool(v["project_docs"])
-		},
-	},
-}
+	}
+})
 
 func channelByKey(key string) (channelDef, bool) {
-	for _, d := range channelDefs {
+	for _, d := range channelDefs() {
 		if d.key == key {
 			return d, true
 		}
@@ -375,13 +380,13 @@ func importChannels(st *Store, cfg *Config) (int, error) {
 	if len(have) > 0 {
 		return 0, nil // база уже главнее конфига
 	}
-	for _, d := range channelDefs {
+	for _, d := range channelDefs() {
 		on, values := d.read(cfg)
 		if err := st.SaveChannel(d.key, on, values); err != nil {
 			return 0, err
 		}
 	}
-	return len(channelDefs), nil
+	return len(channelDefs()), nil
 }
 
 // applyChannels накладывает настройки из базы на конфиг на месте. Годится
@@ -391,7 +396,7 @@ func applyChannels(st *Store, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	for _, d := range channelDefs {
+	for _, d := range channelDefs() {
 		if row, ok := have[d.key]; ok {
 			d.apply(cfg, row.Enabled, row.Values)
 		}
@@ -419,8 +424,8 @@ func activeChannels(st *Store, cfg *Config) *Config {
 // человек их там увидел бы.
 func panelChannels(st *Store, cfg *Config) []Channel {
 	have, _ := st.ChannelSettings()
-	out := make([]Channel, 0, len(channelDefs))
-	for _, d := range channelDefs {
+	out := make([]Channel, 0, len(channelDefs()))
+	for _, d := range channelDefs() {
 		on, stored := d.read(cfg)
 		if row, ok := have[d.key]; ok {
 			on = row.Enabled

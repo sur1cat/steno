@@ -69,16 +69,16 @@ func (s Spend) String() string {
 	// выход 0 — $0.069» читается как ошибка учёта, хотя цена тут верная.
 	if s.Input == 0 && s.Output == 0 && s.CacheRead == 0 && s.CacheWrite == 0 {
 		if !s.PriceKnown {
-			return "неизвестен"
+			return tr("неизвестен")
 		}
 		return fmt.Sprintf("$%.3f", s.USD)
 	}
-	base := fmt.Sprintf("вход %d, выход %d", s.Input, s.Output)
+	base := fmt.Sprintf(tr("вход %d, выход %d"), s.Input, s.Output)
 	if s.CacheRead > 0 || s.CacheWrite > 0 {
-		base += fmt.Sprintf(", кеш %d/%d", s.CacheRead, s.CacheWrite)
+		base += fmt.Sprintf(tr(", кеш %d/%d"), s.CacheRead, s.CacheWrite)
 	}
 	if !s.PriceKnown {
-		return base + fmt.Sprintf(" (цена для %s неизвестна — добавь в claude.prices)", s.Model)
+		return base + fmt.Sprintf(tr(" (цена для %s неизвестна — добавь в claude.prices)"), s.Model)
 	}
 	return base + fmt.Sprintf(" — $%.3f", s.USD)
 }

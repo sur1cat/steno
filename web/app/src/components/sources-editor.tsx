@@ -4,6 +4,7 @@ import type { Source, SourceKind } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { FolderPicker } from "@/components/folder-picker";
+import { t } from "@/lib/i18n";
 
 // Источники, из которых собирается справка о проекте.
 //
@@ -14,27 +15,27 @@ import { FolderPicker } from "@/components/folder-picker";
 const KINDS: { value: SourceKind; label: string; placeholder: string; hint: string }[] = [
   {
     value: "repo",
-    label: "GitHub-репозиторий",
+    label: t("GitHub-репозиторий"),
     placeholder: "git@github.com:org/payments",
-    hint: "Склонируем на один коммит и прочитаем README, состав и темы последних коммитов.",
+    hint: t("Склонируем на один коммит и прочитаем README, состав и темы последних коммитов."),
   },
   {
     value: "path",
-    label: "Локальный каталог",
+    label: t("Локальный каталог"),
     placeholder: "~/work/payments",
-    hint: "Каталог на этой же машине — годится, когда репозиторий уже склонирован.",
+    hint: t("Каталог на этой же машине — годится, когда репозиторий уже склонирован."),
   },
   {
     value: "url",
-    label: "Сайт",
+    label: t("Сайт"),
     placeholder: "https://pay.example.com",
-    hint: "Одна страница: описание продукта обычно и есть его словарь.",
+    hint: t("Одна страница: описание продукта обычно и есть его словарь."),
   },
   {
     value: "text",
-    label: "Просто текст",
-    placeholder: "Приём денег, подписки, вебхуки провайдеров",
-    hint: "Когда объяснить проще словами, чем ссылкой.",
+    label: t("Просто текст"),
+    placeholder: t("Приём денег, подписки, вебхуки провайдеров"),
+    hint: t("Когда объяснить проще словами, чем ссылкой."),
   },
 ];
 
@@ -59,7 +60,7 @@ export function SourcesEditor({
       {value.map((s, i) => (
         <div key={i} className="flex items-start gap-2">
           <SelectMenu
-            label="Вид источника"
+            label={t("Вид источника")}
             value={s.kind}
             onChange={(v) => patch(i, { kind: v as SourceKind })}
             options={KINDS.map((k) => ({ value: k.value, label: k.label }))}
@@ -87,7 +88,7 @@ export function SourcesEditor({
                   onClick={() => setBrowsing(i)}
                 >
                   <FolderSearch className="h-4 w-4" />
-                  Выбрать
+                  {t("Выбрать")}
                 </Button>
               )}
             </div>
@@ -95,7 +96,7 @@ export function SourcesEditor({
           </div>
           <button
             type="button"
-            aria-label="Убрать источник"
+            aria-label={t("Убрать источник")}
             onClick={() => onChange(value.filter((_, idx) => idx !== i))}
             className="mt-2 shrink-0 rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:text-[var(--destructive)]"
           >
@@ -111,7 +112,7 @@ export function SourcesEditor({
         onClick={() => onChange([...value, { kind: "repo", value: "" }])}
       >
         <Plus className="h-4 w-4" />
-        добавить источник
+        {t("добавить источник")}
       </Button>
 
       <FolderPicker

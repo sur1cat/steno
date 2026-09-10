@@ -62,11 +62,21 @@ struct BarLabel: View {
             Image(systemName: "waveform")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.primary)
-        case .recording(let elapsed, let count):
+        case .recording(let elapsed, let count, let note):
             // Красная точка и бегущие секунды — то, ради чего такие приложения
             // и держат: видно с одного взгляда и не спутаешь с покоем.
+            //
+            // У заметки на месте точки микрофон: человек, который только что
+            // нажал «наговорить», должен видеть, что пишут именно его, а не
+            // чужой созвон, — и что можно говорить.
             HStack(spacing: 4) {
-                Circle().fill(Color.red).frame(width: 8, height: 8)
+                if note {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.red)
+                } else {
+                    Circle().fill(Color.red).frame(width: 8, height: 8)
+                }
                 if count > 1 {
                     Text("×\(count)").font(font).foregroundStyle(.primary)
                 }
@@ -95,7 +105,8 @@ struct BarLabel: View {
 
     private var fallback: String {
         switch state.kind {
-        case .recording(let elapsed, _): return "● " + Format.stopwatch(elapsed)
+        case .recording(let elapsed, _, let note):
+            return (note ? "🎙 " : "● ") + Format.stopwatch(elapsed)
         case .trouble: return "steno !"
         case .serviceDown: return "steno ·"
         default: return "steno"

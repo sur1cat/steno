@@ -34,9 +34,9 @@ func googleClient(ctx context.Context, cfg *Config, credFile, subject string, sc
 		// значило бы читать не тот календарь и не заметить этого.
 		if subject != "" && !strings.EqualFold(subject, t.Account) {
 			return nil, fmt.Errorf(
-				"Google подключён как %s, а тут нужен доступ от имени %s — "+
-					"по кнопке steno работает только от того, кто её нажал; "+
-					"чужой календарь и чужую почту так не открыть",
+				tr("Google подключён как %s, а тут нужен доступ от имени %s — ")+
+					tr("по кнопке steno работает только от того, кто её нажал; ")+
+					tr("чужой календарь и чужую почту так не открыть"),
 				t.Account, subject)
 		}
 		return googleOAuthClient(ctx, cfg, scopes)
@@ -47,18 +47,18 @@ func googleClient(ctx context.Context, cfg *Config, credFile, subject string, sc
 	}
 
 	if credFile == "" {
-		return nil, fmt.Errorf(
-			"нет доступа в Google: либо нажми «Подключить Google» в настройках панели, " +
-				"либо укажи ключ организации (google_docs.credentials_file) — " +
-				"он нужен, чтобы читать чужие календари")
+		return nil, errors.New(
+			tr("нет доступа в Google: либо нажми «Подключить Google» в настройках панели, ") +
+				tr("либо укажи ключ организации (google_docs.credentials_file) — ") +
+				tr("он нужен, чтобы читать чужие календари"))
 	}
 	raw, err := os.ReadFile(credFile)
 	if err != nil {
-		return nil, fmt.Errorf("ключ service-account: %w", err)
+		return nil, fmt.Errorf(tr("ключ service-account: %w"), err)
 	}
 	jwt, err := google.JWTConfigFromJSON(raw, scopes...)
 	if err != nil {
-		return nil, fmt.Errorf("разбор ключа %s: %w", credFile, err)
+		return nil, fmt.Errorf(tr("разбор ключа %s: %w"), credFile, err)
 	}
 	jwt.Subject = subject
 	// Контекст без отмены: клиент живёт дольше запроса, которым его создали,

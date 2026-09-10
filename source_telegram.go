@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -60,10 +61,10 @@ func (s *telegramSource) Run(ctx context.Context) error {
 	// Google-аккаунтом. Соседние источники отказывают так же: почта по
 	// умолчанию сужена до своего домена, http не стартует без токена.
 	if len(allowed) == 0 {
-		return fmt.Errorf("telegram.listen включён, но не задан ни chat_id, ни allowed_chats — " +
-			"принимать ссылки от кого угодно нельзя")
+		return errors.New(tr("telegram.listen включён, но не задан ни chat_id, ни allowed_chats — ") +
+			tr("принимать ссылки от кого угодно нельзя"))
 	}
-	s.log.Printf("telegram: слушаю ссылки на созвоны (%d разрешённых чатов)", len(allowed))
+	s.log.Printf(tr("telegram: слушаю ссылки на созвоны (%d разрешённых чатов)"), len(allowed))
 
 	// Long polling: держим соединение 30 секунд, поэтому клиенту нужен запас.
 	client := &http.Client{Timeout: 60 * time.Second}
@@ -108,10 +109,10 @@ func (s *telegramSource) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			who := firstNonEmpty(u.Message.From.FirstName, u.Message.From.Username, "кто-то")
+			who := firstNonEmpty(u.Message.From.FirstName, u.Message.From.Username, tr("кто-то"))
 			m := &Meeting{
 				ID:        newID(time.Now()),
-				Title:     firstNonEmpty(u.Message.Chat.Title, "Созвон по ссылке из Telegram"),
+				Title:     firstNonEmpty(u.Message.Chat.Title, tr("Созвон по ссылке из Telegram")),
 				MeetURL:   meetURL,
 				StartedAt: time.Now(),
 				Status:    "recording",
@@ -119,13 +120,13 @@ func (s *telegramSource) Run(ctx context.Context) error {
 			}
 			switch s.d.Start(ctx, adHocKey(meetURL, time.Now()), m, "Telegram, "+who) {
 			case Started:
-				s.reply(ctx, client, token, chat, "Иду на "+meetURL+" — пришлю follow-up сюда, когда закончится.")
+				s.reply(ctx, client, token, chat, tr("Иду на ")+meetURL+tr(" — пришлю follow-up сюда, когда закончится."))
 			case Duplicate:
-				s.reply(ctx, client, token, chat, "Я уже иду на этот созвон.")
+				s.reply(ctx, client, token, chat, tr("Я уже иду на этот созвон."))
 			case NoCapacity:
-				s.reply(ctx, client, token, chat, "Сейчас пишу максимум созвонов сразу — на этот не пойду. Попробуй ещё раз, когда освободится.")
+				s.reply(ctx, client, token, chat, tr("Сейчас пишу максимум созвонов сразу — на этот не пойду. Попробуй ещё раз, когда освободится."))
 			default:
-				s.reply(ctx, client, token, chat, "Не смог записать заявку, посмотри лог сервиса.")
+				s.reply(ctx, client, token, chat, tr("Не смог записать заявку, посмотри лог сервиса."))
 			}
 		}
 	}

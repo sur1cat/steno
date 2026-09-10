@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,7 +27,11 @@ const (
 	tabCount
 )
 
-var uiTabTitles = [tabCount]string{"Созвоны", "Задачи", "Проекты", "Поиск", "Каналы"}
+// Считается один раз и при первом обращении, а не при инициализации
+// пакета: язык к тому моменту ещё не прочитан из конфига.
+var uiTabTitles = sync.OnceValue(func() [tabCount]string {
+	return [tabCount]string{tr("Созвоны"), tr("Задачи"), tr("Проекты"), tr("Поиск"), tr("Каналы")}
+})
 
 type uiScreen int
 
@@ -66,6 +72,7 @@ type uiAction int
 
 const (
 	actDeleteProject uiAction = iota
+	actDeleteMeeting
 )
 
 type uiConfirm struct {
@@ -85,11 +92,24 @@ type uiForm struct {
 	name    textField
 	about   textField
 	aliases textField
+	people  textField
+	words   textField
 	sources []uiFormSource
-	field   int // 0 название, 1 описание, 2 псевдонимы, 3+ — источники
+	field   int // см. uiFormFixed; дальше — источники
 }
 
-func (f *uiForm) fieldCount() int { return 3 + len(f.sources) }
+// uiFormFixed — поля формы до источников. Порядок здесь и в formView должен
+// совпадать: номер поля — это и позиция курсора, и строка на экране.
+const (
+	uiFieldName = iota
+	uiFieldAbout
+	uiFieldAliases
+	uiFieldPeople
+	uiFieldWords
+	uiFormFixed // сколько их всего; с этого номера начинаются источники
+)
+
+func (f *uiForm) fieldCount() int { return uiFormFixed + len(f.sources) }
 
 func (f *uiForm) clampField() {
 	if f.field < 0 {
@@ -103,20 +123,24 @@ func (f *uiForm) clampField() {
 // current — поле под курсором; nil, если курсор на несуществующем поле.
 func (f *uiForm) current() *textField {
 	switch {
-	case f.field == 0:
+	case f.field == uiFieldName:
 		return &f.name
-	case f.field == 1:
+	case f.field == uiFieldAbout:
 		return &f.about
-	case f.field == 2:
+	case f.field == uiFieldAliases:
 		return &f.aliases
-	case f.field-3 < len(f.sources):
-		return &f.sources[f.field-3].value
+	case f.field == uiFieldPeople:
+		return &f.people
+	case f.field == uiFieldWords:
+		return &f.words
+	case f.field-uiFormFixed < len(f.sources):
+		return &f.sources[f.field-uiFormFixed].value
 	}
 	return nil
 }
 
 func (f *uiForm) currentSource() int {
-	if i := f.field - 3; i >= 0 && i < len(f.sources) {
+	if i := f.field - uiFormFixed; i >= 0 && i < len(f.sources) {
 		return i
 	}
 	return -1
@@ -222,7 +246,14 @@ func (m *uiModel) fail(err error) {
 }
 
 func (m *uiModel) say(format string, args ...any) {
-	m.status = fmt.Sprintf(format, args...)
+	m.sayText(fmt.Sprintf(format, args...))
+}
+
+// sayText — say для готовой строки. Отдельный метод, а не say без аргументов:
+// say — обёртка над Printf, и переведённая строка в роли формата справедливо
+// ловится go vet.
+func (m *uiModel) sayText(s string) {
+	m.status = s
 	m.statusIs = uiOK
 }
 
@@ -412,9 +443,9 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case uiContextDone:
 		delete(m.building, msg.Project)
 		if msg.Err != nil {
-			m.fail(fmt.Errorf("справка «%s»: %v", msg.Project, msg.Err))
+			m.fail(fmt.Errorf(tr("справка «%s»: %v"), msg.Project, msg.Err))
 		} else {
-			m.say("справка «%s» собрана, %s", msg.Project, msg.Spend)
+			m.say(tr("справка «%s» собрана, %s"), msg.Project, msg.Spend)
 			if err := m.reload(); err != nil {
 				m.fail(err)
 			}
@@ -587,7 +618,7 @@ func (m *uiModel) keyList(k string) tea.Cmd {
 		if err := m.reload(); err != nil {
 			m.fail(err)
 		} else {
-			m.say("перечитал из базы")
+			m.sayText(tr("перечитал из базы"))
 		}
 		return nil
 	case "esc":
@@ -691,6 +722,12 @@ func (m *uiModel) keyMeetings(k string) tea.Cmd {
 		if row, ok := m.selectedMeeting(); ok {
 			m.openMeeting(row.ID, scrTranscript, -1)
 		}
+	// Заглавная D — как у проектов: удаление не должно стоять на той же
+	// клавише, что «сделана» (d) в соседнем разделе.
+	case "D":
+		if row, ok := m.selectedMeeting(); ok {
+			m.askDeleteMeeting(row.ID, row.Title)
+		}
 	}
 	return nil
 }
@@ -703,28 +740,28 @@ func (m *uiModel) keyTasks(k string) tea.Cmd {
 			return nil
 		}
 		if it.OpenedIn == "" {
-			m.fail(fmt.Errorf("у пункта %s не записан созвон, на котором он появился", it.ID))
+			m.fail(fmt.Errorf(tr("у пункта %s не записан созвон, на котором он появился"), it.ID))
 			return nil
 		}
 		m.openMeeting(it.OpenedIn, scrMeeting, -1)
 	case "d":
-		m.closeSelectedItem("done", "закрыто из терминала")
+		m.closeSelectedItem("done", tr("закрыто из терминала"))
 	case "x":
-		m.closeSelectedItem("dropped", "снято из терминала")
+		m.closeSelectedItem("dropped", tr("снято из терминала"))
 	case "u":
 		it, ok := m.selectedItem()
 		if !ok {
 			return nil
 		}
 		if it.Status == "open" {
-			m.fail(fmt.Errorf("%s и так открыт", it.ID))
+			m.fail(fmt.Errorf(tr("%s и так открыт"), it.ID))
 			return nil
 		}
 		if err := m.st.ReopenItem(it.ID); err != nil {
 			m.fail(err)
 			return nil
 		}
-		m.afterItemChange("%s снова в работе", it.ID)
+		m.afterItemChange(tr("%s снова в работе"), it.ID)
 	case "p":
 		m.openProjectPicker()
 	case "o":
@@ -740,7 +777,7 @@ func (m *uiModel) keyTasks(k string) tea.Cmd {
 		m.filter[tabTasks].clear()
 		m.cursor[tabTasks] = 0
 		m.clampCursor()
-		m.say("фильтры сняты")
+		m.sayText(tr("фильтры сняты"))
 	}
 	return nil
 }
@@ -751,16 +788,16 @@ func (m *uiModel) closeSelectedItem(status, note string) {
 		return
 	}
 	if it.Status != "open" {
-		m.fail(fmt.Errorf("%s уже закрыт", it.ID))
+		m.fail(fmt.Errorf(tr("%s уже закрыт"), it.ID))
 		return
 	}
 	if err := m.st.CloseItem(it.ID, status, note, ""); err != nil {
 		m.fail(err)
 		return
 	}
-	word := "сделана"
+	word := tr("сделана")
 	if status == "dropped" {
-		word = "снята"
+		word = tr("снята")
 	}
 	m.afterItemChange("%s — %s", it.ID, word)
 }
@@ -775,31 +812,31 @@ func (m *uiModel) afterItemChange(format string, args ...any) {
 }
 
 func (m *uiModel) openProjectPicker() {
-	labels := []string{"все проекты"}
+	labels := []string{tr("все проекты")}
 	values := []string{""}
 	for _, p := range m.projects {
 		labels = append(labels, p.Name)
 		values = append(values, p.Name)
 	}
-	m.showPicker(&uiPicker{title: "Проект", labels: labels, values: values,
+	m.showPicker(&uiPicker{title: tr("Проект"), labels: labels, values: values,
 		target: pickProject, current: m.itemFilter.Project})
 }
 
 func (m *uiModel) openOwnerPicker() {
-	labels := []string{"все исполнители"}
+	labels := []string{tr("все исполнители")}
 	values := []string{""}
 	for _, o := range uiOwners(m.items) {
 		labels = append(labels, o)
 		values = append(values, o)
 	}
-	m.showPicker(&uiPicker{title: "Исполнитель", labels: labels, values: values,
+	m.showPicker(&uiPicker{title: tr("Исполнитель"), labels: labels, values: values,
 		target: pickOwner, current: m.itemFilter.Owner})
 }
 
 func (m *uiModel) openKindPicker() {
 	m.showPicker(&uiPicker{
-		title:  "Вид пункта",
-		labels: []string{"всё", "задачи", "открытые вопросы", "решения"},
+		title:  tr("Вид пункта"),
+		labels: []string{tr("всё"), tr("задачи"), tr("открытые вопросы"), tr("решения")},
 		values: []string{"", string(KindTask), string(KindQuestion), string(KindDecision)},
 		target: pickKind, current: string(m.itemFilter.Kind)})
 }
@@ -854,7 +891,7 @@ func (m *uiModel) keyPicker(k string) tea.Cmd {
 		case pickSourceKind:
 			if m.form != nil {
 				m.form.sources = append(m.form.sources, uiFormSource{kind: v})
-				m.form.field = 3 + len(m.form.sources) - 1
+				m.form.field = uiFormFixed + len(m.form.sources) - 1
 			}
 		}
 		m.picker = nil
@@ -895,6 +932,11 @@ func (m *uiModel) editProject(p uiProjectRow) {
 	f.name = newTextField(p.Name)
 	f.about = newTextField(p.About)
 	f.aliases = newTextField(strings.Join(p.Aliases, ", "))
+	f.people = newTextField(strings.Join(p.People, ", "))
+	// Имена людей лежат и в общем словаре — их туда сводит SaveProject ради
+	// whisper. В форме показываем словарь без них: иначе в двух полях подряд
+	// одно и то же, и стёртое в одном остаётся в другом.
+	f.words = newTextField(strings.Join(p.project().otherWords(), ", "))
 	for _, s := range p.Sources {
 		f.sources = append(f.sources, uiFormSource{kind: s.Kind, value: newTextField(s.Value)})
 	}
@@ -904,12 +946,33 @@ func (m *uiModel) editProject(p uiProjectRow) {
 
 func (m *uiModel) askDeleteProject(p uiProjectRow) {
 	if !p.Registered {
-		m.fail(fmt.Errorf("«%s» в реестре нет — он только упомянут в задачах, удалять нечего", p.Name))
+		m.fail(fmt.Errorf(tr("«%s» в реестре нет — он только упомянут в задачах, удалять нечего"), p.Name))
 		return
 	}
 	m.confirm = &uiConfirm{
-		text:   fmt.Sprintf("Удалить проект «%s»? Задачи и решения по нему останутся.", p.Name),
+		text:   fmt.Sprintf(tr("Удалить проект «%s»? Задачи и решения по нему останутся."), p.Name),
 		action: actDeleteProject, arg: p.Name,
+	}
+	m.push(scrConfirm)
+}
+
+// askDeleteMeeting спрашивает, назвав цену. Название созвона о цене не говорит
+// ничего: вместе с ним уходят задачи и решения проектов, а чужие пункты,
+// закрытые на этом созвоне, возвращаются в работу. Считает всё это MeetingToll
+// — та же функция, что зовут панель и `steno rm`.
+func (m *uiModel) askDeleteMeeting(id, title string) {
+	toll, err := m.st.MeetingToll(id)
+	if err != nil {
+		m.fail(err)
+		return
+	}
+	name := strings.TrimSpace(title)
+	if name == "" {
+		name = id
+	}
+	m.confirm = &uiConfirm{
+		text:   fmt.Sprintf(tr("Удалить созвон «%s»? Навсегда, %s."), name, toll.Text),
+		action: actDeleteMeeting, arg: id,
 	}
 	m.push(scrConfirm)
 }
@@ -944,27 +1007,55 @@ func (m *uiModel) keyConfirm(k string) tea.Cmd {
 				m.pop()
 			}
 			m.clampCursor()
-			m.say("проект «%s» удалён; задачи и решения по нему остались", c.arg)
+			m.say(tr("проект «%s» удалён; задачи и решения по нему остались"), c.arg)
+		case actDeleteMeeting:
+			toll, err := m.st.DeleteMeeting(c.arg)
+			if err != nil {
+				m.fail(err)
+				return nil
+			}
+			// Карточка удалённого созвона осталась бы на экране пустой, а из
+			// расшифровки «назад» вело бы в неё же. Уходим со всех его экранов.
+			for m.meeting != nil && m.meeting.ID == c.arg &&
+				(m.screen() == scrMeeting || m.screen() == scrTranscript) {
+				m.pop()
+			}
+			if m.meeting != nil && m.meeting.ID == c.arg {
+				m.meeting, m.followup, m.segments, m.links = nil, nil, nil, nil
+			}
+			// Нижняя панель помнит follow-up выделенной строки. Его больше нет,
+			// а помеченный прочитанным peekID не дал бы перечитать.
+			m.peekID, m.peek, m.peekTags = "", nil, nil
+			if err := m.reload(); err != nil {
+				m.fail(err)
+				return nil
+			}
+			m.clampCursor()
+			if toll.Reopen > 0 {
+				m.say(tr("созвон удалён; вернулось в работу: %s"), toll.reopenWords())
+			} else {
+				m.sayText(tr("созвон удалён"))
+			}
 		}
 	default:
 		m.confirm = nil
 		m.pop()
-		m.say("отменил")
+		m.sayText(tr("отменил"))
 	}
 	return nil
 }
 
 func (m *uiModel) buildContext(p uiProjectRow) tea.Cmd {
 	if len(p.Sources) == 0 {
-		m.fail(fmt.Errorf("у «%s» нет источников — добавь репозиторий или каталог (e — правка)", p.Name))
+		m.fail(fmt.Errorf(tr("у «%s» нет источников — добавь репозиторий или каталог (e — правка)"), p.Name))
 		return nil
 	}
 	if m.building[p.Name] {
-		m.say("справка «%s» уже собирается", p.Name)
+		m.say(tr("справка «%s» уже собирается"), p.Name)
 		return nil
 	}
 	m.building[p.Name] = true
-	m.say("собираю справку «%s» — это поход в Claude, займёт до минуты", p.Name)
+	m.say(tr("собираю справку «%s» — это поход в Claude, займёт до минуты"), p.Name)
 	cfg, st, pr := m.cfg, m.st, p.project()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -996,7 +1087,7 @@ func (m *uiModel) keySearch(k string) tea.Cmd {
 func (m *uiModel) openMeeting(id string, screen uiScreen, at float64) {
 	mt, err := m.st.Meeting(id)
 	if err != nil {
-		m.fail(fmt.Errorf("созвон %s: %v", id, err))
+		m.fail(fmt.Errorf(tr("созвон %s: %v"), id, err))
 		return
 	}
 	m.meeting = mt
@@ -1051,10 +1142,22 @@ func (m *uiModel) keyCard(k string) tea.Cmd {
 		switch k {
 		case "t":
 			if len(m.segments) == 0 {
-				m.fail(fmt.Errorf("расшифровки нет — созвон ещё не разобран"))
+				m.fail(errors.New(tr("расшифровки нет — созвон ещё не разобран")))
 				return nil
 			}
 			m.push(scrTranscript)
+			return nil
+		case "D":
+			if m.meeting != nil {
+				m.askDeleteMeeting(m.meeting.ID, m.meeting.Title)
+			}
+			return nil
+		}
+	case scrTranscript:
+		// Та же клавиша, что на карточке: расшифровка — это тот же созвон, и
+		// решение удалить его чаще всего принимают, дочитав именно её.
+		if k == "D" && m.meeting != nil {
+			m.askDeleteMeeting(m.meeting.ID, m.meeting.Title)
 			return nil
 		}
 	case scrProject:
@@ -1136,25 +1239,25 @@ func (m *uiModel) keyForm(msg tea.KeyMsg) tea.Cmd {
 		f.clampField()
 		return nil
 	case "ctrl+n":
-		m.showPicker(&uiPicker{title: "Вид источника",
-			labels: []string{"репозиторий (git-ссылка)", "каталог с кодом на этой машине",
-				"сайт или документ", "просто текст"},
+		m.showPicker(&uiPicker{title: tr("Вид источника"),
+			labels: []string{tr("репозиторий (git-ссылка)"), tr("каталог с кодом на этой машине"),
+				tr("сайт или документ"), tr("просто текст")},
 			values: uiSourceKinds, target: pickSourceKind})
 		return nil
 	case "ctrl+k":
 		if i := f.currentSource(); i >= 0 {
 			f.sources = append(f.sources[:i], f.sources[i+1:]...)
-			f.field = 3 + i
+			f.field = uiFormFixed + i
 			f.clampField()
 		} else {
-			m.fail(fmt.Errorf("ctrl+k убирает источник — встань на строку источника"))
+			m.fail(errors.New(tr("ctrl+k убирает источник — встань на строку источника")))
 		}
 		return nil
 	case "ctrl+t":
 		if i := f.currentSource(); i >= 0 {
 			f.sources[i].kind = uiNextSourceKind(f.sources[i].kind)
 		} else {
-			m.fail(fmt.Errorf("ctrl+t меняет вид источника — встань на строку источника"))
+			m.fail(errors.New(tr("ctrl+t меняет вид источника — встань на строку источника")))
 		}
 		return nil
 	}
@@ -1226,16 +1329,16 @@ func (m *uiModel) afterChannelChange(key string, enabled bool) {
 	if d, ok := channelByKey(key); ok {
 		name = d.name
 	}
-	word := "выключен"
+	word := tr("выключен")
 	if enabled {
-		word = "включён"
+		word = tr("включён")
 	}
 	// Часть каналов слушает сеть с самого старта, и переключить их на ходу
 	// нельзя: молчать об этом — значит оставить человека ждать того, чего не
 	// будет, пока он не перезапустит сервис.
 	tail := ""
 	if d, ok := channelByKey(key); ok && !d.live {
-		tail = "; применится после перезапуска serve"
+		tail = tr("; применится после перезапуска serve")
 	}
 	m.say("«%s» %s%s", name, word, tail)
 }
@@ -1276,14 +1379,14 @@ func (m *uiModel) keyChannelForm(msg tea.KeyMsg) tea.Cmd {
 	case "ctrl+n":
 		field := row.field
 		if field < 0 || f.fields[field].def.Kind != "list" {
-			m.fail(fmt.Errorf("ctrl+n добавляет значение в список — встань на строку списка"))
+			m.fail(errors.New(tr("ctrl+n добавляет значение в список — встань на строку списка")))
 			return nil
 		}
 		f.addItem(field)
 		return nil
 	case "ctrl+k":
 		if !f.removeItem(row.field, row.item) {
-			m.fail(fmt.Errorf("ctrl+k убирает значение списка — встань на такую строку"))
+			m.fail(errors.New(tr("ctrl+k убирает значение списка — встань на такую строку")))
 		}
 		return nil
 	}
@@ -1352,12 +1455,12 @@ func (m *uiModel) saveChannelForm() {
 	}
 	m.selectChannel(key)
 	if live {
-		m.say("«%s» сохранён", name)
+		m.say(tr("«%s» сохранён"), name)
 		return
 	}
 	// Источники слушают сеть с самого старта, и переключить их на ходу нельзя.
 	// Молчать об этом — значит оставить человека ждать того, чего не будет.
-	m.say("«%s» сохранён; сервис подхватит это после перезапуска serve", name)
+	m.say(tr("«%s» сохранён; сервис подхватит это после перезапуска serve"), name)
 }
 
 func uiNextSourceKind(kind string) string {
@@ -1373,17 +1476,17 @@ func (m *uiModel) saveForm() {
 	f := m.form
 	name := strings.TrimSpace(f.name.String())
 	if name == "" {
-		m.fail(fmt.Errorf("у проекта должно быть название"))
-		f.field = 0
+		m.fail(errors.New(tr("у проекта должно быть название")))
+		f.field = uiFieldName
 		return
 	}
 	var sources []Source
 	for i, s := range f.sources {
 		v := strings.TrimSpace(s.value.String())
 		if v == "" {
-			m.fail(fmt.Errorf("источник «%s» пустой — заполни или убери (ctrl+k)",
+			m.fail(fmt.Errorf(tr("источник «%s» пустой — заполни или убери (ctrl+k)"),
 				uiSourceKindTitle(s.kind)))
-			f.field = 3 + i
+			f.field = uiFormFixed + i
 			return
 		}
 		if s.kind == "path" {
@@ -1392,10 +1495,12 @@ func (m *uiModel) saveForm() {
 		sources = append(sources, Source{Kind: s.kind, Value: v})
 	}
 	p := Project{
-		Name:    name,
-		About:   strings.TrimSpace(f.about.String()),
-		Aliases: commaList(f.aliases.String()),
-		Sources: sources,
+		Name:       name,
+		About:      strings.TrimSpace(f.about.String()),
+		Aliases:    commaList(f.aliases.String()),
+		People:     commaList(f.people.String()),
+		Vocabulary: commaList(f.words.String()),
+		Sources:    sources,
 	}
 	if err := uiRenameProject(m.st, f.old, p); err != nil {
 		m.fail(err)
@@ -1415,11 +1520,11 @@ func (m *uiModel) saveForm() {
 	m.rebuildBody()
 	switch {
 	case old == "":
-		m.say("проект «%s» заведён", name)
+		m.say(tr("проект «%s» заведён"), name)
 	case old != name:
-		m.say("«%s» переименован в «%s» вместе с задачами", old, name)
+		m.say(tr("«%s» переименован в «%s» вместе с задачами"), old, name)
 	default:
-		m.say("проект «%s» сохранён", name)
+		m.say(tr("проект «%s» сохранён"), name)
 	}
 }
 

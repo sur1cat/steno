@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { t } from "@/lib/i18n";
 
 // Доступ в Google. Человек нажимает кнопку, соглашается у Google и
 // возвращается — вместо того, чтобы заводить служебный ключ и вписывать путь к
@@ -30,7 +31,7 @@ export function GoogleConnect({ hint }: { hint?: string }) {
     onSuccess: (r) => {
       window.location.href = r.url;
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "не получилось"),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
   });
 
   const disconnect = useMutation({
@@ -39,18 +40,18 @@ export function GoogleConnect({ hint }: { hint?: string }) {
       setConfirming(false);
       qc.invalidateQueries({ queryKey: GOOGLE_STATUS_KEY });
       qc.invalidateQueries({ queryKey: ["settings"] });
-      toast.success("Доступ в Google отключён");
+      toast.success(t("Доступ в Google отключён"));
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "не получилось"),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
   });
 
   if (q.isPending) {
-    return <div className="text-sm text-[var(--muted-foreground)]">Проверяю доступ…</div>;
+    return <div className="text-sm text-[var(--muted-foreground)]">{t("Проверяю доступ…")}</div>;
   }
   if (q.isError) {
     return (
       <div className="text-sm text-[var(--destructive)]">
-        {q.error instanceof Error ? q.error.message : "не удалось узнать про доступ"}
+        {q.error instanceof Error ? q.error.message : t("не удалось узнать про доступ")}
       </div>
     );
   }
@@ -93,13 +94,13 @@ export function GoogleConnect({ hint }: { hint?: string }) {
               <span className="min-w-0">
                 {connected ? (
                   <>
-                    Подключён
+                    {t("Подключён")}
                     {account && (
                       <span className="text-[var(--muted-foreground)]"> · {account}</span>
                     )}
                   </>
                 ) : (
-                  "Не подключён"
+                  t("Не подключён")
                 )}
               </span>
             </div>
@@ -116,7 +117,7 @@ export function GoogleConnect({ hint }: { hint?: string }) {
                 isLoading={connect.isPending}
                 onClick={() => connect.mutate()}
               >
-                {needsRedo ? "Подключить ещё раз" : "Подключить Google"}
+                {needsRedo ? t("Подключить ещё раз") : t("Подключить Google")}
               </Button>
             )}
             {/* «Отключить» — при подключённом, независимо от ready: убрать
@@ -129,7 +130,7 @@ export function GoogleConnect({ hint }: { hint?: string }) {
                 size="sm"
                 onClick={() => setConfirming(true)}
               >
-                Отключить
+                {t("Отключить")}
               </Button>
             )}
           </div>
@@ -158,9 +159,9 @@ export function GoogleConnect({ hint }: { hint?: string }) {
         open={confirming}
         onClose={() => setConfirming(false)}
         onConfirm={() => disconnect.mutate()}
-        title="Отключить доступ в Google?"
-        description="Доступ один на всё: без него перестанут работать и календарь, и почта бота, и документы. Подключить обратно можно этой же кнопкой."
-        confirmLabel="Отключить"
+        title={t("Отключить доступ в Google?")}
+        description={t("Доступ один на всё: без него перестанут работать и календарь, и почта бота, и документы. Подключить обратно можно этой же кнопкой.")}
+        confirmLabel={t("Отключить")}
         isPending={disconnect.isPending}
       />
     </>

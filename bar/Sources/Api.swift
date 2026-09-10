@@ -20,6 +20,17 @@ struct InviteReply: Decodable {
     let error: String?
 }
 
+/// Ответ панели на кнопку заметки. Слова в message тоже её: она одна знает,
+/// занят ли микрофон, дала ли macOS к нему доступ и не идёт ли уже запись.
+struct NoteReply: Decodable {
+    let id: String?
+    let status: String?
+    let message: String?
+    let error: String?
+    let recording: Bool?
+    let seconds: Int?
+}
+
 enum ApiError: Error, Equatable {
     /// До панели не достучались. Почти всегда это «сервис не запущен».
     case down(String)

@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -132,7 +133,7 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 		}
 		plat = p
 	}
-	lg.Printf("площадка: %s (субтитры: %s)", plat.Title(), plat.Captions())
+	lg.Printf(tr("площадка: %s (субтитры: %s)"), plat.Title(), plat.Captions())
 
 	boot, err := plat.BootstrapJS(o.Selectors)
 	if err != nil {
@@ -180,24 +181,24 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 	})
 	openURL := plat.NavigateURL(o.MeetURL)
 	if err := chromedp.Run(browserCtx, inject, chromedp.Navigate(openURL)); err != nil {
-		return nil, fmt.Errorf("открыть %s: %w", openURL, err)
+		return nil, fmt.Errorf(tr("открыть %s: %w"), openURL, err)
 	}
 	var scriptErr string
 	_ = chromedp.Run(browserCtx, chromedp.Evaluate(
 		"window.__stenoError || \"\"", &scriptErr))
 	if scriptErr != "" {
-		return nil, fmt.Errorf("скрипт страницы не запустился: %s (проверь selectors.json)", scriptErr)
+		return nil, fmt.Errorf(tr("скрипт страницы не запустился: %s (проверь selectors.json)"), scriptErr)
 	}
 
 	if err := enterGreenRoom(browserCtx, o, plat, lg); err != nil {
 		return nil, err
 	}
 
-	lg.Printf("жду, пока впустят (до %s)", o.AdmissionTimeout)
+	lg.Printf(tr("жду, пока впустят (до %s)"), o.AdmissionTimeout)
 	if err := waitAdmission(browserCtx, o.AdmissionTimeout, lg); err != nil {
 		return nil, err
 	}
-	lg.Printf("в звонке")
+	lg.Print(tr("в звонке"))
 
 	// Запись стартует первой. Включение субтитров занимает до нескольких
 	// секунд, и если делать его раньше, начало разговора не попадёт в аудио.
@@ -208,7 +209,7 @@ func RunBot(ctx context.Context, o BotOptions) (*BotResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	lg.Printf("пишу звук в %s", audioPath)
+	lg.Printf(tr("пишу звук в %s"), audioPath)
 
 	// Субтитры — главный источник имён говорящих: имя там привязано к
 	// конкретной фразе. Подсветка плитки достраивает их там, где субтитры
@@ -261,7 +262,7 @@ func enterGreenRoom(ctx context.Context, o BotOptions, plat Platform, lg *log.Lo
 			if confirmMuted(ctx) {
 				return nil
 			}
-			lg.Printf("ВНИМАНИЕ: не нашёл кнопок микрофона и камеры — бот может быть не заглушён")
+			lg.Print(tr("ВНИМАНИЕ: не нашёл кнопок микрофона и камеры — бот может быть не заглушён"))
 			return nil
 		}
 		if !named {
@@ -269,7 +270,7 @@ func enterGreenRoom(ctx context.Context, o BotOptions, plat Platform, lg *log.Lo
 			js := fmt.Sprintf("window.__steno ? window.__steno.setName(%s) : false",
 				mustJSON(o.DisplayName))
 			if err := chromedp.Run(ctx, chromedp.Evaluate(js, &ok)); err == nil && ok {
-				lg.Printf("представился как %q", o.DisplayName)
+				lg.Printf(tr("представился как %q"), o.DisplayName)
 				named = true
 			}
 		}
@@ -283,15 +284,15 @@ func enterGreenRoom(ctx context.Context, o BotOptions, plat Platform, lg *log.Lo
 				// Под --local микрофон и камера настоящие, а не виртуальные:
 				// молча войти незаглушённым означает вести чужой созвон с
 				// живого микрофона оператора.
-				lg.Printf("ВНИМАНИЕ: вхожу, не подтвердив выключение микрофона и камеры")
+				lg.Print(tr("ВНИМАНИЕ: вхожу, не подтвердив выключение микрофона и камеры"))
 			}
-			lg.Printf("нажал кнопку входа")
+			lg.Print(tr("нажал кнопку входа"))
 			return nil
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("не нашёл кнопку входа за 90 с — скорее всего изменилась вёрстка %s, "+
-		"проверь selectors.json", plat.Title())
+	return fmt.Errorf(tr("не нашёл кнопку входа за 90 с — скорее всего изменилась вёрстка %s, ")+
+		tr("проверь selectors.json"), plat.Title())
 }
 
 // confirmMuted спрашивает страницу напрямую. Отдельно от muteSelf(), потому
@@ -371,7 +372,7 @@ func enableCaptionsOn(p captionPage, lg *log.Logger) bool {
 		on, unavailable, ok := p.state()
 		if ok && on {
 			if pressed {
-				lg.Printf("субтитры включены")
+				lg.Print(tr("субтитры включены"))
 			}
 			return true
 		}
@@ -379,11 +380,11 @@ func enableCaptionsOn(p captionPage, lg *log.Logger) bool {
 		// они выключены на сервере. Жать там нечего, и слепые нажатия — это
 		// случайные кнопки в чужом созвоне.
 		if ok && unavailable {
-			lg.Printf("субтитры на этом сервере выключены — расшифровка будет по звуку, без имён")
+			lg.Print(tr("субтитры на этом сервере выключены — расшифровка будет по звуку, без имён"))
 			return false
 		}
 		if err := p.toggle(); err != nil {
-			lg.Printf("не удалось переключить субтитры: %v", err)
+			lg.Printf(tr("не удалось переключить субтитры: %v"), err)
 			return false
 		}
 		pressed = true
@@ -392,12 +393,12 @@ func enableCaptionsOn(p captionPage, lg *log.Logger) bool {
 		for waited := time.Duration(0); waited < captionSettleWait; waited += captionSettleStep {
 			p.wait(captionSettleStep)
 			if on, _, ok := p.state(); ok && on {
-				lg.Printf("субтитры включены")
+				lg.Print(tr("субтитры включены"))
 				return true
 			}
 		}
 	}
-	lg.Printf("субтитры включить не удалось — расшифровка будет без имён")
+	lg.Print(tr("субтитры включить не удалось — расшифровка будет без имён"))
 	return false
 }
 
@@ -411,7 +412,7 @@ func muteSelf(ctx context.Context, lg *log.Logger) int {
 		return 0
 	}
 	if muted > 0 {
-		lg.Printf("выключил микрофон и камеру (кнопок: %d)", muted)
+		lg.Printf(tr("выключил микрофон и камеру (кнопок: %d)"), muted)
 	}
 	return muted
 }
@@ -426,7 +427,7 @@ func waitAdmission(ctx context.Context, timeout time.Duration, lg *log.Logger) e
 				return nil
 			}
 			if st.Left {
-				return fmt.Errorf("бота не впустили в звонок")
+				return errors.New(tr("бота не впустили в звонок"))
 			}
 		}
 		// У некоторых площадок между экраном перед входом и звонком есть ещё
@@ -440,11 +441,11 @@ func waitAdmission(ctx context.Context, timeout time.Duration, lg *log.Logger) e
 			&asked))
 		if asked && !knocked {
 			knocked = true
-			lg.Printf("попросился в звонок из комнаты ожидания")
+			lg.Print(tr("попросился в звонок из комнаты ожидания"))
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return fmt.Errorf("хост не впустил бота за %s", timeout)
+	return fmt.Errorf(tr("хост не впустил бота за %s"), timeout)
 }
 
 // capOn — что вышло у enableCaptions до начала цикла. Нужно, чтобы не
@@ -468,7 +469,7 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	spkPath := filepath.Join(o.OutDir, speakersFileName)
 	spkEnc := (*json.Encoder)(nil)
 	if f, err := os.Create(spkPath); err != nil {
-		lg.Printf("лента говорящих не пишется (%v) — имена будут только из субтитров", err)
+		lg.Printf(tr("лента говорящих не пишется (%v) — имена будут только из субтитров"), err)
 		spkPath = ""
 	} else {
 		defer f.Close()
@@ -494,7 +495,7 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	warnedNoCaptions := false
 	lastCaptionTry := time.Time{}
 	lastDebug := time.Time{}
-	reason := "звонок закончился"
+	reason := tr("звонок закончился")
 	// Что вышло с субтитрами. Ответ собирается по ходу записи: «ни разу не
 	// видели» и «страница сказала, что их нет» — разные новости, и человеку
 	// нужна вторая, а не «реплик 0».
@@ -524,11 +525,11 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	for {
 		select {
 		case <-ctx.Done():
-			reason = "отмена"
+			reason = tr("отмена")
 		case <-ticker.C:
 		}
 		if ctx.Err() != nil {
-			reason = "отмена"
+			reason = tr("отмена")
 			break
 		}
 
@@ -536,15 +537,15 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 
 		var st pollState
 		if err := chromedp.Run(ctx, chromedp.Evaluate(pollJS, &st)); err != nil {
-			lg.Printf("страница не отвечает (%v) — заканчиваю", err)
-			reason = "страница закрылась"
+			lg.Printf(tr("страница не отвечает (%v) — заканчиваю"), err)
+			reason = tr("страница закрылась")
 			break
 		}
 
 		for _, u := range tracker.Update(st.Lines, now) {
 			yield.Add(u)
 			if err := enc.Encode(u); err != nil {
-				lg.Printf("не записал реплику: %v", err)
+				lg.Printf(tr("не записал реплику: %v"), err)
 			}
 		}
 		// Молчащий бот тоже участник, и площадка иногда подсвечивает
@@ -559,7 +560,7 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 			coverage.Add(s)
 			if spkEnc != nil {
 				if err := spkEnc.Encode(s); err != nil {
-					lg.Printf("не записал отрезок говорящего: %v", err)
+					lg.Printf(tr("не записал отрезок говорящего: %v"), err)
 				}
 			}
 		}
@@ -583,10 +584,10 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 		if !toldNoSpeaking && !sawSpeaking && len(seen) > 0 &&
 			rec.Elapsed() > 45*time.Second {
 			toldNoSpeaking = true
-			lg.Printf("подсветка говорящего ни разу не сработала за %s — либо в звонке "+
-				"молчат, либо её признак переехал. Устойчивого признака у Meet нет, "+
-				"чинится это по дампу: перезапусти с --debug-captions и положи "+
-				"увиденное в speakingJsnames или speakingSelectors в selectors.json",
+			lg.Printf(tr("подсветка говорящего ни разу не сработала за %s — либо в звонке ")+
+				tr("молчат, либо её признак переехал. Устойчивого признака у Meet нет, ")+
+				tr("чинится это по дампу: перезапусти с --debug-captions и положи ")+
+				tr("увиденное в speakingJsnames или speakingSelectors в selectors.json"),
 				rec.Elapsed().Round(time.Second))
 		}
 		// Субтитры — главный источник имён, поэтому возвращаем их столько
@@ -610,19 +611,19 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 			if toldCaptionsFailed {
 				// Прежде чем это появилось, лог утверждал обратное: сначала
 				// «включить не удалось», а в конце записи — «субтитры сняты».
-				lg.Printf("субтитры всё-таки появились — имена говорящих будут")
+				lg.Print(tr("субтитры всё-таки появились — имена говорящих будут"))
 				toldCaptionsFailed = false
 			}
 		case pageSaysNone:
 			// Возвращать нечего. Один раз сказать — и больше не дёргать
 			// страницу: иначе бот всю запись жмёт кнопки, которых нет.
 			if !toldAboutNone {
-				lg.Printf("субтитров на этой площадке нет — расшифровка будет по звуку, без имён")
+				lg.Print(tr("субтитров на этой площадке нет — расшифровка будет по звуку, без имён"))
 				toldAboutNone = true
 			}
 		case rec.Elapsed() > 30*time.Second && time.Since(lastCaptionTry) > time.Minute:
 			if !warnedNoCaptions {
-				lg.Printf("субтитры пропали — пробую вернуть")
+				lg.Print(tr("субтитры пропали — пробую вернуть"))
 				warnedNoCaptions = true
 			}
 			lastCaptionTry = time.Now()
@@ -633,7 +634,7 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 			if notInCallSince.IsZero() {
 				notInCallSince = time.Now()
 			} else if time.Since(notInCallSince) >= notInCallLimit {
-				reason = "бота вывели из звонка"
+				reason = tr("бота вывели из звонка")
 				break
 			}
 		} else {
@@ -643,14 +644,14 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 			if aloneSince.IsZero() {
 				aloneSince = time.Now()
 			} else if time.Since(aloneSince) > o.EmptyFor {
-				reason = "остался один"
+				reason = tr("остался один")
 				break
 			}
 		} else {
 			aloneSince = time.Time{}
 		}
 		if rec.Elapsed() > o.MaxDuration {
-			reason = "превышен потолок длительности"
+			reason = tr("превышен потолок длительности")
 			break
 		}
 	}
@@ -673,9 +674,9 @@ func recordLoop(ctx context.Context, o BotOptions, plat Platform, rec *Recorder,
 	sort.Strings(people)
 
 	capState := captionOutcome(sawCaptions, pageSaysNone)
-	lg.Printf("запись окончена: %s, %s, участников %d",
+	lg.Printf(tr("запись окончена: %s, %s, участников %d"),
 		reason, rec.Elapsed().Round(time.Second), len(people))
-	lg.Printf("субтитры: %s", capState.Explain(plat))
+	lg.Printf(tr("субтитры: %s"), capState.Explain(plat))
 	if r := yield.Report(rec.Elapsed(), o.CaptionLanguage); r != "" {
 		lg.Printf("%s", r)
 	}
@@ -715,10 +716,10 @@ func openPeoplePanel(ctx context.Context, lg *log.Logger) {
 	}
 	switch res {
 	case "clicked":
-		lg.Printf("открыл панель участников: подсветку говорящего площадка рисует в ней")
+		lg.Print(tr("открыл панель участников: подсветку говорящего площадка рисует в ней"))
 	case "":
-		lg.Printf("не нашёл кнопку панели участников — подсветка говорящего может не сработать; " +
-			"смотри peoplePanelLabels в selectors.json")
+		lg.Print(tr("не нашёл кнопку панели участников — подсветка говорящего может не сработать; ") +
+			tr("смотри peoplePanelLabels в selectors.json"))
 	}
 }
 
@@ -784,21 +785,21 @@ func dumpCaptionDOM(ctx context.Context, lg *log.Logger) {
 	}
 	js := `(() => (window.__steno && window.__steno.debugCaptions) ? window.__steno.debugCaptions() : null)()`
 	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &out)); err != nil {
-		lg.Printf("[дамп] не вышло: %v", err)
+		lg.Printf(tr("[дамп] не вышло: %v"), err)
 		return
 	}
-	lg.Printf("[дамп] участников %d; кнопки субтитров: %v", out.Participants, out.CaptionButtons)
+	lg.Printf(tr("[дамп] участников %d; кнопки субтитров: %v"), out.Participants, out.CaptionButtons)
 	for _, r := range out.Regions {
-		lg.Printf("[дамп] role=region label=%q подходит=%v детей=%d текст=%q",
+		lg.Printf(tr("[дамп] role=region label=%q подходит=%v детей=%d текст=%q"),
 			r.Label, r.Matches, r.Children, r.Sample)
 	}
 	for _, l := range out.Labelled {
-		lg.Printf("[дамп] <%s role=%q> label=%q детей=%d текст=%q",
+		lg.Printf(tr("[дамп] <%s role=%q> label=%q детей=%d текст=%q"),
 			l.Tag, l.Role, l.Label, l.Children, l.Sample)
 	}
 	for _, j := range out.Jsnames {
 		if j.Found {
-			lg.Printf("[дамп] jsname=%s текст=%q", j.Jsname, j.Sample)
+			lg.Printf(tr("[дамп] jsname=%s текст=%q"), j.Jsname, j.Sample)
 		}
 	}
 }
@@ -827,17 +828,17 @@ func dumpSpeakingDOM(ctx context.Context, lg *log.Logger) {
 	}
 	js := `(() => (window.__steno && window.__steno.debugSpeaking) ? window.__steno.debugSpeaking() : null)()`
 	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &out)); err != nil {
-		lg.Printf("[дамп] подсветка: не вышло: %v", err)
+		lg.Printf(tr("[дамп] подсветка: не вышло: %v"), err)
 		return
 	}
-	lg.Printf("[дамп] говорят сейчас: %v", out.Speaking)
+	lg.Printf(tr("[дамп] говорят сейчас: %v"), out.Speaking)
 	if out.How != "" {
-		lg.Printf("[дамп] источник подсветки: %s (стор %v, id %q)", out.How, out.Store, out.DominantID)
+		lg.Printf(tr("[дамп] источник подсветки: %s (стор %v, id %q)"), out.How, out.Store, out.DominantID)
 	}
 	for _, t := range out.Tiles {
-		lg.Printf("[дамп] плитка %q свой=%v признак=%q классы=%v", t.Name, t.Self, t.How, t.Classes)
+		lg.Printf(tr("[дамп] плитка %q свой=%v признак=%q классы=%v"), t.Name, t.Self, t.How, t.Classes)
 		if len(t.Attrs) > 0 {
-			lg.Printf("[дамп]   атрибуты: %v", t.Attrs)
+			lg.Printf(tr("[дамп]   атрибуты: %v"), t.Attrs)
 		}
 	}
 }

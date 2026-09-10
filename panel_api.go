@@ -1,8 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io/fs"
 	"net"
 	"net/http"
@@ -45,6 +46,7 @@ func (p *Panel) api() http.Handler {
 	mux.Handle("POST /api/google/disconnect", p.apiGuard(p.apiGoogleDisconnect))
 
 	mux.Handle("POST /api/projects", p.apiGuard(p.apiSaveProject))
+	mux.Handle("DELETE /api/meetings/{id}", p.apiGuard(p.apiDeleteMeeting))
 	mux.Handle("DELETE /api/projects/{name}", p.apiGuard(p.apiDeleteProject))
 	mux.Handle("POST /api/projects/{name}/context", p.apiGuard(p.apiBuildContext))
 	mux.Handle("POST /api/channels/{key}", p.apiGuard(p.apiSaveChannel))
@@ -53,6 +55,7 @@ func (p *Panel) api() http.Handler {
 	mux.Handle("POST /api/schedule/{key}/override", p.apiGuard(p.apiScheduleOverride))
 	mux.Handle("POST /api/invite", p.apiGuard(p.apiInvite))
 	mux.Handle("POST /api/upload", p.apiGuard(p.apiUpload))
+	p.noteRoutes(mux)
 	return mux
 }
 
@@ -62,7 +65,7 @@ func (p *Panel) apiGuard(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(cookieName)
 		if err != nil || !p.valid(c.Value) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "нужен вход"})
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": tr("нужен вход")})
 			return
 		}
 		h(w, r)
@@ -76,9 +79,9 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func (p *Panel) apiFail(w http.ResponseWriter, err error) {
-	p.log.Printf("панель: %v", err)
+	p.log.Printf(tr("панель: %v"), err)
 	writeJSON(w, http.StatusInternalServerError,
-		map[string]string{"error": "что-то сломалось, смотри лог сервиса"})
+		map[string]string{"error": tr("что-то сломалось, смотри лог сервиса")})
 }
 
 // --- вход -------------------------------------------------------------------
@@ -93,12 +96,12 @@ func (p *Panel) apiLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("плохой запрос")})
 		return
 	}
 	if !p.passwordOK(body.Password) {
-		p.log.Printf("панель: неверный пароль с %s", clientIP(r))
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "не тот пароль"})
+		p.log.Printf(tr("панель: неверный пароль с %s"), clientIP(r))
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": tr("не тот пароль")})
 		return
 	}
 	exp := time.Now().Add(30 * 24 * time.Hour).Unix()
@@ -154,7 +157,7 @@ func (p *Panel) apiMeeting(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	m, err := p.st.Meeting(id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "нет такого созвона"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": tr("нет такого созвона")})
 		return
 	}
 	f, ferr := p.st.Followup(id)
@@ -165,6 +168,14 @@ func (p *Panel) apiMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 	links, _ := p.st.Publications(id)
 	spend, _ := p.st.Spend(id)
+	// Цена удаления приезжает вместе с созвоном, а не отдельным запросом: её
+	// показывают в вопросе «удалить?», и модалка, открывающаяся с пустым
+	// местом вместо цифр, — это ровно тот момент, когда жмут «да» не глядя.
+	toll, err := p.st.MeetingToll(id)
+	if err != nil {
+		p.apiFail(w, err)
+		return
+	}
 	dur := 0
 	if m.EndedAt != nil {
 		dur = int(m.EndedAt.Sub(m.StartedAt).Seconds())
@@ -177,7 +188,34 @@ func (p *Panel) apiMeeting(w http.ResponseWriter, r *http.Request) {
 		"segments": segs, "links": links,
 		"hasAudio": m.AudioPath != "" && fileExists(m.AudioPath),
 		"spend":    spend,
+		"removal":  toll,
 	})
+}
+
+// apiDeleteMeeting забывает созвон целиком. Отдаёт назад то, что удалил: панель
+// говорит человеку, сколько пунктов вернулось в работу, — молчаливое «готово»
+// скрыло бы самое неожиданное последствие удаления.
+func (p *Panel) apiDeleteMeeting(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	// Отдельная проверка, а не «ноль удалённых строк»: DELETE несуществующего
+	// проходит без ошибки, и опечатка в адресе выглядела бы как успех.
+	if ok, err := p.st.meetingExists(id); err != nil {
+		p.apiFail(w, err)
+		return
+	} else if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": tr("нет такого созвона")})
+		return
+	}
+	toll, err := p.st.DeleteMeeting(id)
+	if err != nil {
+		p.apiFail(w, err)
+		return
+	}
+	// В логе — прошедшее время и цифры: готовая фраза цены написана для
+	// вопроса «удалить?» и обещает будущее, которое здесь уже наступило.
+	p.log.Printf(tr("панель: созвон %s удалён; пунктов ушло %d, открылось заново %d"), id,
+		toll.OpenedTasks+toll.OpenedDecisions+toll.OpenedQuestions, toll.Reopen)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": toll})
 }
 
 func (p *Panel) apiSearch(w http.ResponseWriter, r *http.Request) {
@@ -338,17 +376,24 @@ func (p *Panel) apiSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type proj struct {
-		Name        string   `json:"name"`
-		Aliases     []string `json:"aliases"`
-		About       string   `json:"about"`
-		Sources     []Source `json:"sources"`
+		Name    string   `json:"name"`
+		Aliases []string `json:"aliases"`
+		About   string   `json:"about"`
+		Sources []Source `json:"sources"`
+		People  []string `json:"people"`
+		// Словарь без имён людей: имена лежат и здесь тоже (их туда сводит
+		// SaveProject ради whisper), но показывать их в форме дважды — значит
+		// получить два поля, в которых одно и то же, и правку, стирающую имя
+		// из одного и оставляющую в другом.
+		Vocabulary  []string `json:"vocabulary"`
 		PrimerChars int      `json:"primerChars"`
 		BuiltAt     int64    `json:"builtAt"`
 		Primer      string   `json:"primer"`
 	}
 	out := make([]proj, 0, len(projects))
 	for _, pr := range projects {
-		x := proj{Name: pr.Name, Aliases: pr.Aliases, About: pr.About, Sources: pr.Sources}
+		x := proj{Name: pr.Name, Aliases: pr.Aliases, About: pr.About, Sources: pr.Sources,
+			People: pr.People, Vocabulary: pr.otherWords()}
 		if c, err := p.st.ProjectContext(pr.Name); err == nil {
 			x.PrimerChars = len([]rune(c.Primer))
 			x.BuiltAt = c.BuiltAt.Unix()
@@ -374,7 +419,7 @@ func (p *Panel) apiSaveChannel(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	def, ok := channelByKey(key)
 	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "нет такого канала"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": tr("нет такого канала")})
 		return
 	}
 	var body struct {
@@ -382,7 +427,7 @@ func (p *Panel) apiSaveChannel(w http.ResponseWriter, r *http.Request) {
 		Values  map[string]string `json:"values"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("плохой запрос")})
 		return
 	}
 	// Берём только описанные поля: лишние ключи из браузера в базу не кладём,
@@ -442,7 +487,7 @@ func (p *Panel) apiBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "в эту папку не пускают"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("в эту папку не пускают")})
 		return
 	}
 
@@ -490,7 +535,7 @@ func (p *Panel) apiBrowse(w http.ResponseWriter, r *http.Request) {
 func browseResolve(home, ask string) (dir, root string, err error) {
 	root, err = filepath.EvalSymlinks(home)
 	if err != nil {
-		return "", "", fmt.Errorf("домашний каталог не читается")
+		return "", "", errors.New(tr("домашний каталог не читается"))
 	}
 	dir = strings.TrimSpace(ask)
 	if dir == "" {
@@ -501,10 +546,10 @@ func browseResolve(home, ask string) (dir, root string, err error) {
 	}
 	dir, err = filepath.EvalSymlinks(filepath.Clean(dir))
 	if err != nil {
-		return "", "", fmt.Errorf("нет такой папки")
+		return "", "", errors.New(tr("нет такой папки"))
 	}
 	if !withinDir(root, dir) {
-		return "", "", fmt.Errorf("наружу из домашнего каталога нельзя")
+		return "", "", errors.New(tr("наружу из домашнего каталога нельзя"))
 	}
 	return dir, root, nil
 }
@@ -583,8 +628,8 @@ func googleStatus(cfg *Config) googleState {
 		// поодиночке. Молчать об этом нельзя — канал просто не заработает, и
 		// человек будет искать причину в другом месте.
 		if missing := missingScopes(t.Scopes, googleScopes); len(missing) > 0 {
-			s.Why = "Доступ выдан не весь: не хватает доступа к " +
-				strings.Join(humanScopes(missing), " и ") + ". Подключи ещё раз."
+			s.Why = tr("Доступ выдан не весь: не хватает доступа к ") +
+				strings.Join(humanScopes(missing), tr(" и ")) + tr(". Подключи ещё раз.")
 			s.Severity = googleWarn
 		}
 		return s
@@ -593,7 +638,7 @@ func googleStatus(cfg *Config) googleState {
 	// Ключ организации проверяем первым: если доступ уже есть, человеку не о чем
 	// беспокоиться, даже когда кнопка рядом тоже заведена.
 	case credentialsFile(cfg.Calendar.CredentialsFile, cfg.GoogleDocs.CredentialsFile) != "":
-		s.Why = "Доступ уже выдан ключом организации — подключать ничего не нужно."
+		s.Why = tr("Доступ уже выдан ключом организации — подключать ничего не нужно.")
 	case !s.Ready:
 		// Доступа нет, и добыть его отсюда нельзя: кнопки не будет, пока её не
 		// заведут в `steno setup`. Каналы Google при этом не работают — это
@@ -603,8 +648,8 @@ func googleStatus(cfg *Config) googleState {
 		// формулировка отсылала «к тому, кто ставил steno», и первым, кто её
 		// не понял, оказался человек, который steno и поставил: на личной
 		// установке это один и тот же человек, и его отправляли к самому себе.
-		s.Why = "Чтобы появилась кнопка, выполни в терминале `steno setup` " +
-			"и выбери «По кнопке в панели» — это делается один раз."
+		s.Why = tr("Чтобы появилась кнопка, выполни в терминале `steno setup` ") +
+			tr("и выбери «По кнопке в панели» — это делается один раз.")
 		s.Severity = googleWarn
 	}
 	return s
@@ -613,9 +658,9 @@ func googleStatus(cfg *Config) googleState {
 func (p *Panel) apiGoogleConnect(w http.ResponseWriter, r *http.Request) {
 	oc, err := oauthConfig(p.cfg, p.googleRedirect(r))
 	if err != nil {
-		p.log.Printf("панель: подключение Google: %v", err)
+		p.log.Printf(tr("панель: подключение Google: %v"), err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "вход по кнопке ещё не настроен — это делает тот, кто ставил steno"})
+			"error": tr("вход по кнопке ещё не настроен — это делает тот, кто ставил steno")})
 		return
 	}
 	// AccessTypeOffline и ApprovalForce вместе: длинный доступ Google выдаёт
@@ -632,26 +677,26 @@ func (p *Panel) apiGoogleConnect(w http.ResponseWriter, r *http.Request) {
 func (p *Panel) apiGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if e := q.Get("error"); e != "" {
-		p.log.Printf("панель: Google отказал: %s", e)
-		p.googleBack(w, r, "Согласие не получено — steno остался без доступа")
+		p.log.Printf(tr("панель: Google отказал: %s"), e)
+		p.googleBack(w, r, tr("Согласие не получено — steno остался без доступа"))
 		return
 	}
 	// Метка одноразовая: без неё чужая страница могла бы подсунуть свой ответ и
 	// подключить к steno чужой ящик.
 	if !p.google.take(q.Get("state")) {
-		p.googleBack(w, r, "Ссылка устарела — нажми «Подключить Google» ещё раз")
+		p.googleBack(w, r, tr("Ссылка устарела — нажми «Подключить Google» ещё раз"))
 		return
 	}
 	oc, err := oauthConfig(p.cfg, p.googleRedirect(r))
 	if err != nil {
-		p.log.Printf("панель: подключение Google: %v", err)
-		p.googleBack(w, r, "Доступ к Google не настроен — выполни `steno setup` в терминале")
+		p.log.Printf(tr("панель: подключение Google: %v"), err)
+		p.googleBack(w, r, tr("Доступ к Google не настроен — выполни `steno setup` в терминале"))
 		return
 	}
 	tok, err := oc.Exchange(r.Context(), q.Get("code"))
 	if err != nil {
-		p.log.Printf("панель: обмен кода Google: %v", err)
-		p.googleBack(w, r, "Google не подтвердил согласие — попробуй ещё раз")
+		p.log.Printf(tr("панель: обмен кода Google: %v"), err)
+		p.googleBack(w, r, tr("Google не подтвердил согласие — попробуй ещё раз"))
 		return
 	}
 	// Длинный доступ Google присылает один раз — вместе с согласием. Пустое поле
@@ -661,26 +706,26 @@ func (p *Panel) apiGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if tok.RefreshToken == "" {
 		old, oerr := loadGoogleToken(p.cfg)
 		if oerr != nil || old.Token.RefreshToken == "" {
-			p.googleBack(w, r, "Google выдал доступ на час вместо постоянного. "+
-				"Убери steno из разрешённых приложений в своём аккаунте Google и подключи заново")
+			p.googleBack(w, r, tr("Google выдал доступ на час вместо постоянного. ")+
+				tr("Убери steno из разрешённых приложений в своём аккаунте Google и подключи заново"))
 			return
 		}
 		tok.RefreshToken = old.Token.RefreshToken
 	}
 	account, err := googleAccountEmail(r.Context(), oc, tok)
 	if err != nil {
-		p.log.Printf("панель: чей ящик подключили, узнать не вышло: %v", err)
-		p.googleBack(w, r, "Не смог узнать, к какому ящику подключился — попробуй ещё раз")
+		p.log.Printf(tr("панель: чей ящик подключили, узнать не вышло: %v"), err)
+		p.googleBack(w, r, tr("Не смог узнать, к какому ящику подключился — попробуй ещё раз"))
 		return
 	}
 	if err := saveGoogleToken(p.cfg, &googleToken{
 		Account: account, Scopes: googleScopes, Token: tok,
 	}); err != nil {
-		p.log.Printf("панель: не сохранился доступ в Google: %v", err)
-		p.googleBack(w, r, "Не смог сохранить доступ, смотри лог сервиса")
+		p.log.Printf(tr("панель: не сохранился доступ в Google: %v"), err)
+		p.googleBack(w, r, tr("Не смог сохранить доступ, смотри лог сервиса"))
 		return
 	}
-	p.log.Printf("панель: Google подключён как %s", account)
+	p.log.Printf(tr("панель: Google подключён как %s"), account)
 	p.googleBack(w, r, "")
 }
 
@@ -689,7 +734,7 @@ func (p *Panel) apiGoogleDisconnect(w http.ResponseWriter, r *http.Request) {
 		p.apiFail(w, err)
 		return
 	}
-	p.log.Printf("панель: доступ в Google отключён")
+	p.log.Print(tr("панель: доступ в Google отключён"))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -778,7 +823,7 @@ func (p *Panel) apiScheduleOverride(w http.ResponseWriter, r *http.Request) {
 		Decision string `json:"decision"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("плохой запрос")})
 		return
 	}
 	if err := p.st.SetScheduleOverride(r.PathValue("key"), body.Decision); err != nil {
@@ -797,15 +842,15 @@ func (p *Panel) apiInvite(w http.ResponseWriter, r *http.Request) {
 		Title string `json:"title"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("плохой запрос")})
 		return
 	}
 	if p.d == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "бота зовёт сервис, а он сейчас не запущен"})
+			"error": tr("бота зовёт сервис, а он сейчас не запущен")})
 		return
 	}
-	id, res, err := inviteToCall(r.Context(), p.d, body.URL, body.Title, "панель")
+	id, res, err := inviteToCall(r.Context(), p.d, body.URL, body.Title, tr("панель"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -813,18 +858,18 @@ func (p *Panel) apiInvite(w http.ResponseWriter, r *http.Request) {
 	switch res {
 	case Started:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "started", "meetingId": id, "message": "иду на созвон"})
+			"status": "started", "meetingId": id, "message": tr("иду на созвон")})
 	case Duplicate:
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "duplicate", "message": "на этот созвон уже иду"})
+			"status": "duplicate", "message": tr("на этот созвон уже иду")})
 	case NoCapacity:
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status": "no_capacity",
-			"message": "сейчас пишу максимум созвонов сразу — освободится слот, " +
-				"позови ещё раз"})
+			"message": tr("сейчас пишу максимум созвонов сразу — освободится слот, ") +
+				tr("позови ещё раз")})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "не смог записать созвон, смотри лог сервиса"})
+			"error": tr("не смог записать созвон, смотри лог сервиса")})
 	}
 }
 
@@ -835,14 +880,19 @@ func (p *Panel) apiSaveProject(w http.ResponseWriter, r *http.Request) {
 		About   string   `json:"about"`
 		Aliases []string `json:"aliases"`
 		Sources []Source `json:"sources"`
+		// Кто участвует и какими словами о проекте говорят вслух. Панель
+		// присылает их раздельно; свести имена людей в общий словарь — забота
+		// SaveProject, а не формы.
+		People     []string `json:"people"`
+		Vocabulary []string `json:"vocabulary"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "плохой запрос"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("плохой запрос")})
 		return
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "у проекта должно быть название"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("у проекта должно быть название")})
 		return
 	}
 	for _, s := range body.Sources {
@@ -850,12 +900,12 @@ func (p *Panel) apiSaveProject(w http.ResponseWriter, r *http.Request) {
 		case "text", "path", "repo", "url":
 		default:
 			writeJSON(w, http.StatusBadRequest,
-				map[string]string{"error": "непонятный источник: " + s.Kind})
+				map[string]string{"error": tr("непонятный источник: ") + s.Kind})
 			return
 		}
 		if strings.TrimSpace(s.Value) == "" {
 			writeJSON(w, http.StatusBadRequest,
-				map[string]string{"error": "у источника «" + s.Kind + "» пустое значение"})
+				map[string]string{"error": tr("у источника «") + s.Kind + tr("» пустое значение")})
 			return
 		}
 	}
@@ -868,6 +918,7 @@ func (p *Panel) apiSaveProject(w http.ResponseWriter, r *http.Request) {
 	if err := p.st.SaveProject(Project{
 		Name: name, About: strings.TrimSpace(body.About),
 		Aliases: body.Aliases, Sources: body.Sources,
+		People: body.People, Vocabulary: body.Vocabulary,
 	}); err != nil {
 		p.apiFail(w, err)
 		return
@@ -887,15 +938,15 @@ func (p *Panel) apiBuildContext(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	pr, err := p.st.Project(name)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "нет такого проекта"})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": tr("нет такого проекта")})
 		return
 	}
 	go p.buildContextInBackground(pr)
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "собираю"})
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": tr("собираю")})
 }
 
 func (p *Panel) apiCloseItem(w http.ResponseWriter, r *http.Request) {
-	if err := p.st.CloseItem(r.PathValue("id"), "done", "закрыто руками", ""); err != nil {
+	if err := p.st.CloseItem(r.PathValue("id"), "done", tr("закрыто руками"), ""); err != nil {
 		p.apiFail(w, err)
 		return
 	}
@@ -917,9 +968,13 @@ func (p *Panel) apiReopenItem(w http.ResponseWriter, r *http.Request) {
 func spaHandler(dist fs.FS) http.Handler {
 	files := http.FileServer(http.FS(dist))
 	index, indexErr := fs.ReadFile(dist, "index.html")
+	// Язык панели тот же, что у остального steno, и приезжает он атрибутом
+	// lang прямо в разметке. Не запросом к API: тогда первый кадр рисуется
+	// по-русски и переключается на глазах у человека.
+	index = bytes.Replace(index, []byte(`<html lang="en">`), []byte(`<html lang="`+uiLang+`">`), 1)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if indexErr != nil {
-			http.Error(w, "панель не собрана: запусти make panel", http.StatusInternalServerError)
+			http.Error(w, tr("панель не собрана: запусти make panel"), http.StatusInternalServerError)
 			return
 		}
 		p := strings.TrimPrefix(r.URL.Path, "/")

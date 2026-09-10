@@ -5,6 +5,7 @@ import { api, type ProjectRow } from "@/lib/api";
 import { pluralWord } from "@/lib/fmt";
 import { cn } from "@/lib/utils";
 import { Empty, Failed, Loading, PageHead } from "@/components/layout";
+import { t } from "@/lib/i18n";
 
 // Проекты — сеткой карточек, а не полосами во всю ширину.
 //
@@ -14,9 +15,9 @@ import { Empty, Failed, Loading, PageHead } from "@/components/layout";
 // и читаются одним взглядом, а восемь проектов видны сразу, без прокрутки.
 
 const STATS: { key: keyof ProjectRow; label: [string, string, string] }[] = [
-  { key: "tasks", label: ["задача", "задачи", "задач"] },
-  { key: "questions", label: ["вопрос", "вопроса", "вопросов"] },
-  { key: "decisions", label: ["решение", "решения", "решений"] },
+  { key: "tasks", label: [t("задача"), t("задачи"), t("задач")] },
+  { key: "questions", label: [t("вопрос"), t("вопроса"), t("вопросов")] },
+  { key: "decisions", label: [t("решение"), t("решения"), t("решений")] },
 ];
 
 // Корзина для того, что не отнеслось ни к одному проекту. Имя приходит с
@@ -27,7 +28,7 @@ const STATS: { key: keyof ProjectRow; label: [string, string, string] }[] = [
 // числами, — и читалась как проект, которого никто не заводил. Показываем её
 // последней и другой: пунктир вместо рамки и строка о том, что это вообще
 // такое. Задачи в ней настоящие, открывать её можно — но это не проект.
-const UNASSIGNED = "не определён";
+const UNASSIGNED = t("не определён");
 
 export function ProjectsPage() {
   const q = useQuery({ queryKey: ["projects"], queryFn: api.projects });
@@ -42,15 +43,15 @@ export function ProjectsPage() {
   return (
     <>
       <PageHead
-        title="Проекты"
-        sub="Что накопилось за все созвоны — не по встречам, а по делу"
+        title={t("Проекты")}
+        sub={t("Что накопилось за все созвоны — не по встречам, а по делу")}
       />
 
       {all.length === 0 ? (
         <Empty>
-          Пока пусто.
+          {t("Пока пусто.")}
           <br />
-          Проекты появятся, когда пройдёт первый созвон с follow-up.
+          {t("Проекты появятся, когда пройдёт первый созвон с follow-up.")}
         </Empty>
       ) : (
         <>
@@ -99,8 +100,7 @@ function ProjectCard({ p, bucket }: { p: ProjectRow; bucket?: boolean }) {
           </span>
           {bucket && (
             <span className="mt-1 block text-[13px] leading-relaxed text-[var(--muted-foreground)]/80">
-              Сюда падает то, что не отнеслось ни к одному проекту. Заведи проект — и оно
-              разойдётся по местам.
+              {t("Сюда падает то, что не отнеслось ни к одному проекту. Заведи проект — и оно\n              разойдётся по местам.")}
             </span>
           )}
         </span>
@@ -135,7 +135,7 @@ function ProjectCard({ p, bucket }: { p: ProjectRow; bucket?: boolean }) {
 
       {p.closed > 0 && (
         <div className="mt-auto border-t border-[var(--border)] pt-3 text-[13px] text-[var(--muted-foreground)]">
-          закрыто {p.closed}
+          {t("закрыто")} {p.closed}
         </div>
       )}
     </Link>

@@ -71,7 +71,7 @@ func (s *Store) Search(q string, limit int) ([]SearchHit, error) {
 		ORDER BY rank
 		LIMIT ?`, expr, limit)
 	if err != nil {
-		return nil, fmt.Errorf("поиск %q: %w", q, err)
+		return nil, fmt.Errorf(tr("поиск %q: %w"), q, err)
 	}
 	defer rows.Close()
 	var out []SearchHit

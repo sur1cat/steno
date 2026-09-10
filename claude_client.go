@@ -24,18 +24,18 @@ import (
 func claudeClient(cfg *Config) (anthropic.Client, string, error) {
 	key, err := secret(cfg.Claude.APIKeyEnv, "Claude")
 	if err == nil {
-		return anthropic.NewClient(option.WithAPIKey(key)), "ключ " + cfg.Claude.APIKeyEnv, nil
+		return anthropic.NewClient(option.WithAPIKey(key)), tr("ключ ") + cfg.Claude.APIKeyEnv, nil
 	}
 	// Переменной нет — отдаём разбор SDK: он посмотрит остальные источники,
 	// включая профиль ant. Если и там пусто, ошибка придёт от первого запроса,
 	// поэтому объясняем заранее, что искали.
 	if !anthropicCredentialsAvailable() {
 		return anthropic.Client{}, "", fmt.Errorf(
-			"нет доступа к Claude: переменная %s пуста, других учётных данных тоже не нашлось.\n"+
-				"  → ключ создаётся на console.anthropic.com → API keys\n"+
+			tr("нет доступа к Claude: переменная %s пуста, других учётных данных тоже не нашлось.\n")+
+				tr("  → ключ создаётся на console.anthropic.com → API keys\n")+
 				"  → export %s=sk-ant-…", cfg.Claude.APIKeyEnv, cfg.Claude.APIKeyEnv)
 	}
-	return anthropic.NewClient(), "профиль ant", nil
+	return anthropic.NewClient(), tr("профиль ant"), nil
 }
 
 // anthropicCredentialsAvailable проверяет, есть ли хоть что-то, чем SDK может

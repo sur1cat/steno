@@ -76,12 +76,19 @@ struct Followup {
     }
 }
 
+/// Ссылка, которой сервис помечает надиктованную заметку (noteURL в note.go).
+/// Строка меню должна отличать её от созвона: у заметки нет ни комнаты, ни
+/// второго участника, зато есть кнопка «остановить», которой у созвона нет.
+let stenoNoteURL = "steno://note"
+
 struct LiveCall: Identifiable {
     let id: String
     let title: String
     let meetUrl: String
     let started: Date
     let participants: [String]
+
+    var isNote: Bool { meetUrl == stenoNoteURL }
 }
 
 struct Meeting: Identifiable {
@@ -92,21 +99,31 @@ struct Meeting: Identifiable {
     let status: String
     let leftReason: String
     let hasFollowup: Bool
+    let meetUrl: String
+
+    var isNote: Bool { meetUrl == stenoNoteURL }
 
     /// Показывать ли строку тревожно. «Ушёл раньше времени» — тоже беда: запись
     /// есть, но кусок разговора в неё не попал.
+    ///
+    /// У заметки в этом поле стоит не беда, а происхождение: «надиктовано в
+    /// микрофон». Без оговорки каждая заметка загоралась бы тревожной, а
+    /// «ушёл раньше» звучало бы про человека, который просто договорил.
     var troubled: Bool {
-        status == "failed" || status == "publish_failed" || !leftReason.isEmpty
+        if status == "failed" || status == "publish_failed" { return true }
+        return !isNote && !leftReason.isEmpty
     }
 
     var statusWord: String {
         switch status {
         case "failed": return "не получилось"
         case "publish_failed": return "не отправилось"
-        case "recording": return "пишется"
+        case "recording": return isNote ? "наговаривается" : "пишется"
         case "transcribed": return "расшифровано"
         case "summarized": return "без отправки"
-        default: return leftReason.isEmpty ? "" : "ушёл раньше"
+        default:
+            if isNote { return "" }
+            return leftReason.isEmpty ? "" : "ушёл раньше"
         }
     }
 }
@@ -188,8 +205,10 @@ final class Db {
 
     // --- выборки -------------------------------------------------------------
 
+    /// serviceSince — с какого момента работает нынешний сервис. Записи, начатой
+    /// раньше него, быть не может: писал её процесс, которого больше нет.
     func snapshot(dayStart: Date, stuckAfter: TimeInterval,
-                  serviceRunning: Bool) throws -> DbSnapshot {
+                  serviceRunning: Bool, serviceSince: Date? = nil) throws -> DbSnapshot {
         var s = DbSnapshot()
 
         // Идущие записи — по тому же признаку, по которому их заводит сервис:
@@ -207,7 +226,15 @@ final class Db {
             // иначе бодро тикал бы над мёртвым сервисом. Вторая проверка — по
             // сроку: сервис живой, но запись идёт дольше, чем боту вообще
             // разрешено сидеть на созвоне.
-            if !serviceRunning || Date().timeIntervalSince(call.started) > stuckAfter {
+            //
+            // Третья — по времени старта. Сервис перезапустили, а строка от
+            // убитого осталась «пишется»: без этой проверки в строке меню
+            // тикает призрак — красный секундомер записи, которой нет. Такое
+            // видели живьём после `steno stop` посреди заметки. Начаться
+            // раньше своего сервиса запись не может.
+            let beforeService = serviceSince.map { call.started < $0.addingTimeInterval(-2) } ?? false
+            if !serviceRunning || beforeService
+                || Date().timeIntervalSince(call.started) > stuckAfter {
                 s.stuck.append(call)
             } else {
                 s.live.append(call)
@@ -219,7 +246,7 @@ final class Db {
         // какую строку есть смысл раскрывать.
         try each("""
             SELECT m.id, m.title, m.started_at, COALESCE(m.ended_at,0), m.status, m.left_reason,
-                   EXISTS(SELECT 1 FROM followups f WHERE f.meeting_id = m.id)
+                   EXISTS(SELECT 1 FROM followups f WHERE f.meeting_id = m.id), m.meet_url
               FROM meetings m
               WHERE NOT (m.status='recording' AND m.ended_at IS NULL)
               ORDER BY m.started_at DESC LIMIT 40
@@ -230,7 +257,8 @@ final class Db {
                 id: text(st, 0), title: text(st, 1), started: started,
                 seconds: ended > 0 ? Int(ended) - Int(started.timeIntervalSince1970) : 0,
                 status: text(st, 4), leftReason: text(st, 5),
-                hasFollowup: sqlite3_column_int64(st, 6) == 1))
+                hasFollowup: sqlite3_column_int64(st, 6) == 1,
+                meetUrl: text(st, 7)))
         }
 
         // Расход за день — тот же запрос, что TotalSpend в store.go.

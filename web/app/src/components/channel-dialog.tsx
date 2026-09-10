@@ -13,6 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { t } from "@/lib/i18n";
 
 // Форма канала рисуется по описанию полей, которое пришло с сервера, а не по
 // своему списку: иначе новое поле пришлось бы заводить в двух местах, и рано
@@ -56,12 +57,12 @@ export function ChannelDialog({
       qc.invalidateQueries({ queryKey: ["settings"] });
       toast.success(
         channel!.live
-          ? "Сохранено — подхватится на следующей рассылке"
-          : "Сохранено — применится при следующем запуске сервиса",
+          ? t("Сохранено — подхватится на следующей рассылке")
+          : t("Сохранено — применится при следующем запуске сервиса"),
       );
       onClose();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "не получилось"),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
   });
 
   if (!channel) return null;
@@ -86,13 +87,13 @@ export function ChannelDialog({
       >
         <div className="flex items-center justify-between rounded-xl bg-[var(--muted)]/60 px-4 py-3">
           <div className="text-sm">
-            Канал включён
+            {t("Канал включён")}
             <div className="text-xs text-[var(--muted-foreground)]">
               {channel.in && channel.out
-                ? "приносит созвоны и уносит follow-up"
+                ? t("приносит созвоны и уносит follow-up")
                 : channel.in
-                  ? "приносит созвоны"
-                  : "уносит follow-up"}
+                  ? t("приносит созвоны")
+                  : t("уносит follow-up")}
             </div>
           </div>
           <Switch checked={enabled} onCheckedChange={setEnabled} />
@@ -141,7 +142,7 @@ export function ChannelDialog({
                     value={splitList(values[f.key])}
                     onChange={(next) => set(f.key, next.join(", "))}
                     placeholder={f.placeholder}
-                    addLabel={`Добавить: ${f.label.toLowerCase()}`}
+                    addLabel={`${t("Добавить:")} ${f.label.toLowerCase()}`}
                   />
                 ) : (
                   <input
@@ -167,10 +168,10 @@ export function ChannelDialog({
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
-            Отмена
+            {t("Отмена")}
           </Button>
           <Button type="submit" variant="primary" isLoading={save.isPending}>
-            Сохранить
+            {t("Сохранить")}
           </Button>
         </DialogFooter>
       </form>

@@ -1,12 +1,23 @@
+import { isRU, locale, t } from "@/lib/i18n";
 // Как человек читает дату, длительность и число. Раньше это жило функциями
 // шаблонов в panel_view.go; теперь страницы рисует браузер, и правила переехали
 // сюда — но остались теми же, чтобы текст в панели не разъехался с текстом,
 // который сервис шлёт в Telegram и Slack.
 
-const MONTHS = [
-  "января", "февраля", "марта", "апреля", "мая", "июня",
-  "июля", "августа", "сентября", "октября", "ноября", "декабря",
-];
+// Месяц и день просим у браузера, а не верстаем массивом: по-русски это
+// «8 сентября», по-английски «September 8», и порядок слов тут — часть языка,
+// а не оформления.
+function monthDay(d: Date) {
+  return d.toLocaleDateString(locale, { day: "numeric", month: "long" });
+}
+
+function monthDayYear(d: Date) {
+  return d.toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
+}
+
+function weekdayOf(d: Date) {
+  return d.toLocaleDateString(locale, { weekday: "long" });
+}
 
 function sameDay(a: Date, b: Date) {
   return (
@@ -27,12 +38,12 @@ export function dateRu(unix: number | null | undefined): string {
   const d = new Date(unix * 1000);
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
-  if (sameDay(d, now)) return `сегодня, ${hhmm(d)}`;
-  if (sameDay(d, yesterday)) return `вчера, ${hhmm(d)}`;
+  if (sameDay(d, now)) return `${t("сегодня")}, ${hhmm(d)}`;
+  if (sameDay(d, yesterday)) return `${t("вчера")}, ${hhmm(d)}`;
   if (d.getFullYear() === now.getFullYear()) {
-    return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${hhmm(d)}`;
+    return `${monthDay(d)}, ${hhmm(d)}`;
   }
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${hhmm(d)}`;
+  return `${monthDayYear(d)}, ${hhmm(d)}`;
 }
 
 /** «сегодня» / «завтра» / «11 сентября, четверг» — заголовок дня в расписании. */
@@ -40,10 +51,10 @@ export function dayRu(unix: number): string {
   const d = new Date(unix * 1000);
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 3600 * 1000);
-  const weekday = d.toLocaleDateString("ru-RU", { weekday: "long" });
-  if (sameDay(d, now)) return `сегодня, ${weekday}`;
-  if (sameDay(d, tomorrow)) return `завтра, ${weekday}`;
-  return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${weekday}`;
+  const weekday = weekdayOf(d);
+  if (sameDay(d, now)) return `${t("сегодня")}, ${weekday}`;
+  if (sameDay(d, tomorrow)) return `${t("завтра")}, ${weekday}`;
+  return `${monthDay(d)}, ${weekday}`;
 }
 
 /** «сегодня, вторник» / «вчера» / «6 сентября, суббота» — заголовок дня в
@@ -54,13 +65,13 @@ export function dayHeadRu(unix: number): string {
   const d = new Date(unix * 1000);
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
-  const weekday = d.toLocaleDateString("ru-RU", { weekday: "long" });
-  if (sameDay(d, now)) return `сегодня, ${weekday}`;
-  if (sameDay(d, yesterday)) return `вчера, ${weekday}`;
+  const weekday = weekdayOf(d);
+  if (sameDay(d, now)) return `${t("сегодня")}, ${weekday}`;
+  if (sameDay(d, yesterday)) return `${t("вчера")}, ${weekday}`;
   if (d.getFullYear() === now.getFullYear()) {
-    return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${weekday}`;
+    return `${monthDay(d)}, ${weekday}`;
   }
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  return monthDayYear(d);
 }
 
 /** Разбивка по дням: ключ группы. Календарный день, не сутки от «сейчас». */
@@ -76,13 +87,16 @@ export function durRu(seconds: number | null | undefined): string {
   if (!seconds || seconds <= 0) return "";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
+  return h > 0 ? `${h}${t("ч")} ${m}${t("мин")}` : `${m}${t("мин")}`;
 }
 
 /** Слово, согласованное с числом: «задача», «задачи», «задач». Отдельно от
  *  plural — карточке проекта нужно крупное число само по себе, а подпись под
  *  ним отдельной строкой. */
 export function pluralWord(n: number, one: string, few: string, many: string): string {
+  // По-английски форм две, и «few» здесь работает обычным множественным:
+  // t("задачи") — это "tasks". Отдельной таблицы для этого не нужно.
+  if (!isRU) return n === 1 ? one : few;
   const m10 = n % 10;
   const m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return one;
@@ -104,10 +118,10 @@ export function clock(sec: number): string {
 }
 
 export function dueRu(due: string): string {
-  if (!due.trim()) return "срок не назван";
+  if (!due.trim()) return t("срок не назван");
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due.trim());
   if (!m) return due;
-  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}`;
+  return monthDay(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
 }
 
 /** Просрочка считается по местной полуночи: задача на 8-е краснеет девятого
@@ -122,14 +136,14 @@ export function overdue(due: string): boolean {
 
 export function statusRu(s: string): string {
   const map: Record<string, string> = {
-    uploading: "разбираю файл",
-    recording: "идёт запись",
-    recorded: "записан",
-    transcribed: "расшифрован",
-    summarized: "есть follow-up",
-    published: "разослан",
-    publish_failed: "не разослан",
-    failed: "сорвался",
+    uploading: t("разбираю файл"),
+    recording: t("идёт запись"),
+    recorded: t("записан"),
+    transcribed: t("расшифрован"),
+    summarized: t("есть follow-up"),
+    published: t("разослан"),
+    publish_failed: t("не разослан"),
+    failed: t("сорвался"),
   };
   return map[s] ?? s;
 }

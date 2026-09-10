@@ -23,7 +23,11 @@ enum Health: Equatable {
 struct BarState: Equatable {
     enum Kind: Equatable {
         case idle
-        case recording(elapsed: TimeInterval, count: Int)
+        /// note — наговаривается заметка, а не пишется созвон. Разница видна в
+        /// строке меню: у заметки микрофон вместо точки. Иначе человек, нажавший
+        /// «наговорить», видит ровно то же, что при чужом созвоне, и не понимает,
+        /// его ли это запись и можно ли уже говорить.
+        case recording(elapsed: TimeInterval, count: Int, note: Bool)
         /// Сервис не работает: записи сейчас не будет, и это стоит заметить.
         case serviceDown
         /// Данные не читаются вовсе.
@@ -48,6 +52,10 @@ final class Loader: ObservableObject {
     /// Задача, которую только что закрыли, — чтобы предложить вернуть.
     @Published private(set) var justClosed: (id: String, text: String)?
     @Published private(set) var writeError: String?
+    /// Заметка: пока запрос в пути, кнопка не должна нажиматься второй раз, а
+    /// отказ сервиса надо показать словами — они у него человеческие.
+    @Published private(set) var noteBusy = false
+    @Published private(set) var noteMessage: (ok: Bool, text: String)?
 
     private var timer: Timer?
     private var tick: Timer?
@@ -66,11 +74,16 @@ final class Loader: ObservableObject {
         case .ok:
             if let first = snapshot.live.first {
                 return BarState(kind: .recording(elapsed: now.timeIntervalSince(first.started),
-                                                 count: snapshot.live.count))
+                                                 count: snapshot.live.count,
+                                                 note: first.isNote))
             }
             return BarState(kind: service.isRunning ? .idle : .serviceDown)
         }
     }
+
+    /// Идущая заметка, если она идёт. Ищем по всем записям, а не по первой:
+    /// заметку можно наговаривать, пока бот сидит на созвоне.
+    var liveNote: LiveCall? { snapshot.live.first { $0.isNote } }
 
     /// Можно ли вести человека в панель браузера и звать бота. Панель поднимает
     /// сервис: без него по адресу никого нет.
@@ -136,6 +149,7 @@ final class Loader: ObservableObject {
         let path = s.dbPath
         let stuckAfter = max(s.maxRecording, 900)
         let running = service.isRunning
+        let since: Date? = { if case .running(_, let d) = service { return d }; return nil }()
         let dayStart = Calendar.current.startOfDay(for: Date())
         // Чтение уходит с главной очереди: база маленькая, но она на диске, а
         // подвисшее на секунду меню человек замечает сразу.
@@ -143,7 +157,7 @@ final class Loader: ObservableObject {
             do {
                 let db = try Db(path: path)
                 return .success(try db.snapshot(dayStart: dayStart, stuckAfter: stuckAfter,
-                                                serviceRunning: running))
+                                                serviceRunning: running, serviceSince: since))
             } catch {
                 return .failure(error)
             }
@@ -246,6 +260,48 @@ final class Loader: ObservableObject {
             return (false, error.localizedDescription)
         }
     }
+
+    // --- заметка ---------------------------------------------------------------
+
+    /// Начать и остановить — одна дорога: ffmpeg держит сервис, а не мы.
+    /// Приложение, убитое посреди заметки, не должно уносить запись с собой,
+    /// поэтому запускать микрофон подпроцессом здесь нельзя.
+    func startNote() async { await note("/api/note/start", "пишу — говори") }
+
+    func stopNote() async { await note("/api/note/stop", "расшифровываю и разбираю") }
+
+    /// Промах по кнопке. Отдельным действием, потому что иначе он стоит
+    /// расшифровки и запроса к Claude, а в списке навсегда остаётся строка.
+    func cancelNote() async { await note("/api/note/cancel", "заметка выброшена") }
+
+    private func note(_ path: String, _ done: String) async {
+        guard !noteBusy else { return }
+        guard let s = setup, let base = s.base, let password = s.password else {
+            noteMessage = (false, "некому писать: не собрался адрес панели или нет пароля")
+            return
+        }
+        guard service.isRunning else {
+            noteMessage = (false, "заметку пишет сервис, а он не запущен")
+            return
+        }
+        noteBusy = true
+        noteMessage = nil
+        defer { noteBusy = false }
+        let api = Api(base: base, password: password)
+        do {
+            let r = try await api.post(path, body: [:], as: NoteReply.self)
+            // Слова сервиса главнее наших: он один знает, чем именно не
+            // понравился микрофон.
+            noteMessage = (true, r.message ?? done)
+        } catch let e as ApiError {
+            noteMessage = (false, e.message)
+        } catch {
+            noteMessage = (false, error.localizedDescription)
+        }
+        await refresh()
+    }
+
+    func forgetNoteMessage() { noteMessage = nil }
 
     /// Поднять сервис в фоне — тем же способом, каким это делает человек в
     /// терминале: `steno serve -d`. Подпроцессом запускать нельзя, он умрёт

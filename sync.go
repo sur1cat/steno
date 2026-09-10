@@ -69,7 +69,7 @@ func syncRepo(ctx context.Context, dataDir, project string, src Source, st *Stor
 
 	head, err := gitOut(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
-		return out, fmt.Errorf("не git-репозиторий: %w", err)
+		return out, fmt.Errorf(tr("не git-репозиторий: %w"), err)
 	}
 	out.Head = head
 
@@ -124,14 +124,14 @@ type syncer struct {
 	log *log.Logger
 }
 
-func (s *syncer) Name() string { return "репозитории" }
+func (s *syncer) Name() string { return tr("репозитории") }
 
 func (s *syncer) Run(ctx context.Context) error {
 	every := s.cfg.Sync.Every.D()
 	if every <= 0 {
 		every = time.Hour
 	}
-	s.log.Printf("репозитории: сверяюсь раз в %s", every)
+	s.log.Printf(tr("репозитории: сверяюсь раз в %s"), every)
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -155,7 +155,7 @@ func (s *syncer) once(ctx context.Context) {
 			}
 			res, err := syncRepo(ctx, s.cfg.DataDir, p.Name, src, s.st)
 			if err != nil {
-				s.log.Printf("репозитории: %s / %s: %v", p.Name, src.Value, err)
+				s.log.Printf(tr("репозитории: %s / %s: %v"), p.Name, src.Value, err)
 				continue
 			}
 			if len(res.Commits) > 0 {
@@ -164,9 +164,9 @@ func (s *syncer) once(ctx context.Context) {
 			}
 		}
 		if changed {
-			s.log.Printf("репозитории: %s — новых коммитов %d", p.Name, len(commits))
+			s.log.Printf(tr("репозитории: %s — новых коммитов %d"), p.Name, len(commits))
 			if err := s.closeByCommits(ctx, p, commits); err != nil {
-				s.log.Printf("репозитории: сверка задач по %s: %v", p.Name, err)
+				s.log.Printf(tr("репозитории: сверка задач по %s: %v"), p.Name, err)
 			}
 		}
 		// Справку проверяем всегда, а не только при новых коммитах: код мог не
@@ -189,7 +189,7 @@ func (s *syncer) maybeRebuild(ctx context.Context, p Project, newCommits int) {
 	}
 	material, fp, err := gatherSources(ctx, s.cfg.DataDir, p)
 	if err != nil {
-		s.log.Printf("репозитории: материал для «%s»: %v", p.Name, err)
+		s.log.Printf(tr("репозитории: материал для «%s»: %v"), p.Name, err)
 		return
 	}
 	if err == nil && c.Fingerprint == fp {
@@ -197,16 +197,16 @@ func (s *syncer) maybeRebuild(ctx context.Context, p Project, newCommits int) {
 	}
 	primer, spend, err := buildPrimer(ctx, s.cfg, p, material)
 	if err != nil {
-		s.log.Printf("репозитории: справка «%s»: %v", p.Name, err)
+		s.log.Printf(tr("репозитории: справка «%s»: %v"), p.Name, err)
 		return
 	}
 	if err := s.st.SaveProjectContext(ProjectContext{
 		Project: p.Name, Primer: primer, Fingerprint: fp, Sources: sourcesSummary(p),
 	}); err != nil {
-		s.log.Printf("репозитории: %v", err)
+		s.log.Printf(tr("репозитории: %v"), err)
 		return
 	}
-	s.log.Printf("репозитории: справка «%s» обновлена, %s", p.Name, spend)
+	s.log.Printf(tr("репозитории: справка «%s» обновлена, %s"), p.Name, spend)
 }
 
 // --- суточная сводка --------------------------------------------------------
@@ -226,23 +226,23 @@ func (d syncDigest) empty() bool { return len(d.Closed) == 0 && len(d.Maybe) == 
 
 func (d syncDigest) text() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — за сутки %s\n", d.Project,
-		plural(d.Commits, "коммит", "коммита", "коммитов"))
+	fmt.Fprintf(&b, tr("%s — за сутки %s\n"), d.Project,
+		plural(d.Commits, tr("коммит"), tr("коммита"), tr("коммитов")))
 	if len(d.Closed) > 0 {
-		b.WriteString("\nЗакрыто коммитами:\n")
+		b.WriteString(tr("\nЗакрыто коммитами:\n"))
 		for _, l := range d.Closed {
 			fmt.Fprintf(&b, "  • %s\n", l)
 		}
 	}
 	if len(d.Maybe) > 0 {
-		b.WriteString("\nПохоже, сделано — но не закрывал:\n")
+		b.WriteString(tr("\nПохоже, сделано — но не закрывал:\n"))
 		for _, l := range d.Maybe {
 			fmt.Fprintf(&b, "  • %s\n", l)
 		}
 	}
 	if d.StillOpen > 0 {
-		fmt.Fprintf(&b, "\nЕщё открыто: %s\n",
-			plural(d.StillOpen, "задача", "задачи", "задач"))
+		fmt.Fprintf(&b, tr("\nЕщё открыто: %s\n"),
+			plural(d.StillOpen, tr("задача"), tr("задачи"), tr("задач")))
 	}
 	return b.String()
 }
@@ -273,12 +273,12 @@ func (s *syncer) notify(ctx context.Context, d syncDigest) {
 	cfg := activeChannels(s.st, s.cfg)
 	if cfg.Telegram.Enabled && cfg.Telegram.ChatID != "" {
 		if err := sendTelegramText(ctx, cfg, cfg.Telegram.ChatID, body); err != nil {
-			s.log.Printf("репозитории: telegram: %v", err)
+			s.log.Printf(tr("репозитории: telegram: %v"), err)
 		}
 	}
 	if cfg.Slack.Enabled && cfg.Slack.Channel != "" {
 		if err := sendSlackText(ctx, cfg, cfg.Slack.Channel, body); err != nil {
-			s.log.Printf("репозитории: slack: %v", err)
+			s.log.Printf(tr("репозитории: slack: %v"), err)
 		}
 	}
 }

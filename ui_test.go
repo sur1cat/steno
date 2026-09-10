@@ -92,6 +92,15 @@ func press(m *uiModel, keys ...string) tea.Cmd {
 	return last
 }
 
+// tabTo доводит курсор формы до нужного поля так же, как человек, — tab-ами.
+// Считать нажатия числом нельзя: полей в форме со временем прибавляется, и
+// тест, помнящий их количество, ломается не там, где ошибка.
+func tabTo(m *uiModel, field int) {
+	for i := 0; i <= m.form.fieldCount() && m.form.field != field; i++ {
+		press(m, "tab")
+	}
+}
+
 // typeIn набирает текст так же, как человек: по одной руне за нажатие.
 func typeIn(m *uiModel, s string) {
 	for _, r := range s {
@@ -309,7 +318,7 @@ func TestUITabsSwitch(t *testing.T) {
 		if m.tab != i {
 			t.Fatalf("цифра %d открыла вкладку %v", i+1, m.tab)
 		}
-		wantContains(t, screen(m), uiTabTitles[i], "название вкладки в шапке")
+		wantContains(t, screen(m), uiTabTitles()[i], "название вкладки в шапке")
 	}
 }
 
@@ -818,7 +827,7 @@ func TestUIProjectEditAndSourceKinds(t *testing.T) {
 	typeIn(m, "деньги и подписки")
 
 	// Меняем вид источника и добавляем второй.
-	press(m, "tab", "tab") // псевдонимы → первый источник
+	tabTo(m, uiFormFixed) // мимо словаря — на первый источник
 	if m.form.currentSource() != 0 {
 		t.Fatalf("курсор на поле %d, ждали первый источник", m.form.field)
 	}
@@ -853,7 +862,7 @@ func TestUIProjectSourceRemove(t *testing.T) {
 	press(m, "3")
 	m.selectProject("Платежи")
 	press(m, "e")
-	press(m, "tab", "tab", "tab") // на первый источник
+	tabTo(m, uiFormFixed) // на первый источник
 	press(m, "ctrl+k")
 	if len(m.form.sources) != 0 {
 		t.Fatalf("ctrl+k не убрала источник: %+v", m.form.sources)
@@ -918,6 +927,129 @@ func TestUIProjectRenameOntoExistingRefuses(t *testing.T) {
 	wantContains(t, screen(m), "уже есть", "объяснение отказа")
 	if _, err := m.st.Project("Платежи"); err != nil {
 		t.Fatal("исходный проект пропал при неудачном переименовании")
+	}
+}
+
+// uiSeedWithForeignItem — тот же набор плюс пункт, родившийся на прошлом
+// созвоне и закрытый на этом. Именно он показывает разницу между «уйдёт
+// вместе с созвоном» и «вернётся в работу»: в uiSeed все пункты родились на
+// одном созвоне, и на таком наборе удаление, сносящее подряд всё, выглядело бы
+// правильным.
+func uiSeedWithForeignItem(t *testing.T) func(*Store) {
+	t.Helper()
+	base := uiSeed(t)
+	return func(st *Store) {
+		base(st)
+		must := func(err error) {
+			t.Helper()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		earlier := time.Date(2026, 9, 1, 10, 0, 0, 0, time.Local)
+		must(st.CreateMeeting(&Meeting{ID: "прошлый", Title: "Прошлая планёрка",
+			MeetURL: "https://meet.example/old", StartedAt: earlier, Status: "published"}))
+		must(st.AddItem(ProjectItem{ID: "Q-чужой", Project: "Платежи", Kind: KindQuestion,
+			Text: "кто платит за прод", Owner: "Участник А", OpenedIn: "прошлый"}))
+		must(st.CloseItem("Q-чужой", "done", "решили на планёрке", uiTestMeeting))
+		// Решение — третий вид пункта. Нужен, чтобы цена удаления вышла
+		// длинной: на короткой фразе не видно, что рамка режет ей середину.
+		must(st.AddItem(ProjectItem{ID: "D-0005", Project: "Платежи", Kind: KindDecision,
+			Text: "релиз в пятницу", OpenedIn: uiTestMeeting}))
+	}
+}
+
+// Удаление созвона — самое разрушительное действие в интерфейсе, и цена его не
+// видна из названия строки: вместе с созвоном уходят задачи и решения проектов.
+func TestUIMeetingDelete(t *testing.T) {
+	m := uiTestModel(t, uiSeedWithForeignItem(t))
+	press(m, "1")
+	row, ok := m.selectedMeeting()
+	if !ok || row.ID != uiTestMeeting {
+		t.Fatalf("курсор не на подопытном созвоне: %+v", row)
+	}
+
+	press(m, "D")
+	if m.screen() != scrConfirm {
+		t.Fatalf("D не спросила подтверждения: %v", m.screen())
+	}
+	s := screen(m)
+	wantContains(t, s, "Планёрка по релизу 2.4", "в вопросе назван созвон")
+	// Цена — это то, чего в названии строки нет вовсе. Спрашиваем сам вопрос, а
+	// не экран: перенос по словам вправе разорвать «follow-up» по дефису, и
+	// поиск подстроки в отрисованном экране этого не переживёт.
+	for _, want := range []string{"расшифровка", "follow-up", "3 задачи", "1 решение",
+		"1 вопрос", "1 пункт откроется заново"} {
+		if !strings.Contains(m.confirm.text, want) {
+			t.Errorf("в цене удаления нет %q:\n  %s", want, m.confirm.text)
+		}
+	}
+	// А на экране — что её не обрезали. Рамка режет строку шире себя
+	// многоточием, и режет ровно середину: там, где задачи и решения.
+	wantContains(t, s, "1 пункт откроется заново", "хвост цены на экране")
+	wantNotContains(t, s, "…", "цену обрезали многоточием")
+
+	// Любая клавиша, кроме «y», — отмена.
+	press(m, "n")
+	if _, err := m.st.Meeting(uiTestMeeting); err != nil {
+		t.Fatal("созвон удалился без подтверждения")
+	}
+
+	press(m, "D", "y")
+	if _, err := m.st.Meeting(uiTestMeeting); err == nil {
+		t.Fatal("созвон не удалился")
+	}
+	if m.screen() != scrList {
+		t.Fatalf("после удаления остались не в списке: %v", m.screen())
+	}
+	for _, r := range m.meetings {
+		if r.ID == uiTestMeeting {
+			t.Fatal("удалённый созвон остался в списке на экране")
+		}
+	}
+	// Пункт, родившийся на этом созвоне, ушёл вместе с ним.
+	if got := itemStatus(t, m.st, "T-0001"); got != "нет такого" {
+		t.Errorf("задача созвона пережила его: статус %q", got)
+	}
+	// Чужой пункт, закрытый на нём, вернулся в работу.
+	if got := itemStatus(t, m.st, "Q-чужой"); got != "open" {
+		t.Errorf("чужой пункт остался в статусе %q — основание закрытия стёрто", got)
+	}
+	wantContains(t, screen(m), "созвон удалён", "сообщение об удалении")
+	wantContains(t, screen(m), "вернулось в работу: 1 пункт", "сказали про открытый заново пункт")
+}
+
+// С карточки и с расшифровки удалять тоже надо — и уходить с них: страница
+// удалённого созвона осталась бы на экране пустой.
+func TestUIMeetingDeleteLeavesTheCard(t *testing.T) {
+	for _, path := range []struct {
+		name string
+		keys []string
+	}{
+		{"карточка", []string{"1", "enter"}},
+		{"расшифровка", []string{"1", "enter", "t"}},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			m := uiTestModel(t, uiSeedWithForeignItem(t))
+			press(m, path.keys...)
+			if m.screen() == scrList {
+				t.Fatalf("не открыли %s: %v", path.name, m.screen())
+			}
+			press(m, "D")
+			if m.screen() != scrConfirm {
+				t.Fatalf("D на %s не спросила подтверждения: %v", path.name, m.screen())
+			}
+			press(m, "y")
+			if m.screen() != scrList {
+				t.Fatalf("после удаления остались на экране %v", m.screen())
+			}
+			if _, err := m.st.Meeting(uiTestMeeting); err == nil {
+				t.Fatal("созвон не удалился")
+			}
+			if strings.TrimSpace(screen(m)) == "" {
+				t.Fatal("пустой экран после удаления")
+			}
+		})
 	}
 }
 
@@ -1059,7 +1191,7 @@ func TestUIChannelsList(t *testing.T) {
 	s := screen(m)
 	// Список берётся из channelDefs, а не из своего перечня: новый канал
 	// появится здесь сам.
-	for _, d := range channelDefs {
+	for _, d := range channelDefs() {
 		wantContains(t, s, d.name, "канал в списке")
 	}
 	wantContains(t, s, "выключен", "видно состояние канала")

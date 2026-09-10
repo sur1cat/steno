@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -129,7 +130,7 @@ func (s *Store) AddItem(it ProjectItem) error {
 
 func (s *Store) CloseItem(id, status, note, meetingID string) error {
 	if status != "done" && status != "dropped" {
-		return fmt.Errorf("непонятный статус %q", status)
+		return fmt.Errorf(tr("непонятный статус %q"), status)
 	}
 	_, err := s.db.Exec(`UPDATE project_items SET status=?, note=?, closed_in=?, updated_at=?
 		WHERE id=? AND status='open'`, status, note, meetingID, time.Now().Unix(), id)
@@ -275,20 +276,20 @@ func renderOpenItems(items []ProjectItem) string {
 	sort.Strings(order)
 
 	var b strings.Builder
-	b.WriteString("Что уже висит открытым по проектам:\n\n")
-	names := map[ItemKind]string{KindTask: "задача", KindDecision: "решение", KindQuestion: "вопрос"}
+	b.WriteString(tr("Что уже висит открытым по проектам:\n\n"))
+	names := map[ItemKind]string{KindTask: tr("задача"), KindDecision: tr("решение"), KindQuestion: tr("вопрос")}
 	for _, p := range order {
 		fmt.Fprintf(&b, "%s:\n", p)
 		for _, it := range byProject[p] {
 			fmt.Fprintf(&b, "  [%s] %s: %s", it.ID, names[it.Kind], it.Text)
 			if it.Owner != "" {
-				fmt.Fprintf(&b, " (на ком: %s", it.Owner)
+				fmt.Fprintf(&b, tr(" (на ком: %s"), it.Owner)
 				if it.Due != "" {
-					fmt.Fprintf(&b, ", срок %s", it.Due)
+					fmt.Fprintf(&b, tr(", срок %s"), it.Due)
 				}
 				b.WriteString(")")
 			}
-			fmt.Fprintf(&b, " — с %s\n", it.OpenedAt.Format("2006-01-02"))
+			fmt.Fprintf(&b, tr(" — с %s\n"), it.OpenedAt.Format("2006-01-02"))
 		}
 		b.WriteString("\n")
 	}
@@ -304,53 +305,127 @@ func renderOpenItems(items []ProjectItem) string {
 // Из конфига проекты переезжают один раз, при первом запуске: у тех, кто уже
 // описал их файлом, ничего не пропадёт.
 
+const projectColumns = `name, aliases, about, sources, people, vocabulary`
+
 func (s *Store) Projects() ([]Project, error) {
-	rows, err := s.db.Query(`SELECT name, aliases, about, sources FROM projects ORDER BY name`)
+	rows, err := s.db.Query(`SELECT ` + projectColumns + ` FROM projects ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Project
 	for rows.Next() {
-		var p Project
-		var aliases, sources string
-		if err := rows.Scan(&p.Name, &aliases, &p.About, &sources); err != nil {
+		p, err := scanProject(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(aliases), &p.Aliases)
-		_ = json.Unmarshal([]byte(sources), &p.Sources)
 		out = append(out, p)
 	}
 	return out, rows.Err()
 }
 
 func (s *Store) Project(name string) (Project, error) {
+	row := s.db.QueryRow(`SELECT `+projectColumns+` FROM projects WHERE name=?`, name)
+	return scanProject(row.Scan)
+}
+
+// scanProject — одна строка таблицы проектов. Вынесено, потому что колонок
+// стало шесть, а мест, которые их читают, два: разъехавшись, они дали бы
+// проект, у которого словарь есть в списке и нет в карточке.
+func scanProject(scan func(...any) error) (Project, error) {
 	var p Project
-	var aliases, sources string
-	err := s.db.QueryRow(`SELECT name, aliases, about, sources FROM projects WHERE name=?`, name).
-		Scan(&p.Name, &aliases, &p.About, &sources)
-	if err != nil {
+	var aliases, sources, people, vocabulary string
+	if err := scan(&p.Name, &aliases, &p.About, &sources, &people, &vocabulary); err != nil {
 		return p, err
 	}
 	_ = json.Unmarshal([]byte(aliases), &p.Aliases)
 	_ = json.Unmarshal([]byte(sources), &p.Sources)
+	_ = json.Unmarshal([]byte(people), &p.People)
+	_ = json.Unmarshal([]byte(vocabulary), &p.Vocabulary)
 	return p, nil
 }
 
 func (s *Store) SaveProject(p Project) error {
 	if strings.TrimSpace(p.Name) == "" {
-		return fmt.Errorf("у проекта должно быть название")
+		return errors.New(tr("у проекта должно быть название"))
 	}
 	aliases, _ := json.Marshal(p.Aliases)
 	sources, _ := json.Marshal(p.Sources)
+	people, _ := json.Marshal(trimWords(p.People))
+	// Единственное место, где держится обязательство «имена людей лежат и в
+	// общем словаре». Форм правки три — терминал, ui, панель, — и если следить
+	// за этим в каждой, то в одной из них рано или поздно забудут, а пропажа
+	// имени из словаря whisper тихая: видно её через месяц, в задаче, уехавшей
+	// не тому человеку.
+	vocabulary, _ := json.Marshal(mergeWords(p.Vocabulary, p.People))
 	now := time.Now().Unix()
-	_, err := s.db.Exec(`INSERT INTO projects (name,aliases,about,sources,created_at,updated_at)
-		VALUES (?,?,?,?,?,?)
+	_, err := s.db.Exec(`INSERT INTO projects (name,aliases,about,sources,people,vocabulary,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?)
 		ON CONFLICT(name) DO UPDATE SET aliases=excluded.aliases, about=excluded.about,
-		sources=excluded.sources, updated_at=excluded.updated_at`,
-		p.Name, string(aliases), p.About, string(sources), now, now)
+		sources=excluded.sources, people=excluded.people, vocabulary=excluded.vocabulary,
+		updated_at=excluded.updated_at`,
+		p.Name, string(aliases), p.About, string(sources),
+		string(people), string(vocabulary), now, now)
 	return err
 }
+
+// --- словарь проекта --------------------------------------------------------
+//
+// Два списка вместо одного: люди и всё остальное. Деление ровно одно, и оно не
+// про порядок полей в форме, а про то, что модель делает со словом. Имя
+// человека может стать владельцем задачи, название сервиса — нет, и ошибка в
+// любую сторону стоит одинаково: задачи, которую никто не делает.
+//
+// Дальше не делим. «Сервисы», «сокращения», «клиенты» — это ещё три поля, из
+// которых заполняют ноль, а модели разница между ними ничего не даёт: ей
+// достаточно знать, что это слово команды, а не оговорка расшифровки.
+
+// trimWords чистит список, набранный руками: пустые строки и повторы. Регистр
+// не различаем — «Сапар» и «сапар» одно слово, а два одинаковых чипа в панели
+// выглядят как недосмотр интерфейса.
+func trimWords(words []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, w := range words {
+		w = strings.TrimSpace(w)
+		if w == "" {
+			continue
+		}
+		k := strings.ToLower(w)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, w)
+	}
+	return out
+}
+
+// mergeWords дописывает к списку то, чего в нём ещё нет, сохраняя порядок.
+func mergeWords(base, extra []string) []string {
+	return trimWords(append(append([]string{}, base...), extra...))
+}
+
+// withoutWords — список без указанных слов. Нужен формам: в поле «другие
+// слова» человек должен видеть то, что он туда написал, а не свой же список
+// людей, приклеенный к нему при сохранении.
+func withoutWords(base, drop []string) []string {
+	skip := map[string]bool{}
+	for _, w := range drop {
+		skip[strings.ToLower(strings.TrimSpace(w))] = true
+	}
+	var out []string
+	for _, w := range trimWords(base) {
+		if !skip[strings.ToLower(w)] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// otherWords — словарь проекта без имён людей: то, что показывают в формах и
+// что уходит в промпт отдельной строкой «сервисы и сокращения».
+func (p Project) otherWords() []string { return withoutWords(p.Vocabulary, p.People) }
 
 // DeleteProject убирает описание, но не трогает накопленное состояние: задачи
 // и решения — это история, и терять её из-за переименования проекта нельзя.

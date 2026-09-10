@@ -21,19 +21,19 @@ func (p *Panel) buildContextInBackground(pr Project) {
 	defer cancel()
 	material, fp, err := gatherSources(ctx, p.cfg.DataDir, pr)
 	if err != nil {
-		p.log.Printf("справка «%s»: %v", pr.Name, err)
+		p.log.Printf(tr("справка «%s»: %v"), pr.Name, err)
 		return
 	}
 	primer, spend, err := buildPrimer(ctx, p.cfg, pr, material)
 	if err != nil {
-		p.log.Printf("справка «%s»: %v", pr.Name, err)
+		p.log.Printf(tr("справка «%s»: %v"), pr.Name, err)
 		return
 	}
 	if err := p.st.SaveProjectContext(ProjectContext{
 		Project: pr.Name, Primer: primer, Fingerprint: fp, Sources: sourcesSummary(pr),
 	}); err != nil {
-		p.log.Printf("справка «%s»: %v", pr.Name, err)
+		p.log.Printf(tr("справка «%s»: %v"), pr.Name, err)
 		return
 	}
-	p.log.Printf("справка «%s» пересобрана, %s", pr.Name, spend)
+	p.log.Printf(tr("справка «%s» пересобрана, %s"), pr.Name, spend)
 }

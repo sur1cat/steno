@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, Failed, GroupHead, Loading, PageHead } from "@/components/layout";
+import { t } from "@/lib/i18n";
 
 // Список созвонов разбит по дням.
 //
@@ -68,16 +69,15 @@ export function MeetingsPage() {
   return (
     <>
       <PageHead
-        title="Созвоны"
-        sub={`${plural(total, "созвон", "созвона", "созвонов")} в архиве`}
+        title={t("Созвоны")}
+        sub={`${plural(total, t("созвон"), t("созвона"), t("созвонов"))} ${t("в архиве")}`}
       />
 
       {meetings.length === 0 ? (
         <Empty>
-          Пока ни одного созвона.
+          {t("Пока ни одного созвона.")}
           <br />
-          Бот появится здесь, как только сходит на первый. А если созвон уже прошёл без него —
-          запись можно загрузить файлом.
+          {t("Бот появится здесь, как только сходит на первый. А если созвон уже прошёл без него —\n          запись можно загрузить файлом.")}
         </Empty>
       ) : (
         <div className="space-y-7">
@@ -85,7 +85,7 @@ export function MeetingsPage() {
             <section key={d.key}>
               <GroupHead
                 title={dayHeadRu(d.at)}
-                count={plural(d.items.length, "созвон", "созвона", "созвонов")}
+                count={plural(d.items.length, t("созвон"), t("созвона"), t("созвонов"))}
               />
               <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
                 {d.items.map((m) => (
@@ -100,10 +100,10 @@ export function MeetingsPage() {
       {(page > 1 || hasNext) && (
         <div className="mt-6 flex items-center justify-between">
           <Button variant="ghost" disabled={page <= 1} onClick={() => go(page - 1)}>
-            ← новее
+            {t("← новее")}
           </Button>
           <Button variant="ghost" disabled={!hasNext} onClick={() => go(page + 1)}>
-            старее →
+            {t("старее →")}
           </Button>
         </div>
       )}
@@ -127,7 +127,7 @@ function MeetingLine({ m }: { m: MeetingRow }) {
             они читались отдельно от того, к чему относятся, а между ними и
             текстом оставалось полэкрана пустоты. */}
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="truncate">{m.title || "Без названия"}</span>
+          <span className="truncate">{m.title || t("Без названия")}</span>
           {statusAlarm(m.status) && (
             <Badge
               variant={
@@ -140,13 +140,13 @@ function MeetingLine({ m }: { m: MeetingRow }) {
           )}
           {m.tasks > 0 && (
             <span className="shrink-0 text-xs tabular-nums text-[var(--muted-foreground)]">
-              {plural(m.tasks, "задача", "задачи", "задач")}
+              {plural(m.tasks, t("задача"), t("задачи"), t("задач"))}
             </span>
           )}
         </span>
         <span className="mt-0.5 block truncate text-sm text-[var(--muted-foreground)]">
           {[durRu(m.durationSec), people].filter(Boolean).join(" · ") ||
-            "участники не записаны"}
+            t("участники не записаны")}
         </span>
       </span>
     </Link>

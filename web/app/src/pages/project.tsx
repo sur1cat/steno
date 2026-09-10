@@ -6,6 +6,7 @@ import { dateRu, dueRu, overdue } from "@/lib/fmt";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Empty, Failed, GroupHead, Loading, PageHead } from "@/components/layout";
+import { t } from "@/lib/i18n";
 
 export function ProjectPage() {
   const { name = "" } = useParams();
@@ -22,12 +23,12 @@ export function ProjectPage() {
   const close = useMutation({
     mutationFn: (id: string) => api.closeItem(id),
     onSuccess: refresh,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "не получилось"),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
   });
   const reopen = useMutation({
     mutationFn: (id: string) => api.reopenItem(id),
     onSuccess: refresh,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "не получилось"),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
   });
 
   if (q.isPending) return <Loading />;
@@ -46,13 +47,13 @@ export function ProjectPage() {
     <>
       <PageHead
         title={q.data.name}
-        sub="Живое состояние: то, что сейчас открыто, и то, что уже закрылось"
+        sub={t("Живое состояние: то, что сейчас открыто, и то, что уже закрылось")}
       />
 
-      {items.length === 0 && <Empty>По проекту пока ничего не накопилось.</Empty>}
+      {items.length === 0 && <Empty>{t("По проекту пока ничего не накопилось.")}</Empty>}
 
       {tasks.length > 0 && (
-        <Section title="Задачи" count={tasks.length}>
+        <Section title={t("Задачи")} count={tasks.length}>
           {tasks.map((it) => (
             <Row key={it.id}>
               <div>
@@ -75,7 +76,7 @@ export function ProjectPage() {
                   className="h-auto p-0 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   onClick={() => close.mutate(it.id)}
                 >
-                  закрыть
+                  {t("закрыть")}
                 </Button>
               </Meta>
               {it.quote && <Quote>{it.quote}</Quote>}
@@ -85,13 +86,13 @@ export function ProjectPage() {
       )}
 
       {questions.length > 0 && (
-        <Section title="Открытые вопросы" count={questions.length}>
+        <Section title={t("Открытые вопросы")} count={questions.length}>
           {questions.map((it) => (
             <Row key={it.id}>
               <div>
                 {it.text}
                 {it.owner && (
-                  <span className="text-[var(--muted-foreground)]"> · ждём: {it.owner}</span>
+                  <span className="text-[var(--muted-foreground)]"> {t("· ждём:")} {it.owner}</span>
                 )}
               </div>
               <Meta item={it}>
@@ -101,7 +102,7 @@ export function ProjectPage() {
                   className="h-auto p-0 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   onClick={() => close.mutate(it.id)}
                 >
-                  закрыть
+                  {t("закрыть")}
                 </Button>
               </Meta>
             </Row>
@@ -110,7 +111,7 @@ export function ProjectPage() {
       )}
 
       {decisions.length > 0 && (
-        <Section title="Решения" count={decisions.length}>
+        <Section title={t("Решения")} count={decisions.length}>
           {decisions.map((it) => (
             <Row key={it.id}>
               <div>
@@ -124,14 +125,14 @@ export function ProjectPage() {
       )}
 
       {closed.length > 0 && (
-        <Section title="Закрыто" count={closed.length}>
+        <Section title={t("Закрыто")} count={closed.length}>
           {closed.map((it) => (
             <Row key={it.id}>
               <div className="opacity-65">
                 {it.text}
                 <span className="text-[var(--muted-foreground)]">
                   {" "}
-                  · {it.status === "done" ? "сделано" : "снято"}
+                  · {it.status === "done" ? t("сделано") : t("снято")}
                 </span>
               </div>
               {it.note && <div className="text-[13px] text-[var(--muted-foreground)]">{it.note}</div>}
@@ -139,7 +140,7 @@ export function ProjectPage() {
                 <span>{dateRu(it.updatedAt)}</span>
                 {it.closedIn && (
                   <Link to={`/m/${it.closedIn}`} className="text-primary underline-offset-4 hover:underline">
-                    созвон
+                    {t("созвон")}
                   </Link>
                 )}
                 <Button
@@ -148,7 +149,7 @@ export function ProjectPage() {
                   className="h-auto p-0 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   onClick={() => reopen.mutate(it.id)}
                 >
-                  вернуть в работу
+                  {t("вернуть в работу")}
                 </Button>
               </div>
             </Row>
@@ -181,7 +182,7 @@ function Row({ children }: { children: React.ReactNode }) {
 function Meta({ item, children }: { item: ProjectItem; children?: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-[var(--muted-foreground)]">
-      <span>с {dateRu(item.openedAt)}</span>
+      <span>{t("с")} {dateRu(item.openedAt)}</span>
       {item.openedIn && (
         <>
           <span aria-hidden="true">·</span>
@@ -189,7 +190,7 @@ function Meta({ item, children }: { item: ProjectItem; children?: React.ReactNod
             to={`/m/${item.openedIn}`}
             className="text-primary underline-offset-4 hover:underline"
           >
-            созвон
+            {t("созвон")}
           </Link>
         </>
       )}

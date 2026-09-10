@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
+	"errors"
 	"log"
 	"net/mail"
 	"strings"
@@ -32,17 +32,17 @@ type gmailSource struct {
 	svc *gmail.Service
 }
 
-func (s *gmailSource) Name() string { return "почта" }
+func (s *gmailSource) Name() string { return tr("почта") }
 
 func (s *gmailSource) Run(ctx context.Context) error {
 	if s.cfg.Gmail.Account == "" {
-		return fmt.Errorf("не указан gmail.account — почта аккаунта бота")
+		return errors.New(tr("не указан gmail.account — почта аккаунта бота"))
 	}
 	every := s.cfg.Gmail.PollEvery.D()
 	if every <= 0 {
 		every = 45 * time.Second
 	}
-	s.log.Printf("почта: слежу за приглашениями на %s, опрос раз в %s",
+	s.log.Printf(tr("почта: слежу за приглашениями на %s, опрос раз в %s"),
 		s.cfg.Gmail.Account, every)
 
 	t := time.NewTicker(every)
@@ -81,7 +81,7 @@ func (s *gmailSource) service(ctx context.Context) (*gmail.Service, error) {
 func (s *gmailSource) poll(ctx context.Context) {
 	srv, err := s.service(ctx)
 	if err != nil {
-		s.log.Printf("почта: %v", err)
+		s.log.Printf(tr("почта: %v"), err)
 		return
 	}
 	// Час назад — потолок: письмо о звонке, который начался давно, уже не
@@ -89,7 +89,7 @@ func (s *gmailSource) poll(ctx context.Context) {
 	list, err := srv.Users.Messages.List("me").
 		Q("newer_than:1h").MaxResults(25).Context(ctx).Do()
 	if err != nil {
-		s.log.Printf("почта: %v", err)
+		s.log.Printf(tr("почта: %v"), err)
 		return
 	}
 	for _, ref := range list.Messages {
@@ -99,7 +99,7 @@ func (s *gmailSource) poll(ctx context.Context) {
 		}
 		msg, err := srv.Users.Messages.Get("me", ref.Id).Format("full").Context(ctx).Do()
 		if err != nil {
-			s.log.Printf("почта: письмо %s: %v", ref.Id, err)
+			s.log.Printf(tr("почта: письмо %s: %v"), ref.Id, err)
 			continue
 		}
 		s.consider(ctx, key, msg)
@@ -120,14 +120,14 @@ func (s *gmailSource) consider(ctx context.Context, key string, msg *gmail.Messa
 		// тишину: снаружи это выглядит как «бот проигнорировал приглашение»,
 		// и разбираются с этим уже на созвоне, куда он не пришёл.
 		if hint := linkHint(body); hint != "" {
-			s.log.Printf("почта: «%s» — %s", orDash(subject), hint)
+			s.log.Printf(tr("почта: «%s» — %s"), orDash(subject), hint)
 		}
 		s.skip(key)
 		return
 	}
 	m := &Meeting{
 		ID:        newID(time.Now()),
-		Title:     firstNonEmpty(subject, "Созвон по приглашению на почту"),
+		Title:     firstNonEmpty(subject, tr("Созвон по приглашению на почту")),
 		MeetURL:   meetURL,
 		StartedAt: time.Now(),
 		Status:    "recording",
@@ -141,18 +141,18 @@ func (s *gmailSource) consider(ctx context.Context, key string, msg *gmail.Messa
 	// Но письмо помечается разобранным, только если созвон действительно
 	// пристроен. Отказ из-за нехватки слотов — временный: пометив письмо, мы
 	// забанили бы приглашение навсегда, хотя место освободится через минуту.
-	switch s.d.Start(ctx, adHocKey(meetURL, time.Now()), m, "приглашение от "+from) {
+	switch s.d.Start(ctx, adHocKey(meetURL, time.Now()), m, tr("приглашение от ")+from) {
 	case Started, Duplicate:
 		s.skip(key)
 	case NoCapacity:
-		s.log.Printf("почта: «%s» подождёт свободного слота", orDash(subject))
+		s.log.Printf(tr("почта: «%s» подождёт свободного слота"), orDash(subject))
 	}
 }
 
 // skip помечает письмо разобранным, чтобы не тянуть его снова каждые 45 секунд.
 func (s *gmailSource) skip(key string) {
 	if _, err := s.d.st.MarkEventSeen(key, ""); err != nil {
-		s.log.Printf("почта: не отметил письмо: %v", err)
+		s.log.Printf(tr("почта: не отметил письмо: %v"), err)
 	}
 }
 

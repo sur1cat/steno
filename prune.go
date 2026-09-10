@@ -57,13 +57,13 @@ func prune(st *Store, cfg *Config, lg *log.Logger) (PruneResult, error) {
 				continue // уже удалено
 			}
 			if err := os.RemoveAll(dir); err != nil {
-				lg.Printf("не удалил %s: %v", dir, err)
+				lg.Printf(tr("не удалил %s: %v"), dir, err)
 				continue
 			}
 			// Путь обнуляем, чтобы повторный проход не считал их снова и
 			// чтобы `steno process` честно сказал, что аудио больше нет.
 			if _, err := st.db.Exec(`UPDATE meetings SET audio_path='' WHERE id=?`, id); err != nil {
-				lg.Printf("не обновил %s: %v", id, err)
+				lg.Printf(tr("не обновил %s: %v"), id, err)
 			}
 			res.Recordings++
 			res.Bytes += size
@@ -76,7 +76,7 @@ func prune(st *Store, cfg *Config, lg *log.Logger) (PruneResult, error) {
 		if r, err := st.db.Exec(`DELETE FROM seen_events WHERE meeting_id NOT IN
 			(SELECT id FROM meetings)`); err == nil {
 			if n, _ := r.RowsAffected(); n > 0 {
-				fmt.Printf("отметок без созвона: %d\n", n)
+				fmt.Printf(tr("отметок без созвона: %d\n"), n)
 			}
 		}
 		r, err := st.db.Exec(`DELETE FROM seen_events WHERE created_at < ?`,
@@ -105,6 +105,6 @@ func dirSize(dir string) (int64, error) {
 }
 
 func (r PruneResult) String() string {
-	return fmt.Sprintf("удалено записей: %d (%.1f ГБ), отметок о событиях: %d",
+	return fmt.Sprintf(tr("удалено записей: %d (%.1f ГБ), отметок о событиях: %d"),
 		r.Recordings, float64(r.Bytes)/(1<<30), r.Events)
 }

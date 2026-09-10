@@ -186,7 +186,7 @@ func (f *uiChanForm) values() map[string]string {
 func uiSaveChannel(st *Store, key string, enabled bool, fresh map[string]string) error {
 	def, ok := channelByKey(key)
 	if !ok {
-		return fmt.Errorf("нет такого канала: %s", key)
+		return fmt.Errorf(tr("нет такого канала: %s"), key)
 	}
 	values := map[string]string{}
 	if have, err := st.ChannelSettings(); err == nil {
@@ -207,11 +207,11 @@ func uiSaveChannel(st *Store, key string, enabled bool, fresh map[string]string)
 func uiChannelWhat(ch Channel) string {
 	switch {
 	case ch.In && ch.Out:
-		return "и приносит, и шлёт"
+		return tr("и приносит, и шлёт")
 	case ch.In:
-		return "приносит созвоны"
+		return tr("приносит созвоны")
 	case ch.Out:
-		return "шлёт follow-up"
+		return tr("шлёт follow-up")
 	}
 	return ""
 }

@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { t } from "@/lib/i18n";
 
 // Пароль общий на команду: заводить учётку каждому ради архива созвонов —
 // работа, которую никто не сделает, а без неё панель просто не откроют.
@@ -29,7 +30,7 @@ export function LoginPage() {
         <h1 className="text-2xl tracking-tight">
           ste<span className="text-primary">no</span>
         </h1>
-        <p className="mt-1 text-sm text-[var(--muted-foreground)]">Архив созвонов команды</p>
+        <p className="mt-1 text-sm text-[var(--muted-foreground)]">{t("Архив созвонов команды")}</p>
 
         <form
           className="mt-6 space-y-3"
@@ -43,16 +44,16 @@ export function LoginPage() {
             name="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Пароль"
+            placeholder={t("Пароль")}
             autoFocus
             autoComplete="current-password"
             className="h-12 w-full rounded-xl border-0 bg-[var(--muted)] px-4 text-sm placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           {login.isError && (
-            <p className="text-sm text-[var(--destructive)]">Не тот пароль.</p>
+            <p className="text-sm text-[var(--destructive)]">{t("Не тот пароль.")}</p>
           )}
           <Button type="submit" variant="primary" className="w-full" isLoading={login.isPending}>
-            Войти
+            {t("Войти")}
           </Button>
         </form>
       </Card>

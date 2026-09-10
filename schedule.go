@@ -130,7 +130,7 @@ func (s *Store) SetScheduleOverride(key, decision string) error {
 		return err
 	}
 	if decision != "skip" && decision != "attend" {
-		return fmt.Errorf("непонятное решение %q", decision)
+		return fmt.Errorf(tr("непонятное решение %q"), decision)
 	}
 	_, err := s.db.Exec(`INSERT INTO schedule_override (key,decision,created_at) VALUES (?,?,?)
 		ON CONFLICT(key) DO UPDATE SET decision=excluded.decision, created_at=excluded.created_at`,
@@ -160,11 +160,11 @@ type schedulePoller struct {
 	src *calendarSource // ради кеша клиентов Google
 }
 
-func (s *schedulePoller) Name() string { return "расписание" }
+func (s *schedulePoller) Name() string { return tr("расписание") }
 
 func (s *schedulePoller) Run(ctx context.Context) error {
 	every := 15 * time.Minute
-	s.log.Printf("расписание: собираю на %d дней вперёд, опрос раз в %s",
+	s.log.Printf(tr("расписание: собираю на %d дней вперёд, опрос раз в %s"),
 		s.horizonDays(), every)
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -192,7 +192,7 @@ func (s *schedulePoller) once(ctx context.Context) {
 	for _, calID := range s.cfg.Calendar.Calendars {
 		events, err := s.src.upcoming(ctx, calID, from, to)
 		if err != nil {
-			s.log.Printf("расписание: %s: %v", calID, err)
+			s.log.Printf(tr("расписание: %s: %v"), calID, err)
 			continue
 		}
 		for _, ev := range events {
@@ -201,12 +201,12 @@ func (s *schedulePoller) once(ctx context.Context) {
 				continue
 			}
 			if err := s.st.SaveScheduled(e); err != nil {
-				s.log.Printf("расписание: %v", err)
+				s.log.Printf(tr("расписание: %v"), err)
 			}
 		}
 	}
 	if err := s.st.PruneSchedule(time.Now().AddDate(0, 0, -2)); err != nil {
-		s.log.Printf("расписание: уборка: %v", err)
+		s.log.Printf(tr("расписание: уборка: %v"), err)
 	}
 }
 
@@ -244,12 +244,12 @@ func (s *schedulePoller) entry(calID string, ev *calendar.Event) (ScheduleEntry,
 		if hint := linkHint(eventLinkText(ev)); hint != "" {
 			e.Skip = hint
 		} else {
-			e.Skip = "нет ссылки на созвон"
+			e.Skip = tr("нет ссылки на созвон")
 		}
 	case skipMarked(ev, s.cfg.Calendar.SkipMarkers):
-		e.Skip = "стоит метка «не записывать»"
+		e.Skip = tr("стоит метка «не записывать»")
 	case len(e.Attendees) < s.cfg.Calendar.MinAttendees:
-		e.Skip = fmt.Sprintf("участников %d, нужно хотя бы %d",
+		e.Skip = fmt.Sprintf(tr("участников %d, нужно хотя бы %d"),
 			len(e.Attendees), s.cfg.Calendar.MinAttendees)
 	}
 
@@ -287,7 +287,7 @@ func inviteToCall(ctx context.Context, d *Dispatcher, meetURL, title, why string
 	}
 	m := &Meeting{
 		ID:        newID(time.Now()),
-		Title:     firstNonEmpty(strings.TrimSpace(title), "Созвон по ссылке из панели"),
+		Title:     firstNonEmpty(strings.TrimSpace(title), tr("Созвон по ссылке из панели")),
 		MeetURL:   u,
 		StartedAt: time.Now(),
 		Status:    "recording",
@@ -323,14 +323,14 @@ type reminder struct {
 	log *log.Logger
 }
 
-func (r *reminder) Name() string { return "напоминания" }
+func (r *reminder) Name() string { return tr("напоминания") }
 
 func (r *reminder) Run(ctx context.Context) error {
 	before := r.cfg.Calendar.RemindBefore.D()
 	if before <= 0 {
 		before = 10 * time.Minute
 	}
-	r.log.Printf("напоминания: за %s до начала", before)
+	r.log.Printf(tr("напоминания: за %s до начала"), before)
 
 	// Раз в минуту: напоминание за десять минут, пришедшее за четыре, уже
 	// бесполезно.
@@ -350,7 +350,7 @@ func (r *reminder) once(ctx context.Context, before time.Duration) {
 	now := time.Now()
 	entries, err := r.st.Schedule(now, now.Add(before))
 	if err != nil {
-		r.log.Printf("напоминания: %v", err)
+		r.log.Printf(tr("напоминания: %v"), err)
 		return
 	}
 	for _, e := range entries {
@@ -359,7 +359,7 @@ func (r *reminder) once(ctx context.Context, before time.Duration) {
 		}
 		fresh, err := r.st.MarkReminded(e.Key)
 		if err != nil {
-			r.log.Printf("напоминания: %v", err)
+			r.log.Printf(tr("напоминания: %v"), err)
 			continue
 		}
 		if !fresh {
@@ -374,12 +374,12 @@ func (r *reminder) send(ctx context.Context, e ScheduleEntry, now time.Time) {
 	text := remindText(e, now)
 	if r.cfg.Telegram.Enabled && r.cfg.Telegram.ChatID != "" {
 		if err := sendTelegramText(ctx, r.cfg, r.cfg.Telegram.ChatID, text); err != nil {
-			r.log.Printf("напоминания: telegram: %v", err)
+			r.log.Printf(tr("напоминания: telegram: %v"), err)
 		}
 	}
 	if r.cfg.Slack.Enabled && r.cfg.Slack.Channel != "" {
 		if err := sendSlackText(ctx, r.cfg, r.cfg.Slack.Channel, text); err != nil {
-			r.log.Printf("напоминания: slack: %v", err)
+			r.log.Printf(tr("напоминания: slack: %v"), err)
 		}
 	}
 }
@@ -389,11 +389,11 @@ func remindText(e ScheduleEntry, now time.Time) string {
 	mins := int(e.StartsAt.Sub(now).Minutes())
 	switch {
 	case mins <= 0:
-		b.WriteString("Сейчас начинается")
+		b.WriteString(tr("Сейчас начинается"))
 	case mins == 1:
-		b.WriteString("Через минуту")
+		b.WriteString(tr("Через минуту"))
 	default:
-		fmt.Fprintf(&b, "Через %d мин", mins)
+		fmt.Fprintf(&b, tr("Через %d мин"), mins)
 	}
 	fmt.Fprintf(&b, " — %s\n%s", orDash(e.Title), e.StartsAt.Format("15:04"))
 	if len(e.Attendees) > 0 {
@@ -405,13 +405,13 @@ func remindText(e ScheduleEntry, now time.Time) string {
 	// можно успеть поправить, а молчание разбирать потом уже поздно.
 	switch {
 	case e.WillAttend() && e.MeetURL != "":
-		fmt.Fprintf(&b, "Бот придёт. %s", e.MeetURL)
+		fmt.Fprintf(&b, tr("Бот придёт. %s"), e.MeetURL)
 	case e.Override == "skip":
-		b.WriteString("Бот не придёт: отменили в панели")
+		b.WriteString(tr("Бот не придёт: отменили в панели"))
 	case e.Skip != "":
-		fmt.Fprintf(&b, "Бот не придёт: %s", e.Skip)
+		fmt.Fprintf(&b, tr("Бот не придёт: %s"), e.Skip)
 	default:
-		b.WriteString("Бот придёт")
+		b.WriteString(tr("Бот придёт"))
 	}
 	return b.String()
 }

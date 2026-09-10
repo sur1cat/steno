@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { t } from "@/lib/i18n";
 
 // Позвать бота на созвон, которого нет в расписании. Неожиданные созвоны —
 // это как раз то, чего в календаре не было: собрались в две минуты, никто не
@@ -38,16 +39,15 @@ export function InviteDialog({ open, onClose }: { open: boolean; onClose: () => 
       qc.invalidateQueries({ queryKey: ["meetings"] });
       onClose();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "не получилось"),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
   });
 
   return (
     <Dialog open={open} onClose={onClose}>
       <DialogHeader>
-        <DialogTitle>Позвать бота</DialogTitle>
+        <DialogTitle>{t("Позвать бота")}</DialogTitle>
         <DialogDescription>
-          Бот зайдёт в звонок и начнёт запись. Участники увидят его в списке под
-          именем из настроек — незаметной записи здесь нет и не будет.
+          {t("Бот зайдёт в звонок и начнёт запись. Участники увидят его в списке под\n          именем из настроек — незаметной записи здесь нет и не будет.")}
         </DialogDescription>
       </DialogHeader>
 
@@ -59,7 +59,7 @@ export function InviteDialog({ open, onClose }: { open: boolean; onClose: () => 
         }}
       >
         <Input
-          label="Ссылка на Google Meet"
+          label={t("Ссылка на Google Meet")}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://meet.google.com/abc-defg-hij"
@@ -68,18 +68,18 @@ export function InviteDialog({ open, onClose }: { open: boolean; onClose: () => 
           spellCheck={false}
         />
         <Input
-          label="Название (необязательно)"
+          label={t("Название (необязательно)")}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Разбор инцидента"
+          placeholder={t("Разбор инцидента")}
           autoComplete="off"
         />
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
-            Отмена
+            {t("Отмена")}
           </Button>
           <Button type="submit" variant="primary" isLoading={invite.isPending} disabled={!url.trim()}>
-            Позвать
+            {t("Позвать")}
           </Button>
         </DialogFooter>
       </form>

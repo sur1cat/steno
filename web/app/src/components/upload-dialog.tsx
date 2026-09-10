@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { FileAudio, Upload, X } from "lucide-react";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { t } from "@/lib/i18n";
 
 // Загрузка записи созвона, на котором бота не было.
 //
@@ -25,9 +26,9 @@ import {
 const ACCEPT = "audio/*,video/*,.m4a,.mp3,.wav,.ogg,.opus,.mp4,.mov,.mkv,.webm";
 
 function mb(bytes: number): string {
-  if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} ГБ`;
-  if (bytes >= 1 << 20) return `${Math.round(bytes / (1 << 20))} МБ`;
-  return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+  if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} ${t("ГБ")}`;
+  if (bytes >= 1 << 20) return `${Math.round(bytes / (1 << 20))} ${t("МБ")}`;
+  return `${Math.max(1, Math.round(bytes / 1024))} ${t("КБ")}`;
 }
 
 /** Имя файла без расширения — то же начальное название даёт и сервер. */
@@ -64,7 +65,7 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
     setFailed("");
     // Название подставляется, но остаётся правимым: «rec_20260904_1130.m4a»
     // не название, а «Разговор с подрядчиком» — название.
-    setTitle((t) => (t.trim() ? t : titleFrom(f.name)));
+    setTitle((prev) => (prev.trim() ? prev : titleFrom(f.name)));
   };
 
   const send = async () => {
@@ -81,14 +82,15 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
       // 202, а не «готово»: сервер только принял файл. Дальше идут
       // перекодирование и расшифровка, и созвон уже виден в списке — со
       // статусом, который меняется сам.
-      toast.success(`«${res.title}» принят, расшифровка пошла`);
+      toast.success(`“${res.title}” ${t("принят, расшифровка пошла")}`);
       qc.invalidateQueries({ queryKey: ["meetings"] });
       onClose();
       nav("/");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "не получилось";
-      if (msg === "отменено") setFailed("");
-      else setFailed(msg);
+      // Отмену узнаём по статусу, а не по тексту: текст переводится, и
+      // сравнение с русской строкой перестало бы срабатывать на английском.
+      if (e instanceof ApiError && e.status === 0) setFailed("");
+      else setFailed(e instanceof Error ? e.message : t("не получилось"));
     } finally {
       setBusy(false);
       abort.current = null;
@@ -104,12 +106,9 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
       className="max-w-xl"
     >
       <DialogHeader>
-        <DialogTitle>Загрузить запись</DialogTitle>
+        <DialogTitle>{t("Загрузить запись")}</DialogTitle>
         <DialogDescription>
-          Созвон прошёл в Zoom, разговор был по телефону, встреча случилась до того, как
-          поставили steno, — а запись осталась. Расшифровка, follow-up и разметка по проектам
-          отработают на ней как обычно. Имён говорящих не будет: они приходят из субтитров Meet,
-          а в чужом файле их нет.
+          {t("Созвон прошёл в Zoom, разговор был по телефону, встреча случилась до того, как\n          поставили steno, — а запись осталась. Расшифровка, follow-up и разметка по проектам\n          отработают на ней как обычно. Имён говорящих не будет: они приходят из субтитров Meet,\n          а в чужом файле их нет.")}
         </DialogDescription>
       </DialogHeader>
 
@@ -137,10 +136,10 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
           >
             <Upload className="h-6 w-6 text-[var(--muted-foreground)]" />
             <span className="text-sm">
-              Перетащи файл сюда или <span className="text-primary">выбери на диске</span>
+              {t("Перетащи файл сюда или")} <span className="text-primary">{t("выбери на диске")}</span>
             </span>
             <span className="text-[13px] text-[var(--muted-foreground)]">
-              Звук или видео — mp4, m4a, mp3, wav. Картинку выбросим, останется звук.
+              {t("Звук или видео — mp4, m4a, mp3, wav. Картинку выбросим, останется звук.")}
             </span>
           </button>
         ) : (
@@ -154,7 +153,7 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
               <button
                 type="button"
                 onClick={() => setFile(null)}
-                aria-label="Убрать файл"
+                aria-label={t("Убрать файл")}
                 className="shrink-0 rounded-lg p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
               >
                 <X className="h-4 w-4" />
@@ -175,10 +174,10 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
         />
 
         <Input
-          label="Название"
+          label={t("Название")}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Разговор с подрядчиком"
+          placeholder={t("Разговор с подрядчиком")}
           disabled={busy}
           autoComplete="off"
         />
@@ -190,11 +189,11 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
             <div className="mb-1.5 flex items-baseline justify-between text-[13px] text-[var(--muted-foreground)]">
               <span>
                 {percent < 100
-                  ? "Отправляю файл…"
-                  : "Файл ушёл, сервер принимает — расшифровка начнётся сама"}
+                  ? t("Отправляю файл…")
+                  : t("Файл ушёл, сервер принимает — расшифровка начнётся сама")}
               </span>
               <span className="tabular-nums">
-                {file ? `${mb(sent)} из ${mb(file.size)}` : ""}
+                {file ? `${mb(sent)} ${t("из")} ${mb(file.size)}` : ""}
               </span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-[var(--muted)]">
@@ -221,11 +220,11 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
       <DialogFooter>
         {busy ? (
           <Button type="button" variant="outline" onClick={() => abort.current?.abort()}>
-            Прервать
+            {t("Прервать")}
           </Button>
         ) : (
           <Button type="button" variant="outline" onClick={onClose}>
-            Отмена
+            {t("Отмена")}
           </Button>
         )}
         <Button
@@ -235,7 +234,7 @@ export function UploadDialog({ open, onClose }: { open: boolean; onClose: () => 
           isLoading={busy}
           disabled={!file || busy}
         >
-          Загрузить
+          {t("Загрузить")}
         </Button>
       </DialogFooter>
     </Dialog>

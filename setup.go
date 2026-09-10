@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/term"
 )
@@ -38,23 +40,26 @@ type setupProfile struct {
 	Effort                string
 }
 
-var setupProfiles = []setupProfile{
-	{
-		Key: "personal", Name: "Для себя",
-		About:                 "Один человек, свои созвоны. Записи и расшифровки на своей машине.",
-		MaxConcurrentMeetings: 1, MaxConcurrentWhisper: 1, Effort: "low",
-	},
-	{
-		Key: "team", Name: "Небольшая команда",
-		About:                 "Несколько созвонов в неделю, редко больше одного разом.",
-		MaxConcurrentMeetings: 2, MaxConcurrentWhisper: 1, Effort: "low",
-	},
-	{
-		Key: "big", Name: "Большая команда",
-		About:                 "Пять-шесть созвонов параллельно, отдельный сервер, GPU или Groq.",
-		MaxConcurrentMeetings: 6, MaxConcurrentWhisper: 2, Effort: "low",
-	},
-}
+// См. uiTabTitles: таблица собирается лениво, уже на известном языке.
+var setupProfiles = sync.OnceValue(func() []setupProfile {
+	return []setupProfile{
+		{
+			Key: "personal", Name: tr("Для себя"),
+			About:                 tr("Один человек, свои созвоны. Записи и расшифровки на своей машине."),
+			MaxConcurrentMeetings: 1, MaxConcurrentWhisper: 1, Effort: "low",
+		},
+		{
+			Key: "team", Name: tr("Небольшая команда"),
+			About:                 tr("Несколько созвонов в неделю, редко больше одного разом."),
+			MaxConcurrentMeetings: 2, MaxConcurrentWhisper: 1, Effort: "low",
+		},
+		{
+			Key: "big", Name: tr("Большая команда"),
+			About:                 tr("Пять-шесть созвонов параллельно, отдельный сервер, GPU или Groq."),
+			MaxConcurrentMeetings: 6, MaxConcurrentWhisper: 2, Effort: "low",
+		},
+	}
+})
 
 type setupState struct {
 	dir string
@@ -68,7 +73,7 @@ type setupState struct {
 
 func cmdSetup(ctx context.Context, args []string) error {
 	fs := newFlagSet("setup")
-	out := fs.String("o", "", "куда записать конфиг")
+	out := fs.String("o", "", tr("куда записать конфиг"))
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
@@ -114,22 +119,23 @@ func cmdSetup(ctx context.Context, args []string) error {
 			_ = term.Restore(fd, tty)
 		}
 		fmt.Println()
-		fmt.Println(dim("прервано — ничего не записано"))
+		fmt.Println(dim(tr("прервано — ничего не записано")))
 		os.Exit(130)
 	}()
 
-	title("steno — настройка")
-	fmt.Println(dim("Спрошу по одному и сразу проверю. Пустой ответ берёт значение в скобках."))
-	fmt.Println(dim("Ctrl+C прерывает в любой момент — до самого конца ничего не записывается."))
+	title(tr("steno — настройка"))
+	fmt.Println(dim(tr("Спрошу по одному и сразу проверю. Пустой ответ берёт значение в скобках.")))
+	fmt.Println(dim(tr("Ctrl+C прерывает в любой момент — до самого конца ничего не записывается.")))
 	fmt.Println()
 
 	if _, err := os.Stat(abs); err == nil {
-		if !s.confirm(abs+" уже есть. Перезаписать?", false) {
-			return fmt.Errorf("отменено")
+		if !s.confirm(abs+tr(" уже есть. Перезаписать?"), false) {
+			return errors.New(tr("отменено"))
 		}
 	}
 
 	steps := []func(context.Context) error{
+		s.askLang,
 		s.askProfile,
 		s.askData,
 		s.askTranscribe,
@@ -151,14 +157,38 @@ func cmdSetup(ctx context.Context, args []string) error {
 
 // --- шаги --------------------------------------------------------------------
 
+// askLang — первым вопросом и до всего остального: дальше мастер говорит на
+// выбранном языке, и спрашивать об этом в конце было бы поздно. Заголовок и
+// подписи здесь двуязычные — на этом шаге ещё неизвестно, чей это экран.
+//
+// Умолчание — тот язык, на котором steno запущен: STENO_LANG=ru steno setup
+// не должен переспрашивать очевидное.
+func (s *setupState) askLang(context.Context) error {
+	section("Language · Язык")
+	def := 0
+	if uiLang == langRU {
+		def = 1
+	}
+	i := s.choose("Interface language · Язык интерфейса", []string{
+		"English " + dim("CLI, terminal interface, panel"),
+		"Русский " + dim("CLI, терминальный интерфейс, панель"),
+	}, def)
+	s.cfg.Lang = []string{langEN, langRU}[i]
+	setLang(s.cfg.Lang)
+	// Часть умолчаний зависит от языка, а конфиг собран до этого вопроса:
+	// имя бота, язык субтитров, язык follow-up и маркер календаря.
+	applyLangDefaults(s.cfg)
+	return nil
+}
+
 func (s *setupState) askProfile(context.Context) error {
-	section("Масштаб")
+	section(tr("Масштаб"))
 	var opts []string
-	for _, p := range setupProfiles {
+	for _, p := range setupProfiles() {
 		opts = append(opts, p.Name+" — "+dim(p.About))
 	}
-	i := s.choose("Как будете пользоваться?", opts, 1)
-	s.profile = setupProfiles[i]
+	i := s.choose(tr("Как будете пользоваться?"), opts, 1)
+	s.profile = setupProfiles()[i]
 
 	s.cfg.Calendar.MaxConcurrent = s.profile.MaxConcurrentMeetings
 	s.cfg.Transcribe.MaxConcurrent = s.profile.MaxConcurrentWhisper
@@ -170,8 +200,8 @@ func (s *setupState) askProfile(context.Context) error {
 // текущий, и человеку приходилось перед запуском делать mkdir и cd — шаг, о
 // котором он узнавал только из инструкции.
 func (s *setupState) askData(context.Context) error {
-	section("Где хранить")
-	fmt.Println(dim("  Сюда лягут настройки, записи созвонов и база. Каталог заведу сам."))
+	section(tr("Где хранить"))
+	fmt.Println(dim(tr("  Сюда лягут настройки, записи созвонов и база. Каталог заведу сам.")))
 	fmt.Println()
 
 	home, _ := os.UserHomeDir()
@@ -179,45 +209,45 @@ func (s *setupState) askData(context.Context) error {
 	if s.dirChosen {
 		def = s.dir // человек сам назвал файл через -o, не спорим
 	}
-	dir := expandHome(s.ask("Каталог", def))
+	dir := expandHome(s.ask(tr("Каталог"), def))
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(abs, 0o755); err != nil {
-		return fmt.Errorf("не создался каталог: %w", err)
+		return fmt.Errorf(tr("не создался каталог: %w"), err)
 	}
 	s.dir = abs
 	s.cfg.DataDir = filepath.Join(abs, "data")
 	if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
-		return fmt.Errorf("не создался каталог: %w", err)
+		return fmt.Errorf(tr("не создался каталог: %w"), err)
 	}
 	fmt.Println(ok(abs))
 	return nil
 }
 
 func (s *setupState) askTranscribe(ctx context.Context) error {
-	section("Чем распознавать речь")
-	fmt.Println(dim("  От этого зависит и качество, и во что обойдётся железо."))
+	section(tr("Чем распознавать речь"))
+	fmt.Println(dim(tr("  От этого зависит и качество, и во что обойдётся железо.")))
 	fmt.Println()
 
-	i := s.choose("Выбери", []string{
-		"Groq — та же whisper-large-v3, но на их железе. " +
-			dim("$0.04 за час звука, ничего ставить не надо, аудио уходит наружу"),
-		"whisper на своей машине. " +
-			dim("ничего не уходит наружу; нужна модель на 0.5–3 ГБ, а без GPU медленно"),
-		"Субтитры Google Meet. " +
-			dim("бесплатно и мгновенно, качество ниже, смешанную речь не тянет"),
+	i := s.choose(tr("Выбери"), []string{
+		tr("Groq — та же whisper-large-v3, но на их железе. ") +
+			dim(tr("$0.04 за час звука, ничего ставить не надо, аудио уходит наружу")),
+		tr("whisper на своей машине. ") +
+			dim(tr("ничего не уходит наружу; нужна модель на 0.5–3 ГБ, а без GPU медленно")),
+		tr("Субтитры Google Meet. ") +
+			dim(tr("бесплатно и мгновенно, качество ниже, смешанную речь не тянет")),
 	}, 0)
 
 	switch i {
 	case 0:
 		s.cfg.Transcribe.Source = "command"
 		s.cfg.Transcribe.Cmd = []string{findAdapter("groq.sh"), "{{audio}}", "{{language}}"}
-		key := s.askSecret("Ключ Groq", "console.groq.com/keys")
+		key := s.askSecret(tr("Ключ Groq"), "console.groq.com/keys")
 		if key != "" {
 			s.env["GROQ_API_KEY"] = key
-			fmt.Println(ok("ключ записан"))
+			fmt.Println(ok(tr("ключ записан")))
 		}
 	case 1:
 		s.cfg.Transcribe.Source = "command"
@@ -225,7 +255,7 @@ func (s *setupState) askTranscribe(ctx context.Context) error {
 		s.checkWhisper()
 	case 2:
 		s.cfg.Transcribe.Source = "captions"
-		fmt.Println(dim("  Текст возьмётся из субтитров Meet. Имена говорящих в нём уже есть."))
+		fmt.Println(dim(tr("  Текст возьмётся из субтитров Meet. Имена говорящих в нём уже есть.")))
 	}
 	return nil
 }
@@ -240,10 +270,10 @@ func (s *setupState) checkWhisper() {
 		}
 	}
 	if len(missing) > 0 {
-		fmt.Println(warn("не хватает: " + strings.Join(missing, ", ")))
+		fmt.Println(warn(tr("не хватает: ") + strings.Join(missing, ", ")))
 		fmt.Println(dim("  brew install whisper-cpp ffmpeg jq"))
 	} else {
-		fmt.Println(ok("whisper-cli, ffmpeg и jq на месте"))
+		fmt.Println(ok(tr("whisper-cli, ffmpeg и jq на месте")))
 	}
 
 	home, _ := os.UserHomeDir()
@@ -259,29 +289,29 @@ func (s *setupState) checkWhisper() {
 		}
 	}
 	if found == "" {
-		fmt.Println(warn("модели нет — без неё расшифровка не заработает"))
+		fmt.Println(warn(tr("модели нет — без неё расшифровка не заработает")))
 		fmt.Println(dim("  mkdir -p " + dir))
 		fmt.Println(dim("  curl -L -o " + dir + "/ggml-large-v3-q5_0.bin \\"))
 		fmt.Println(dim("    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin"))
-		fmt.Println(dim("  и отдельно VAD — 868 КБ, но ускоряет в восемь раз:"))
+		fmt.Println(dim(tr("  и отдельно VAD — 868 КБ, но ускоряет в восемь раз:")))
 		fmt.Println(dim("  curl -L -o " + dir + "/ggml-silero-v5.1.2.bin \\"))
 		fmt.Println(dim("    https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"))
 	} else if strings.Contains(found, "turbo") {
 		// turbo не просто хуже — она подменяет незнакомые слова похожими
 		// знакомыми и зацикливается. Ошибка получается связной и правдоподобной,
 		// в follow-up её уже не отличить от сказанного.
-		fmt.Println(warn("модель " + found + " — она путает названия и зацикливается"))
-		fmt.Println(dim("  на записи созвона turbo превратила Plaud в Cloud AI и повторила"))
-		fmt.Println(dim("  его семнадцать раз подряд. Возьми large-v3-q5_0 — тот же размер:"))
+		fmt.Println(warn(tr("модель ") + found + tr(" — она путает названия и зацикливается")))
+		fmt.Println(dim(tr("  на записи созвона turbo превратила Plaud в Cloud AI и повторила")))
+		fmt.Println(dim(tr("  его семнадцать раз подряд. Возьми large-v3-q5_0 — тот же размер:")))
 		fmt.Println(dim("  curl -L -o " + dir + "/ggml-large-v3-q5_0.bin \\"))
 		fmt.Println(dim("    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin"))
 	} else {
-		fmt.Println(ok("модель " + found))
+		fmt.Println(ok(tr("модель ") + found))
 	}
 }
 
 func (s *setupState) askClaude(ctx context.Context) error {
-	section("Claude — он собирает follow-up")
+	section(tr("Claude — он собирает follow-up"))
 
 	// Два пути, и выбор между ними не про цену, а про то, кто запускает.
 	// Подписка идёт через `claude -p` — штатный неинтерактивный режим Claude
@@ -290,8 +320,8 @@ func (s *setupState) askClaude(ctx context.Context) error {
 	// подписку предлагаем первой только если CLI уже готов.
 	cliOK, cliNote := claudeCLIAvailable()
 	opts := []string{
-		"Подписка Claude " + dim("через claude -p, отдельный ключ не нужен"),
-		"Ключ API " + dim("нужен для сервера: работает без входа человеком"),
+		tr("Подписка Claude ") + dim(tr("через claude -p, отдельный ключ не нужен")),
+		tr("Ключ API ") + dim(tr("нужен для сервера: работает без входа человеком")),
 	}
 	if cliOK {
 		opts[0] += "\n     " + ok(cliNote)
@@ -302,128 +332,128 @@ func (s *setupState) askClaude(ctx context.Context) error {
 	if cliOK {
 		def = 0
 	}
-	if s.choose("Чем платить за follow-up", opts, def) == 0 {
+	if s.choose(tr("Чем платить за follow-up"), opts, def) == 0 {
 		s.cfg.Claude.Via = "cli"
 		if !cliOK {
-			fmt.Println(warn("CLI пока не готов — steno скажет об этом при первом созвоне"))
-			fmt.Println(dim("  поставь Claude Code и войди: claude auth login"))
+			fmt.Println(warn(tr("CLI пока не готов — steno скажет об этом при первом созвоне")))
+			fmt.Println(dim(tr("  поставь Claude Code и войди: claude auth login")))
 		}
 		// Потолок на запрос: у подписки нет счёта, который придёт в конце
 		// месяца, но есть лимит, который можно выбрать одним циклом.
 		if s.cfg.Claude.MaxUSDPerCall == 0 {
 			s.cfg.Claude.MaxUSDPerCall = 2
 		}
-		fmt.Println(dim("  Потолок на один follow-up: $" +
+		fmt.Println(dim(tr("  Потолок на один follow-up: $") +
 			strconv.FormatFloat(s.cfg.Claude.MaxUSDPerCall, 'f', -1, 64) +
-			" — меняется в claude.max_usd_per_call"))
+			tr(" — меняется в claude.max_usd_per_call")))
 	} else {
 		s.cfg.Claude.Via = "api"
-		key := s.askSecret("Ключ Anthropic", "console.anthropic.com → API keys")
+		key := s.askSecret(tr("Ключ Anthropic"), "console.anthropic.com → API keys")
 		if key != "" {
 			s.env["ANTHROPIC_API_KEY"] = key
 		}
 	}
 
-	i := s.choose("Модель", []string{
-		"claude-opus-5 " + dim("умнее, около $0.40 за часовой созвон"),
-		"claude-sonnet-5 " + dim("дешевле в два с половиной раза, для планёрок обычно хватает"),
+	i := s.choose(tr("Модель"), []string{
+		"claude-opus-5 " + dim(tr("умнее, около $0.40 за часовой созвон")),
+		"claude-sonnet-5 " + dim(tr("дешевле в два с половиной раза, для планёрок обычно хватает")),
 	}, 0)
 	s.cfg.Claude.Model = []string{"claude-opus-5", "claude-sonnet-5"}[i]
-	fmt.Println(dim("  Усилие: " + s.cfg.Claude.Effort + ". Выше поднимать смысла нет: на замерах"))
-	fmt.Println(dim("  усилие не добавило ни одной задачи, только время и расход."))
+	fmt.Println(dim(tr("  Усилие: ") + s.cfg.Claude.Effort + tr(". Выше поднимать смысла нет: на замерах")))
+	fmt.Println(dim(tr("  усилие не добавило ни одной задачи, только время и расход.")))
 	return nil
 }
 
 func (s *setupState) askSources(ctx context.Context) error {
-	section("Как бот попадает в звонок")
-	fmt.Println(dim("  Можно включить несколько. Календарь закрывает запланированное,"))
-	fmt.Println(dim("  остальные — внезапное."))
+	section(tr("Как бот попадает в звонок"))
+	fmt.Println(dim(tr("  Можно включить несколько. Календарь закрывает запланированное,")))
+	fmt.Println(dim(tr("  остальные — внезапное.")))
 	fmt.Println()
 
-	if s.confirm("Ходить по календарям команды?", false) {
+	if s.confirm(tr("Ходить по календарям команды?"), false) {
 		s.cfg.Calendar.Enabled = true
-		fmt.Println(dim("  Нужны почтовые адреса тех, чьи встречи бот должен видеть."))
-		fmt.Println(dim("  Свой — чтобы ходить на собственные созвоны. Чужой сработает,"))
-		fmt.Println(dim("  только если этот человек открыл боту доступ к своему календарю."))
-		s.cfg.Calendar.Calendars = commaList(s.ask("Чьи календари (почта, через запятую)", ""))
+		fmt.Println(dim(tr("  Нужны почтовые адреса тех, чьи встречи бот должен видеть.")))
+		fmt.Println(dim(tr("  Свой — чтобы ходить на собственные созвоны. Чужой сработает,")))
+		fmt.Println(dim(tr("  только если этот человек открыл боту доступ к своему календарю.")))
+		s.cfg.Calendar.Calendars = commaList(s.ask(tr("Чьи календари (почта, через запятую)"), ""))
 		s.askGoogleAccess()
 	}
-	if s.confirm("Приходить, когда бота добавляют в звонок по почте?", false) {
+	if s.confirm(tr("Приходить, когда бота добавляют в звонок по почте?"), false) {
 		s.cfg.Gmail.Enabled = true
-		s.cfg.Gmail.Account = s.ask("Почта аккаунта бота", "")
+		s.cfg.Gmail.Account = s.ask(tr("Почта аккаунта бота"), "")
 		s.askGoogleAccess()
 	}
-	if s.confirm("Принимать ссылки в Telegram?", true) {
+	if s.confirm(tr("Принимать ссылки в Telegram?"), true) {
 		s.cfg.Telegram.Listen = true
-		if tok := s.askSecret("Токен бота Telegram", "@BotFather"); tok != "" {
+		if tok := s.askSecret(tr("Токен бота Telegram"), "@BotFather"); tok != "" {
 			s.env["TELEGRAM_BOT_TOKEN"] = tok
 		}
-		s.cfg.Telegram.ChatID = s.ask("Из какого чата принимать (chat_id)", "")
+		s.cfg.Telegram.ChatID = s.ask(tr("Из какого чата принимать (chat_id)"), "")
 		if s.cfg.Telegram.ChatID != "" {
 			s.cfg.Telegram.AllowedChats = []string{s.cfg.Telegram.ChatID}
 		} else {
-			fmt.Println(warn("без chat_id сервис не запустит приём: принимать ссылки от кого угодно нельзя"))
+			fmt.Println(warn(tr("без chat_id сервис не запустит приём: принимать ссылки от кого угодно нельзя")))
 		}
 	}
 	return nil
 }
 
 func (s *setupState) askTargets(ctx context.Context) error {
-	section("Куда складывать итоги")
-	fmt.Println(dim("  Панель есть всегда — там архив, поиск и проекты. Остальное по желанию."))
+	section(tr("Куда складывать итоги"))
+	fmt.Println(dim(tr("  Панель есть всегда — там архив, поиск и проекты. Остальное по желанию.")))
 	fmt.Println()
 
 	// Спрашиваем всегда, даже если приём в Telegram уже включён: включить
 	// отправку молча, по одному лишь факту приёма, — значит не сказать
 	// человеку, куда пойдут итоги его созвонов.
 	if s.cfg.Telegram.ChatID != "" {
-		if s.confirm("Присылать follow-up в Telegram, в тот же чат?", true) {
+		if s.confirm(tr("Присылать follow-up в Telegram, в тот же чат?"), true) {
 			s.cfg.Telegram.Enabled = true
 		}
-	} else if s.confirm("Присылать follow-up в Telegram?", false) {
-		if tok := s.askSecret("Токен бота Telegram", "@BotFather"); tok != "" {
+	} else if s.confirm(tr("Присылать follow-up в Telegram?"), false) {
+		if tok := s.askSecret(tr("Токен бота Telegram"), "@BotFather"); tok != "" {
 			s.env["TELEGRAM_BOT_TOKEN"] = tok
 		}
-		s.cfg.Telegram.ChatID = s.ask("В какой чат (chat_id)", "")
+		s.cfg.Telegram.ChatID = s.ask(tr("В какой чат (chat_id)"), "")
 		s.cfg.Telegram.Enabled = s.cfg.Telegram.ChatID != ""
 	}
-	if s.confirm("Публиковать в Google Docs?", false) {
+	if s.confirm(tr("Публиковать в Google Docs?"), false) {
 		s.cfg.GoogleDocs.Enabled = true
 		s.askGoogleAccess()
 		// От чужого имени умеет только ключ организации. По кнопке документы
 		// создаются от того, кто её нажал, и спрашивать тут нечего.
 		if s.cfg.GoogleDocs.CredentialsFile != "" {
-			s.cfg.GoogleDocs.Subject = s.ask("От чьего имени создавать документы", "")
+			s.cfg.GoogleDocs.Subject = s.ask(tr("От чьего имени создавать документы"), "")
 		}
-		s.cfg.GoogleDocs.FolderID = s.ask("Папка на Drive: хвост адреса после /folders/ (пусто — корень)", "")
-		s.cfg.GoogleDocs.ProjectDocs = s.confirm("Вести отдельный документ на каждый проект?", true)
+		s.cfg.GoogleDocs.FolderID = s.ask(tr("Папка на Drive: хвост адреса после /folders/ (пусто — корень)"), "")
+		s.cfg.GoogleDocs.ProjectDocs = s.confirm(tr("Вести отдельный документ на каждый проект?"), true)
 	}
-	if s.confirm("Публиковать в Slack?", false) {
+	if s.confirm(tr("Публиковать в Slack?"), false) {
 		s.cfg.Slack.Enabled = true
-		if tok := s.askSecret("Токен бота Slack (xoxb-…)", "api.slack.com/apps"); tok != "" {
+		if tok := s.askSecret(tr("Токен бота Slack (xoxb-…)"), "api.slack.com/apps"); tok != "" {
 			s.env["SLACK_BOT_TOKEN"] = tok
 		}
-		s.cfg.Slack.Channel = s.ask("Канал", "#созвоны")
-		s.cfg.Slack.DMOwners = s.confirm("Писать в личку тем, на ком задача?", true)
+		s.cfg.Slack.Channel = s.ask(tr("Канал"), tr("#созвоны"))
+		s.cfg.Slack.DMOwners = s.confirm(tr("Писать в личку тем, на ком задача?"), true)
 	}
 	return nil
 }
 
 func (s *setupState) askPanel(ctx context.Context) error {
-	section("Панель")
+	section(tr("Панель"))
 	s.cfg.Panel.Enabled = true
-	s.cfg.Panel.Addr = s.ask("Адрес", "127.0.0.1:8422")
-	pass := s.askSecret("Пароль (общий на команду)", "")
+	s.cfg.Panel.Addr = s.ask(tr("Адрес"), "127.0.0.1:8422")
+	pass := s.askSecret(tr("Пароль (общий на команду)"), "")
 	if pass == "" {
 		pass = randomPassword()
-		fmt.Println(ok("сгенерировал: " + pass))
+		fmt.Println(ok(tr("сгенерировал: ") + pass))
 	}
 	s.env["STENO_PANEL_PASSWORD"] = pass
 	if !strings.HasPrefix(s.cfg.Panel.Addr, "127.0.0.1") &&
 		!strings.HasPrefix(s.cfg.Panel.Addr, "localhost") {
-		s.cfg.Panel.Secure = s.confirm("Панель за HTTPS?", true)
+		s.cfg.Panel.Secure = s.confirm(tr("Панель за HTTPS?"), true)
 		if !s.cfg.Panel.Secure {
-			fmt.Println(warn("панель смотрит наружу без TLS — пароль и cookie пойдут открытым текстом"))
+			fmt.Println(warn(tr("панель смотрит наружу без TLS — пароль и cookie пойдут открытым текстом")))
 		}
 	}
 	return nil
@@ -432,22 +462,22 @@ func (s *setupState) askPanel(ctx context.Context) error {
 // --- запись ------------------------------------------------------------------
 
 func (s *setupState) write(configPath string) error {
-	section("Готово")
+	section(tr("Готово"))
 
 	// Секреты кладём отдельным файлом с правами 0600 и не пускаем в конфиг:
 	// конфиг хочется держать в репозитории, а токены — нет.
 	envPath := filepath.Join(s.dir, ".env")
 	if len(s.env) > 0 {
 		var b strings.Builder
-		b.WriteString("# Секреты steno. Файл читается при запуске.\n")
-		b.WriteString("# Не клади его в репозиторий: тут ключи, а не настройки.\n\n")
+		b.WriteString(tr("# Секреты steno. Файл читается при запуске.\n"))
+		b.WriteString(tr("# Не клади его в репозиторий: тут ключи, а не настройки.\n\n"))
 		for _, k := range sortedKeys(s.env) {
 			fmt.Fprintf(&b, "%s=%s\n", k, s.env[k])
 		}
 		if err := os.WriteFile(envPath, []byte(b.String()), 0o600); err != nil {
-			return fmt.Errorf("не записался %s: %w", envPath, err)
+			return fmt.Errorf(tr("не записался %s: %w"), envPath, err)
 		}
-		fmt.Println(ok(envPath + "  " + dim("права 0600, "+strconv.Itoa(len(s.env))+" секретов")))
+		fmt.Println(ok(envPath + "  " + dim(tr("права 0600, ")+strconv.Itoa(len(s.env))+tr(" секретов"))))
 	}
 
 	// Каталог мог поменяться на шаге «Где хранить»: конфиг кладём туда же, где
@@ -471,23 +501,23 @@ func (s *setupState) write(configPath string) error {
 	gi := filepath.Join(s.dir, ".gitignore")
 	if _, err := os.Stat(gi); os.IsNotExist(err) && len(s.env) > 0 {
 		_ = os.WriteFile(gi, []byte(".env\ndata/\n"), 0o644)
-		fmt.Println(ok(gi + "  " + dim("чтобы .env не уехал в репозиторий")))
+		fmt.Println(ok(gi + "  " + dim(tr("чтобы .env не уехал в репозиторий"))))
 	}
 
 	fmt.Println()
-	fmt.Println(bold("Дальше:"))
+	fmt.Println(bold(tr("Дальше:")))
 	// Путь целиком, а не имя файла: мастер мог завести каталог не там, откуда
 	// его запустили, и «steno doctor -c steno.json» из другого места не сработает.
 	fmt.Printf("  cd %s\n", s.dir)
-	fmt.Printf("  steno doctor   %s\n", dim("проверить, что всё на месте"))
-	fmt.Printf("  steno serve    %s\n", dim("запустить"))
+	fmt.Printf("  steno doctor   %s\n", dim(tr("проверить, что всё на месте")))
+	fmt.Printf("  steno serve    %s\n", dim(tr("запустить")))
 	if s.cfg.Panel.Enabled {
-		fmt.Printf("  http://%s%s\n", s.cfg.Panel.Addr, dim("  — панель"))
+		fmt.Printf("  http://%s%s\n", s.cfg.Panel.Addr, dim(tr("  — панель")))
 	}
 	fmt.Println()
-	fmt.Println(dim("Проверить на живом созвоне, ничего больше не настраивая:"))
+	fmt.Println(dim(tr("Проверить на живом созвоне, ничего больше не настраивая:")))
 	fmt.Printf("  steno join --no-followup --captions %s\n",
-		dim("https://meet.google.com/… или https://meet.jit.si/…"))
+		dim(tr("https://meet.google.com/… или https://meet.jit.si/…")))
 	return nil
 }
 
@@ -558,7 +588,7 @@ func (s *setupState) choose(question string, options []string, def int) int {
 		fmt.Printf("    %d) %s\n", i+1, o)
 	}
 	for {
-		fmt.Printf("  Номер [%s]: ", dim(strconv.Itoa(def+1)))
+		fmt.Printf(tr("  Номер [%s]: "), dim(strconv.Itoa(def+1)))
 		line, _ := s.in.ReadString('\n')
 		v := strings.TrimSpace(line)
 		if v == "" {
@@ -582,11 +612,11 @@ func (s *setupState) askGoogleAccess() {
 	if s.cfg.Google.ClientID != "" || s.cfg.GoogleDocs.CredentialsFile != "" {
 		return // уже спрашивали
 	}
-	i := s.choose("Как steno попадёт в Google?", []string{
-		"По кнопке в панели " +
-			dim("человек соглашается один раз; steno видит ровно то, что видит он"),
-		"Ключом организации " +
-			dim("файл service-account: видит календари всех, нужен свой домен и админка"),
+	i := s.choose(tr("Как steno попадёт в Google?"), []string{
+		tr("По кнопке в панели ") +
+			dim(tr("человек соглашается один раз; steno видит ровно то, что видит он")),
+		tr("Ключом организации ") +
+			dim(tr("файл service-account: видит календари всех, нужен свой домен и админка")),
 	}, 0)
 	if i == 1 {
 		s.cfg.GoogleDocs.CredentialsFile = s.askGoogleKey()
@@ -595,31 +625,31 @@ func (s *setupState) askGoogleAccess() {
 	// Адрес страницы, а не путь по меню: меню Google переставляет пункты
 	// чаще, чем меняет адреса, и человек, который ищет «Credentials» глазами,
 	// натыкается на переименованный раздел.
-	fmt.Println(dim("  Открой https://console.cloud.google.com/apis/credentials"))
-	fmt.Println(dim("  → Create credentials → OAuth client ID → тип Desktop app."))
-	fmt.Println(dim("  Google покажет две строки — скопируй их сюда."))
+	fmt.Println(dim(tr("  Открой https://console.cloud.google.com/apis/credentials")))
+	fmt.Println(dim(tr("  → Create credentials → OAuth client ID → тип Desktop app.")))
+	fmt.Println(dim(tr("  Google покажет две строки — скопируй их сюда.")))
 	s.cfg.Google.ClientID = s.ask("Client ID", "")
 	if sec := s.askSecret("Client secret", ""); sec != "" {
 		s.env["GOOGLE_CLIENT_SECRET"] = sec
 	}
 	if s.cfg.Google.ClientID == "" {
-		fmt.Println(warn("без этого кнопка в панели не появится"))
+		fmt.Println(warn(tr("без этого кнопка в панели не появится")))
 		return
 	}
-	fmt.Println(ok("осталось нажать «Подключить Google» в настройках панели"))
+	fmt.Println(ok(tr("осталось нажать «Подключить Google» в настройках панели")))
 }
 
 func (s *setupState) askGoogleKey() string {
-	fmt.Println(dim("  Нужен ключ service-account с domain-wide delegation."))
-	fmt.Println(dim("  Консоль Google → IAM → сервисные аккаунты → ключи → создать JSON."))
+	fmt.Println(dim(tr("  Нужен ключ service-account с domain-wide delegation.")))
+	fmt.Println(dim(tr("  Консоль Google → IAM → сервисные аккаунты → ключи → создать JSON.")))
 	for {
-		p := s.ask("Путь к файлу ключа", "")
+		p := s.ask(tr("Путь к файлу ключа"), "")
 		if p == "" {
-			fmt.Println(warn("без него календарь, почта и Google Docs не заработают"))
+			fmt.Println(warn(tr("без него календарь, почта и Google Docs не заработают")))
 			return ""
 		}
 		p = expandHome(p)
-		if c := checkGoogleKey("ключ", p); c.state == "ok" {
+		if c := checkGoogleKey(tr("ключ"), p); c.state == "ok" {
 			fmt.Println(ok(c.note))
 			return p
 		} else {
@@ -667,7 +697,7 @@ func section(s string) {
 	fmt.Println()
 	if stepTotal > 0 {
 		fmt.Printf("%s  %s\n", bold("· "+s),
-			dim(fmt.Sprintf("шаг %d из %d", stepNo, stepTotal)))
+			dim(fmt.Sprintf(tr("шаг %d из %d"), stepNo, stepTotal)))
 		return
 	}
 	fmt.Println(bold("· " + s))

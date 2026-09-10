@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 /** Заголовок страницы с подписью: одна строка о том, что здесь и зачем. */
 export function PageHead({
@@ -64,11 +65,11 @@ export function Empty({ children }: { children: ReactNode }) {
 }
 
 export function Loading() {
-  return <div className="py-12 text-center text-sm text-[var(--muted-foreground)]">Загружаю…</div>;
+  return <div className="py-12 text-center text-sm text-[var(--muted-foreground)]">{t("Загружаю…")}</div>;
 }
 
 export function Failed({ error }: { error: unknown }) {
-  const msg = error instanceof Error ? error.message : "что-то сломалось";
+  const msg = error instanceof Error ? error.message : t("что-то сломалось");
   return (
     <div className="rounded-2xl border border-[var(--destructive)]/30 bg-[var(--destructive)]/5 px-5 py-4 text-sm text-[var(--destructive)]">
       {msg}

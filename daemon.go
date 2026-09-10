@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,7 +40,13 @@ const (
 
 // errAlreadyRunning — единственная причина, по которой serve отказывается
 // стартовать молча. Проверяется через errors.Is в тестах и в daemonize.
-var errAlreadyRunning = errors.New("steno уже работает")
+type alreadyRunningError struct{}
+
+// Error переводится в момент показа, а не при инициализации пакета:
+// пакетные переменные считаются до того, как язык прочитан из конфига.
+func (alreadyRunningError) Error() string { return tr("steno уже работает") }
+
+var errAlreadyRunning error = alreadyRunningError{}
 
 // daemonInfo — то, что лежит в pid-файле. Одного pid мало: номера
 // переиспользуются, и через сутки после падения steno тот же номер может
@@ -254,7 +259,7 @@ func acquireDaemonLock(p daemonPaths, info daemonInfo) (*pidLock, error) {
 			other, rerr := readDaemonInfo(p.PID)
 			f.Close()
 			if rerr == nil && other.PID > 0 {
-				return nil, fmt.Errorf("%w: pid %d, запущен %s",
+				return nil, fmt.Errorf(tr("%w: pid %d, запущен %s"),
 					errAlreadyRunning, other.PID, other.Started.Local().Format("02.01 15:04"))
 			}
 			return nil, errAlreadyRunning
@@ -271,7 +276,7 @@ func acquireDaemonLock(p daemonPaths, info daemonInfo) (*pidLock, error) {
 		}
 		return &pidLock{path: p.PID, f: f}, nil
 	}
-	return nil, fmt.Errorf("не удалось взять %s: файл подменяют на ходу", p.PID)
+	return nil, fmt.Errorf(tr("не удалось взять %s: файл подменяют на ходу"), p.PID)
 }
 
 func writeDaemonInfo(f *os.File, info daemonInfo) error {
@@ -415,13 +420,13 @@ func configArg(args []string) string {
 func humanSize(n int64) string {
 	switch {
 	case n < 1024:
-		return fmt.Sprintf("%d Б", n)
+		return fmt.Sprintf(tr("%d Б"), n)
 	case n < 1024*1024:
-		return fmt.Sprintf("%.0f КБ", float64(n)/1024)
+		return fmt.Sprintf(tr("%.0f КБ"), float64(n)/1024)
 	case n < 1024*1024*1024:
-		return fmt.Sprintf("%.1f МБ", float64(n)/(1024*1024))
+		return fmt.Sprintf(tr("%.1f МБ"), float64(n)/(1024*1024))
 	}
-	return fmt.Sprintf("%.1f ГБ", float64(n)/(1024*1024*1024))
+	return fmt.Sprintf(tr("%.1f ГБ"), float64(n)/(1024*1024*1024))
 }
 
 // sinceText — «3 ч 12 мин назад» вместо «3h12m14.7s».
@@ -431,13 +436,13 @@ func sinceText(d time.Duration) string {
 	}
 	switch {
 	case d < time.Minute:
-		return fmt.Sprintf("%d сек", int(d.Seconds()))
+		return fmt.Sprintf(tr("%d сек"), int(d.Seconds()))
 	case d < time.Hour:
-		return fmt.Sprintf("%d мин", int(d.Minutes()))
+		return fmt.Sprintf(tr("%d мин"), int(d.Minutes()))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("%d ч %d мин", int(d.Hours()), int(d.Minutes())%60)
+		return fmt.Sprintf(tr("%d ч %d мин"), int(d.Hours()), int(d.Minutes())%60)
 	}
-	return fmt.Sprintf("%d дн %d ч", int(d.Hours())/24, int(d.Hours())%24)
+	return fmt.Sprintf(tr("%d дн %d ч"), int(d.Hours())/24, int(d.Hours())%24)
 }
 
 func fileSize(path string) int64 {

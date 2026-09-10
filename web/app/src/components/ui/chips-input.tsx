@@ -1,6 +1,7 @@
 import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 // Список значений, который набирают руками: чей календарь смотреть, из какого
 // чата принимать ссылки, как проект называют вслух.
@@ -56,7 +57,7 @@ export function ChipsInput({
   value,
   onChange,
   placeholder,
-  addLabel = "Добавить",
+  addLabel = t("Добавить"),
   id,
   disabled,
 }: ChipsInputProps) {
@@ -118,7 +119,7 @@ export function ChipsInput({
           <button
             type="button"
             tabIndex={-1}
-            aria-label={`Убрать ${v}`}
+            aria-label={`${t("Убрать")} ${v}`}
             onMouseDown={(e) => {
               e.preventDefault();
               onChange(value.filter((x) => x !== v));
@@ -145,7 +146,7 @@ export function ChipsInput({
         // настоящими значениями читается как ещё одно, уже добавленное. Пустой
         // строки здесь тоже мало — набранные чипы переносят поле на вторую
         // строку, и без текста она выглядит просто пустой полосой с плюсом.
-        placeholder={value.length === 0 ? placeholder : "добавить ещё"}
+        placeholder={value.length === 0 ? placeholder : t("добавить ещё")}
         autoComplete="off"
         spellCheck={false}
         disabled={disabled}

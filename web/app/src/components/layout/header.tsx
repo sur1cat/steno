@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { buildBreadcrumbs } from "./breadcrumbs";
 import { ThemeToggle } from "./theme-toggle";
+import { t } from "@/lib/i18n";
 
 // Шапка. Раньше в неё было забито всё сразу: логотип, пять вкладок, поиск, две
 // кнопки и «выйти» — одной строкой во весь экран. Разделы уехали в колонку
@@ -37,13 +38,13 @@ export function Header({ onOpenNav }: { onOpenNav: () => void }) {
       <button
         type="button"
         onClick={onOpenNav}
-        aria-label="Разделы"
+        aria-label={t("Разделы")}
         className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] lg:hidden"
       >
         <Menu className="h-5 w-5" />
       </button>
 
-      <nav aria-label="Хлебные крошки" className="flex min-w-0 items-center gap-1.5">
+      <nav aria-label={t("Хлебные крошки")} className="flex min-w-0 items-center gap-1.5">
         {crumbs.map((c, i) => (
           <span key={`${c.label}-${i}`} className="flex min-w-0 items-center gap-1.5">
             {i > 0 && <span className="text-xs text-[var(--muted-foreground)]">/</span>}
@@ -74,7 +75,7 @@ export function Header({ onOpenNav }: { onOpenNav: () => void }) {
           type="search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Поиск по расшифровкам…"
+          placeholder={t("Поиск по расшифровкам…")}
           autoComplete="off"
           spellCheck={false}
           className="h-9 w-full rounded-xl border-0 bg-[var(--muted)] pl-9 pr-3 text-sm placeholder:text-[var(--muted-foreground)]/70 focus:outline-none focus:ring-2 focus:ring-primary/30"
@@ -85,7 +86,7 @@ export function Header({ onOpenNav }: { onOpenNav: () => void }) {
           строка есть у страницы поиска, туда и ведём. */}
       <Link
         to="/search"
-        aria-label="Поиск"
+        aria-label={t("Поиск")}
         className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)] md:ml-0 md:hidden"
       >
         <Search className="h-[18px] w-[18px]" />
@@ -100,7 +101,7 @@ export function Header({ onOpenNav }: { onOpenNav: () => void }) {
           onClick={() => logout.mutate()}
         >
           <LogOut className="h-4 w-4" />
-          <span className="hidden sm:inline">выйти</span>
+          <span className="hidden sm:inline">{t("выйти")}</span>
         </Button>
       </div>
     </header>

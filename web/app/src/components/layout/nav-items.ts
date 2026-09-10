@@ -6,6 +6,7 @@ import {
   Video,
   type LucideIcon,
 } from "lucide-react";
+import { t } from "@/lib/i18n";
 
 // Разделы панели одним списком. Рисуют его двое — колонка на широком экране и
 // выдвижная панель на узком, — и оба берут отсюда: разъехавшаяся навигация,
@@ -28,35 +29,35 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   {
     to: "/",
-    label: "Созвоны",
-    about: "Что уже прошло",
+    label: t("Созвоны"),
+    about: t("Что уже прошло"),
     icon: Video,
     end: true,
     owns: ["/m/", "/search"],
   },
   {
     to: "/schedule",
-    label: "Расписание",
-    about: "Куда бот пойдёт",
+    label: t("Расписание"),
+    about: t("Куда бот пойдёт"),
     icon: CalendarDays,
   },
   {
     to: "/tasks",
-    label: "Задачи",
-    about: "Кто что обещал",
+    label: t("Задачи"),
+    about: t("Кто что обещал"),
     icon: ListChecks,
   },
   {
     to: "/projects",
-    label: "Проекты",
-    about: "По делу, а не по встречам",
+    label: t("Проекты"),
+    about: t("По делу, а не по встречам"),
     icon: FolderKanban,
     owns: ["/p/"],
   },
   {
     to: "/settings",
-    label: "Настройки",
-    about: "Проекты и каналы",
+    label: t("Настройки"),
+    about: t("Проекты и каналы"),
     icon: Settings,
   },
 ];

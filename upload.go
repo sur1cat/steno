@@ -28,8 +28,8 @@ const maxUploadBytes = 4 << 30 // четырёхчасовая встреча в
 func (p *Panel) apiUpload(w http.ResponseWriter, r *http.Request) {
 	if p.cfg.Transcribe.Source == "captions" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"error": "сейчас текст берётся из субтитров Meet, а в загруженном файле их нет. " +
-				"Для загрузок нужен whisper или Groq — поменяй это в настройках расшифровки",
+			"error": tr("сейчас текст берётся из субтитров Meet, а в загруженном файле их нет. ") +
+				tr("Для загрузок нужен whisper или Groq — поменяй это в настройках расшифровки"),
 		})
 		return
 	}
@@ -38,12 +38,12 @@ func (p *Panel) apiUpload(w http.ResponseWriter, r *http.Request) {
 	// Файл сразу пишем на диск: держать двухчасовое видео в памяти нельзя.
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeJSON(w, http.StatusBadRequest,
-			map[string]string{"error": "не смог прочитать файл: " + err.Error()})
+			map[string]string{"error": tr("не смог прочитать файл: ") + err.Error()})
 		return
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "не приложен файл"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("не приложен файл")})
 		return
 	}
 	defer file.Close()
@@ -53,7 +53,7 @@ func (p *Panel) apiUpload(w http.ResponseWriter, r *http.Request) {
 		title = strings.TrimSuffix(header.Filename, filepath.Ext(header.Filename))
 	}
 	if title == "" {
-		title = "Загруженная запись"
+		title = tr("Загруженная запись")
 	}
 
 	m := &Meeting{
@@ -81,12 +81,12 @@ func (p *Panel) apiUpload(w http.ResponseWriter, r *http.Request) {
 	if copyErr != nil {
 		os.RemoveAll(dir)
 		writeJSON(w, http.StatusBadRequest,
-			map[string]string{"error": "файл не долился: " + copyErr.Error()})
+			map[string]string{"error": tr("файл не долился: ") + copyErr.Error()})
 		return
 	}
 	if n == 0 {
 		os.RemoveAll(dir)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "файл пустой"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": tr("файл пустой")})
 		return
 	}
 
@@ -97,7 +97,7 @@ func (p *Panel) apiUpload(w http.ResponseWriter, r *http.Request) {
 		p.apiFail(w, err)
 		return
 	}
-	p.log.Printf("загружено: %s (%.1f МБ) → %s", header.Filename, float64(n)/(1<<20), m.ID)
+	p.log.Printf(tr("загружено: %s (%.1f МБ) → %s"), header.Filename, float64(n)/(1<<20), m.ID)
 
 	// Перекодирование и расшифровка идут в фоне: часовая запись — это минуты
 	// работы, и держать на них запрос браузера незачем.
@@ -114,7 +114,7 @@ func (p *Panel) processUpload(m *Meeting, rawPath string) {
 	defer cancel()
 
 	if err := toStenoAudio(ctx, rawPath, m.AudioPath); err != nil {
-		p.log.Printf("загрузка %s: %v", m.ID, err)
+		p.log.Printf(tr("загрузка %s: %v"), m.ID, err)
 		_ = p.st.SetStatus(m.ID, "failed", err.Error())
 		return
 	}
@@ -122,12 +122,12 @@ func (p *Panel) processUpload(m *Meeting, rawPath string) {
 	_ = os.Remove(rawPath)
 
 	if err := p.st.FinishMeeting(m.ID, time.Time{}, time.Now(), nil,
-		"recorded", "", "загружено файлом"); err != nil {
-		p.log.Printf("загрузка %s: %v", m.ID, err)
+		"recorded", "", tr("загружено файлом")); err != nil {
+		p.log.Printf(tr("загрузка %s: %v"), m.ID, err)
 		return
 	}
 	if err := processMeeting(ctx, p.cfg, p.st, m.ID, false); err != nil {
-		p.log.Printf("загрузка %s: %v", m.ID, err)
+		p.log.Printf(tr("загрузка %s: %v"), m.ID, err)
 	}
 }
 
@@ -136,7 +136,7 @@ func (p *Panel) processUpload(m *Meeting, rawPath string) {
 // хранить незачем.
 func toStenoAudio(ctx context.Context, src, dst string) error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return fmt.Errorf("нужен ffmpeg, чтобы разобрать загруженный файл: %w", err)
+		return fmt.Errorf(tr("нужен ffmpeg, чтобы разобрать загруженный файл: %w"), err)
 	}
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-nostdin", "-loglevel", "error",
@@ -148,17 +148,17 @@ func toStenoAudio(ctx context.Context, src, dst string) error {
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ffmpeg не разобрал файл: %w\n%s", err, tail(errBuf.String(), 400))
+		return fmt.Errorf(tr("ffmpeg не разобрал файл: %w\n%s"), err, tail(errBuf.String(), 400))
 	}
 	st, err := os.Stat(dst)
 	if err != nil {
-		return fmt.Errorf("аудио не получилось: %w", err)
+		return fmt.Errorf(tr("аудио не получилось: %w"), err)
 	}
 	// Пустой ogg — это только заголовки, около двухсот байт. Порог выше был бы
 	// строже нужного и браковал короткие записи, а поймать надо ровно случай
 	// «ffmpeg отработал, а звука не получилось».
 	if st.Size() < 256 {
-		return fmt.Errorf("в файле не нашлось звука (%d байт на выходе)", st.Size())
+		return fmt.Errorf(tr("в файле не нашлось звука (%d байт на выходе)"), st.Size())
 	}
 	return nil
 }

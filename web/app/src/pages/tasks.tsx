@@ -5,8 +5,9 @@ import { dateRu, dueRu, overdue, plural } from "@/lib/fmt";
 import { cn } from "@/lib/utils";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { Empty, Failed, GroupHead, Loading, PageHead } from "@/components/layout";
+import { t } from "@/lib/i18n";
 
-const UNASSIGNED = "не назначен";
+const UNASSIGNED = t("не назначен");
 
 // «Не назначен» первым — это то, что вообще ни на ком не висит, и именно оно
 // требует решения. Дальше по алфавиту: тот же порядок, что у фильтра сверху,
@@ -43,18 +44,18 @@ export function TasksPage() {
   return (
     <>
       <PageHead
-        title="Задачи"
-        sub={`${plural(tasks.length, "задача", "задачи", "задач")} со всех созвонов${
+        title={t("Задачи")}
+        sub={`${plural(tasks.length, t("задача"), t("задачи"), t("задач"))} ${t("со всех созвонов")}${
           owner ? ` · ${owner}` : ""
         }`}
         actions={
           owners.length > 0 && (
             <SelectMenu
-              label="Кто отвечает"
+              label={t("Кто отвечает")}
               value={owner}
               onChange={(v) => setParams(v ? { owner: v } : {})}
               options={[
-                { value: "", label: "все" },
+                { value: "", label: t("все") },
                 ...owners.map((o) => ({ value: o, label: o })),
               ]}
               triggerClassName="w-56 max-w-none"
@@ -64,41 +65,41 @@ export function TasksPage() {
       />
 
       {groups.length === 0 ? (
-        <Empty>Задач пока нет.</Empty>
+        <Empty>{t("Задач пока нет.")}</Empty>
       ) : (
         <div className="space-y-7">
           {groups.map((g) => (
             <section key={g.owner}>
               <GroupHead
                 title={g.owner}
-                count={plural(g.tasks.length, "задача", "задачи", "задач")}
+                count={plural(g.tasks.length, t("задача"), t("задачи"), t("задач"))}
               />
               <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
-                {g.tasks.map((t, i) => (
+                {g.tasks.map((item, i) => (
                   <div key={i} className="px-4 py-3.5 text-sm sm:px-5">
                     <div className="max-w-prose leading-relaxed">
-                      {t.what}{" "}
+                      {item.what}{" "}
                       <span
                         className={cn(
                           "text-[var(--muted-foreground)]",
-                          overdue(t.due) && "text-[var(--destructive)]",
+                          overdue(item.due) && "text-[var(--destructive)]",
                         )}
                       >
-                        · {dueRu(t.due)}
+                        · {dueRu(item.due)}
                       </span>
                     </div>
                     <div className="mt-1 text-[13px] text-[var(--muted-foreground)]">
                       <Link
-                        to={`/m/${t.meetingId}?t=${Math.round(t.at)}`}
+                        to={`/m/${item.meetingId}?t=${Math.round(item.at)}`}
                         className="text-primary underline-offset-4 hover:underline"
                       >
-                        {t.meetingTitle || "созвон"}
+                        {item.meetingTitle || t("созвон")}
                       </Link>{" "}
-                      · {dateRu(t.meetingAt)}
+                      · {dateRu(item.meetingAt)}
                     </div>
-                    {t.quote && (
+                    {item.quote && (
                       <div className="mt-1.5 max-w-prose border-l-2 border-[var(--border)] pl-3 text-[13px] italic leading-relaxed text-[var(--muted-foreground)]">
-                        {t.quote}
+                        {item.quote}
                       </div>
                     )}
                   </div>

@@ -39,7 +39,7 @@ func renderHTML(m *Meeting, f *Followup, segs []Segment) string {
 	b.WriteString("</i></p>\n")
 
 	if len(f.TLDR) > 0 {
-		b.WriteString("<h2>Коротко</h2>\n<ul>\n")
+		b.WriteString(tr("<h2>Коротко</h2>\n<ul>\n"))
 		for _, s := range f.TLDR {
 			fmt.Fprintf(&b, "<li>%s</li>\n", e(s))
 		}
@@ -47,16 +47,16 @@ func renderHTML(m *Meeting, f *Followup, segs []Segment) string {
 	}
 
 	if len(f.ActionItems) > 0 {
-		b.WriteString("<h2>Задачи</h2>\n<ul>\n")
+		b.WriteString(tr("<h2>Задачи</h2>\n<ul>\n"))
 		for _, a := range f.ActionItems {
-			fmt.Fprintf(&b, "<li><b>%s</b> — %s <i>(срок: %s, %s)</i><br/><span>«%s»</span></li>\n",
-				e(a.Owner), e(a.What), e(dueOr(a.Due, "не назван")), e(clock(a.At)), e(a.Quote))
+			fmt.Fprintf(&b, tr("<li><b>%s</b> — %s <i>(срок: %s, %s)</i><br/><span>«%s»</span></li>\n"),
+				e(a.Owner), e(a.What), e(dueOr(a.Due, tr("не назван"))), e(clock(a.At)), e(a.Quote))
 		}
 		b.WriteString("</ul>\n")
 	}
 
 	if len(f.Decisions) > 0 {
-		b.WriteString("<h2>Решения</h2>\n<ul>\n")
+		b.WriteString(tr("<h2>Решения</h2>\n<ul>\n"))
 		for _, d := range f.Decisions {
 			fmt.Fprintf(&b, "<li><b>%s</b> — %s <i>(%s)</i></li>\n", e(d.What), e(d.Why), e(clock(d.At)))
 		}
@@ -64,16 +64,16 @@ func renderHTML(m *Meeting, f *Followup, segs []Segment) string {
 	}
 
 	if len(f.OpenQuestions) > 0 {
-		b.WriteString("<h2>Открытые вопросы</h2>\n<ul>\n")
+		b.WriteString(tr("<h2>Открытые вопросы</h2>\n<ul>\n"))
 		for _, q := range f.OpenQuestions {
-			fmt.Fprintf(&b, "<li>%s <i>(ждём: %s, %s)</i></li>\n",
-				e(q.Question), e(dueOr(q.WaitingOn, "не определено")), e(clock(q.At)))
+			fmt.Fprintf(&b, tr("<li>%s <i>(ждём: %s, %s)</i></li>\n"),
+				e(q.Question), e(dueOr(q.WaitingOn, tr("не определено"))), e(clock(q.At)))
 		}
 		b.WriteString("</ul>\n")
 	}
 
 	if len(f.Risks) > 0 {
-		b.WriteString("<h2>Риски</h2>\n<ul>\n")
+		b.WriteString(tr("<h2>Риски</h2>\n<ul>\n"))
 		for _, r := range f.Risks {
 			fmt.Fprintf(&b, "<li>%s</li>\n", e(r))
 		}
@@ -81,7 +81,7 @@ func renderHTML(m *Meeting, f *Followup, segs []Segment) string {
 	}
 
 	if len(f.Timeline) > 0 {
-		b.WriteString("<h2>Как шёл разговор</h2>\n<ul>\n")
+		b.WriteString(tr("<h2>Как шёл разговор</h2>\n<ul>\n"))
 		for _, t := range f.Timeline {
 			fmt.Fprintf(&b, "<li><b>%s %s</b> — %s</li>\n", e(clock(t.At)), e(t.Title), e(t.Summary))
 		}
@@ -89,7 +89,7 @@ func renderHTML(m *Meeting, f *Followup, segs []Segment) string {
 	}
 
 	if len(segs) > 0 {
-		b.WriteString("<h2>Расшифровка</h2>\n")
+		b.WriteString(tr("<h2>Расшифровка</h2>\n"))
 		for _, line := range strings.Split(renderTranscript(segs), "\n") {
 			if line == "" {
 				continue
@@ -121,25 +121,25 @@ func renderSlack(m *Meeting, f *Followup, docURL string) string {
 		fmt.Fprintf(&b, "• %s\n", e(s))
 	}
 	if len(f.ActionItems) > 0 {
-		b.WriteString("\n*Задачи*\n")
+		b.WriteString(tr("\n*Задачи*\n"))
 		for _, a := range f.ActionItems {
-			fmt.Fprintf(&b, "• *%s* — %s _(%s)_\n", e(a.Owner), e(a.What), e(dueOr(a.Due, "срок не назван")))
+			fmt.Fprintf(&b, "• *%s* — %s _(%s)_\n", e(a.Owner), e(a.What), e(dueOr(a.Due, tr("срок не назван"))))
 		}
 	}
 	if len(f.Decisions) > 0 {
-		b.WriteString("\n*Решения*\n")
+		b.WriteString(tr("\n*Решения*\n"))
 		for _, d := range f.Decisions {
 			fmt.Fprintf(&b, "• %s\n", e(d.What))
 		}
 	}
 	if len(f.OpenQuestions) > 0 {
-		b.WriteString("\n*Открытые вопросы*\n")
+		b.WriteString(tr("\n*Открытые вопросы*\n"))
 		for _, q := range f.OpenQuestions {
-			fmt.Fprintf(&b, "• %s _(ждём: %s)_\n", e(q.Question), e(dueOr(q.WaitingOn, "не определено")))
+			fmt.Fprintf(&b, tr("• %s _(ждём: %s)_\n"), e(q.Question), e(dueOr(q.WaitingOn, tr("не определено"))))
 		}
 	}
 	if docURL != "" {
-		fmt.Fprintf(&b, "\n<%s|Полные заметки и расшифровка>", docURL)
+		fmt.Fprintf(&b, tr("\n<%s|Полные заметки и расшифровка>"), docURL)
 	}
 	return b.String()
 }
@@ -162,26 +162,26 @@ func renderTelegram(m *Meeting, f *Followup, docURL string) string {
 		fmt.Fprintf(&b, "• %s\n", e(s))
 	}
 	if len(f.ActionItems) > 0 {
-		b.WriteString("\n<b>Задачи</b>\n")
+		b.WriteString(tr("\n<b>Задачи</b>\n"))
 		for _, a := range f.ActionItems {
 			fmt.Fprintf(&b, "• <b>%s</b> — %s <i>(%s)</i>\n",
-				e(a.Owner), e(a.What), e(dueOr(a.Due, "срок не назван")))
+				e(a.Owner), e(a.What), e(dueOr(a.Due, tr("срок не назван"))))
 		}
 	}
 	if len(f.Decisions) > 0 {
-		b.WriteString("\n<b>Решения</b>\n")
+		b.WriteString(tr("\n<b>Решения</b>\n"))
 		for _, d := range f.Decisions {
 			fmt.Fprintf(&b, "• %s\n", e(d.What))
 		}
 	}
 	if len(f.OpenQuestions) > 0 {
-		b.WriteString("\n<b>Открытые вопросы</b>\n")
+		b.WriteString(tr("\n<b>Открытые вопросы</b>\n"))
 		for _, q := range f.OpenQuestions {
-			fmt.Fprintf(&b, "• %s <i>(ждём: %s)</i>\n", e(q.Question), e(dueOr(q.WaitingOn, "не определено")))
+			fmt.Fprintf(&b, tr("• %s <i>(ждём: %s)</i>\n"), e(q.Question), e(dueOr(q.WaitingOn, tr("не определено"))))
 		}
 	}
 	if docURL != "" {
-		fmt.Fprintf(&b, "\n<a href=\"%s\">Полные заметки и расшифровка</a>", e(docURL))
+		fmt.Fprintf(&b, tr("\n<a href=\"%s\">Полные заметки и расшифровка</a>"), e(docURL))
 	}
 	return b.String()
 }
@@ -207,27 +207,27 @@ func renderPlain(m *Meeting, f *Followup) string {
 		fmt.Fprintf(&b, "  %s\n", s)
 	}
 	if len(f.ActionItems) > 0 {
-		b.WriteString("\nЗадачи\n")
+		b.WriteString(tr("\nЗадачи\n"))
 		for _, a := range f.ActionItems {
 			fmt.Fprintf(&b, "  [%s] %s — %s (%s)\n",
-				clock(a.At), a.Owner, a.What, dueOr(a.Due, "срок не назван"))
+				clock(a.At), a.Owner, a.What, dueOr(a.Due, tr("срок не назван")))
 		}
 	}
 	if len(f.Decisions) > 0 {
-		b.WriteString("\nРешения\n")
+		b.WriteString(tr("\nРешения\n"))
 		for _, d := range f.Decisions {
 			fmt.Fprintf(&b, "  [%s] %s — %s\n", clock(d.At), d.What, d.Why)
 		}
 	}
 	if len(f.OpenQuestions) > 0 {
-		b.WriteString("\nОткрытые вопросы\n")
+		b.WriteString(tr("\nОткрытые вопросы\n"))
 		for _, q := range f.OpenQuestions {
-			fmt.Fprintf(&b, "  [%s] %s (ждём: %s)\n",
-				clock(q.At), q.Question, dueOr(q.WaitingOn, "не определено"))
+			fmt.Fprintf(&b, tr("  [%s] %s (ждём: %s)\n"),
+				clock(q.At), q.Question, dueOr(q.WaitingOn, tr("не определено")))
 		}
 	}
 	if len(f.Risks) > 0 {
-		b.WriteString("\nРиски\n")
+		b.WriteString(tr("\nРиски\n"))
 		for _, x := range f.Risks {
 			fmt.Fprintf(&b, "  %s\n", x)
 		}

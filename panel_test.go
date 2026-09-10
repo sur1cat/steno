@@ -159,6 +159,11 @@ func TestPanelAPIRequiresLogin(t *testing.T) {
 			t.Errorf("%s отдался без входа: %d", path, code)
 		}
 	}
+	// Удаление — тем более: ручка, стирающая созвон, без входа опаснее всех
+	// остальных вместе взятых.
+	if code, _ := a.do("DELETE", "/api/meetings/m1", nil); code != http.StatusUnauthorized {
+		t.Errorf("удаление созвона доступно без входа: %d", code)
+	}
 	// Сам бандл не секрет: страница входа — это он и есть.
 	if code, _ := a.do("GET", "/tasks", nil); code != 200 {
 		t.Errorf("бандл не отдался: %d", code)
@@ -237,6 +242,94 @@ func TestPanelMeetings(t *testing.T) {
 
 	if code, _ := a.do("GET", "/api/meetings/нет-такого", nil); code != 404 {
 		t.Errorf("несуществующий созвон отдался с кодом %d", code)
+	}
+}
+
+// Удаления созвона в панели не было вовсе: ни ручки, ни кнопки. Ошибиться
+// кнопкой записи или загрузить не тот файл — обычное дело, а убрать созвон было
+// нечем ни здесь, ни в терминале.
+func TestPanelDeleteMeeting(t *testing.T) {
+	srv, st, _ := testPanel(t)
+	seedOne(t, st)
+	a := login(t, srv, "тайна")
+
+	// Пункт с прошлого созвона, закрытый на этом: он не принадлежит удаляемому
+	// и должен вернуться в работу, а не уйти вместе с ним.
+	if err := st.AddItem(ProjectItem{ID: "Q-старый", Project: "Платежи", Kind: KindQuestion,
+		Text: "кто дежурит", OpenedIn: "m0"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CloseItem("Q-старый", "done", "решили", "m1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddItem(ProjectItem{ID: "T-родился", Project: "Платежи", Kind: KindTask,
+		Text: "закончить миграцию", OpenedIn: "m1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Цена приезжает вместе с созвоном: модалка, открывшаяся с пустым местом
+	// вместо цифр, — это ровно тот момент, когда жмут «да» не глядя.
+	var one struct {
+		Removal struct {
+			Segments    int    `json:"segments"`
+			OpenedTasks int    `json:"openedTasks"`
+			Reopen      int    `json:"reopen"`
+			Text        string `json:"text"`
+		} `json:"removal"`
+	}
+	a.get("/api/meetings/m1", &one)
+	if one.Removal.Segments != 2 || one.Removal.OpenedTasks != 1 || one.Removal.Reopen != 1 {
+		t.Fatalf("цена удаления: %+v", one.Removal)
+	}
+	if !strings.Contains(one.Removal.Text, "откроется заново") {
+		t.Errorf("в цене не сказано про открытый заново пункт: %q", one.Removal.Text)
+	}
+
+	code, body := a.do("DELETE", "/api/meetings/m1", nil)
+	if code != 200 {
+		t.Fatalf("удаление: код %d, тело %s", code, body)
+	}
+	var res struct {
+		OK      bool `json:"ok"`
+		Removed struct {
+			Reopen int `json:"reopen"`
+		} `json:"removed"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK || res.Removed.Reopen != 1 {
+		t.Errorf("ответ на удаление: %s", body)
+	}
+
+	if code, _ := a.do("GET", "/api/meetings/m1", nil); code != 404 {
+		t.Errorf("удалённый созвон всё ещё отдаётся: %d", code)
+	}
+	var list struct {
+		Meetings []struct {
+			ID string `json:"id"`
+		} `json:"meetings"`
+		Total int `json:"total"`
+	}
+	a.get("/api/meetings", &list)
+	if len(list.Meetings) != 0 || list.Total != 0 {
+		t.Errorf("удалённый созвон остался в списке: %+v", list)
+	}
+
+	items, err := st.ProjectItems("Платежи")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "Q-старый" {
+		t.Fatalf("после удаления в проекте: %+v", items)
+	}
+	if items[0].Status != "open" || items[0].ClosedIn != "" {
+		t.Errorf("чужой пункт не вернулся в работу: %+v", items[0])
+	}
+
+	// Опечатка в адресе не должна выглядеть как успешное удаление.
+	if code, _ := a.do("DELETE", "/api/meetings/нет-такого", nil); code != 404 {
+		t.Errorf("удаление несуществующего созвона: код %d", code)
 	}
 }
 

@@ -4,6 +4,7 @@ import { api, type SearchHit } from "@/lib/api";
 import { clock, dateRu, plural } from "@/lib/fmt";
 import { Badge } from "@/components/ui/badge";
 import { Empty, Failed, Loading, PageHead } from "@/components/layout";
+import { t } from "@/lib/i18n";
 
 /** Подсветка собирается из кусков, а не из готовой разметки: в индексе лежит
  *  сырая расшифровка вместе со всем, что люди наговорили и что попало в
@@ -48,16 +49,16 @@ export function SearchPage() {
   return (
     <>
       <PageHead
-        title={q ? `«${q}»` : "Поиск"}
+        title={q ? `“${q}”` : t("Поиск")}
         sub={
           q
-            ? `${plural(hits.length, "совпадение", "совпадения", "совпадений")} в ${plural(
+            ? `${plural(hits.length, t("совпадение"), t("совпадения"), t("совпадений"))} ${t("в")} ${plural(
                 groups.length,
-                "созвоне",
-                "созвонах",
-                "созвонах",
+                t("созвоне"),
+                t("созвонах"),
+                t("созвонах"),
               )}`
-            : "Ищет по расшифровкам и по follow-up сразу"
+            : t("Ищет по расшифровкам и по follow-up сразу")
         }
       />
 
@@ -66,9 +67,9 @@ export function SearchPage() {
 
       {q !== "" && !res.isPending && groups.length === 0 && (
         <Empty>
-          Ничего не нашлось.
+          {t("Ничего не нашлось.")}
           <br />
-          Поиск понимает начало слова: «релиз» найдёт и «релиза», и «релизом».
+          {t("Поиск понимает начало слова: «релиз» найдёт и «релиза», и «релизом».")}
         </Empty>
       )}
 
@@ -77,7 +78,7 @@ export function SearchPage() {
           <div key={g.id} className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
             <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3">
               <Link to={`/m/${g.id}`} className="truncate text-primary underline-offset-4 hover:underline">
-                {g.title || "Без названия"}
+                {g.title || t("Без названия")}
               </Link>
               <Badge>{dateRu(g.startedAt)}</Badge>
             </div>
@@ -92,7 +93,7 @@ export function SearchPage() {
                       {clock(h.at)}
                     </Link>
                   ) : (
-                    <Badge className="shrink-0">итог</Badge>
+                    <Badge className="shrink-0">{t("итог")}</Badge>
                   )}
                   <div className="min-w-0 flex-1 leading-relaxed">
                     {h.speaker && (

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -62,14 +63,14 @@ func cmdAutostart(args []string) error {
 	case "off", "выключить", "uninstall", "disable", "remove":
 		return autostartOff()
 	}
-	return fmt.Errorf("не понял «%s»: steno autostart on | off | status", verb)
+	return fmt.Errorf(tr("не понял «%s»: steno autostart on | off | status"), verb)
 }
 
 // autostartTarget собирает описание службы для этой машины.
 func autostartTarget(cfgPath string) (autostartSpec, error) {
 	exe, err := daemonExecutable()
 	if err != nil {
-		return autostartSpec{}, fmt.Errorf("не нашёл собственный бинарник: %w", err)
+		return autostartSpec{}, fmt.Errorf(tr("не нашёл собственный бинарник: %w"), err)
 	}
 	// Симлинки не разворачиваем нарочно: у поставленного через brew steno
 	// /opt/homebrew/bin/steno ведёт внутрь каталога с номером версии, и
@@ -95,7 +96,7 @@ func autostartTarget(cfgPath string) (autostartSpec, error) {
 		s.Manager = "systemd"
 		s.Unit = filepath.Join(home, ".config", "systemd", "user", "steno.service")
 	default:
-		return autostartSpec{}, fmt.Errorf("автозапуск умею заводить только на macOS и Linux")
+		return autostartSpec{}, errors.New(tr("автозапуск умею заводить только на macOS и Linux"))
 	}
 	return s, nil
 }
@@ -131,7 +132,7 @@ func autostartOn(cfgPath string) error {
 	// Запущенный руками экземпляр отдаём службе. Иначе она поднимется, упрётся
 	// в замок, выйдет с ошибкой — и будет перезапускаться по кругу, засоряя лог.
 	if _, _, state := findDaemon(cfgPath); state == daemonRunning {
-		fmt.Fprintln(daemonOut, "steno уже работает — передаю его службе")
+		fmt.Fprintln(daemonOut, tr("steno уже работает — передаю его службе"))
 		if err := stopDaemon(cfgPath, 0); err != nil {
 			return err
 		}
@@ -149,15 +150,15 @@ func autostartOn(cfgPath string) error {
 	if err := loadService(s); err != nil {
 		return err
 	}
-	fmt.Fprintln(daemonOut, "steno будет запускаться при входе в систему")
-	fmt.Fprintf(daemonOut, "  служба       %s\n", s.Unit)
-	fmt.Fprintf(daemonOut, "  лог          %s\n", s.Log)
-	fmt.Fprintf(daemonOut, "  проверить    steno status\n")
-	fmt.Fprintf(daemonOut, "  убрать       steno autostart off\n")
+	fmt.Fprintln(daemonOut, tr("steno будет запускаться при входе в систему"))
+	fmt.Fprintf(daemonOut, tr("  служба       %s\n"), s.Unit)
+	fmt.Fprintf(daemonOut, tr("  лог          %s\n"), s.Log)
+	fmt.Fprint(daemonOut, tr("  проверить    steno status\n"))
+	fmt.Fprint(daemonOut, tr("  убрать       steno autostart off\n"))
 	if s.Manager == "systemd" {
 		// Без linger systemd гасит пользовательские службы при выходе из
 		// сеанса: сервис, заведённый по ssh, умрёт вместе с сессией.
-		fmt.Fprintln(daemonOut, dim("  чтобы работало и без входа в систему:"))
+		fmt.Fprintln(daemonOut, dim(tr("  чтобы работало и без входа в систему:")))
 		fmt.Fprintln(daemonOut, dim("    sudo loginctl enable-linger "+os.Getenv("USER")))
 	}
 	return nil
@@ -169,7 +170,7 @@ func autostartOff() error {
 		return err
 	}
 	if _, err := os.Stat(s.Unit); err != nil {
-		fmt.Fprintln(daemonOut, "автозапуск и так не заведён")
+		fmt.Fprintln(daemonOut, tr("автозапуск и так не заведён"))
 		return nil
 	}
 	if err := unloadService(s); err != nil {
@@ -178,8 +179,8 @@ func autostartOff() error {
 	if err := os.Remove(s.Unit); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	fmt.Fprintln(daemonOut, "steno больше не запускается при входе в систему")
-	fmt.Fprintln(daemonOut, "  запустить вручную:  steno start")
+	fmt.Fprintln(daemonOut, tr("steno больше не запускается при входе в систему"))
+	fmt.Fprintln(daemonOut, tr("  запустить вручную:  steno start"))
 	return nil
 }
 
@@ -189,13 +190,13 @@ func autostartStatus() error {
 		return err
 	}
 	if !autostartInstalled(s) {
-		fmt.Fprintln(daemonOut, "автозапуск выключен")
-		fmt.Fprintln(daemonOut, "  включить:  steno autostart on")
+		fmt.Fprintln(daemonOut, tr("автозапуск выключен"))
+		fmt.Fprintln(daemonOut, tr("  включить:  steno autostart on"))
 		return nil
 	}
-	fmt.Fprintf(daemonOut, "автозапуск включён (%s)\n", s.Manager)
-	fmt.Fprintf(daemonOut, "  служба     %s\n", s.Unit)
-	fmt.Fprintf(daemonOut, "  выключить  steno autostart off\n")
+	fmt.Fprintf(daemonOut, tr("автозапуск включён (%s)\n"), s.Manager)
+	fmt.Fprintf(daemonOut, tr("  служба     %s\n"), s.Unit)
+	fmt.Fprint(daemonOut, tr("  выключить  steno autostart off\n"))
 	return nil
 }
 
@@ -208,12 +209,12 @@ func autostartInstalled(s autostartSpec) bool {
 func autostartLine() string {
 	s, err := autostartTarget(defaultConfigPath)
 	if err != nil {
-		return dim("не умею на этой системе")
+		return dim(tr("не умею на этой системе"))
 	}
 	if autostartInstalled(s) {
-		return fmt.Sprintf("включён (%s)", s.Manager)
+		return fmt.Sprintf(tr("включён (%s)"), s.Manager)
 	}
-	return "выключен  " + dim("steno autostart on")
+	return tr("выключен  ") + dim("steno autostart on")
 }
 
 func loadService(s autostartSpec) error {
@@ -318,7 +319,7 @@ func launchdPlist(s autostartSpec) string {
 func systemdUnit(s autostartSpec) string {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
-	b.WriteString("Description=steno — заметки и follow-up с созвонов\n")
+	b.WriteString(tr("Description=steno — заметки и follow-up с созвонов\n"))
 	b.WriteString("After=network-online.target\n\n")
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=simple\n")

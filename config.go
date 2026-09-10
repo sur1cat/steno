@@ -16,6 +16,10 @@ import (
 type Config struct {
 	DataDir string `json:"data_dir"` // куда складывать БД и записи
 
+	// Язык интерфейса: "en" или "ru". Пусто — берётся из STENO_LANG, а без
+	// неё английский. Влияет и на CLI, и на панель, и на язык follow-up.
+	Lang string `json:"lang,omitempty"`
+
 	Bot struct {
 		DisplayName string `json:"display_name"` // как бот подписан в списке участников
 		Image       string `json:"image"`        // docker-образ бота
@@ -63,6 +67,18 @@ type Config struct {
 		// Запускать через nice: расшифровка не срочная и должна уступать
 		// интерактивной работе.
 		Nice bool `json:"nice"`
+		// Подсказывать ли распознаванию словарь проекта — имена людей из
+		// коммитов, имена сервисов, названия проектов. Без него незнакомое
+		// имя превращается в похожее обычное слово раз и навсегда: из
+		// «Анвару» назад «Орынгали» не достать ничем.
+		//
+		// По умолчанию включено, но выключатель есть, и вот зачем. Whisper
+		// продолжает подсказку как текст, поэтому она влияет не только на
+		// слова, но и на разбивку: на записи созвона список слов склеил
+		// тринадцать реплик в шесть. Текст от этого стал точнее, а границы
+		// реплик — грубее, и там, где имена говорящих важнее слов, это может
+		// оказаться плохим разменом.
+		Vocabulary bool `json:"vocabulary"`
 	} `json:"transcribe"`
 
 	Claude struct {
@@ -256,6 +272,34 @@ type Project struct {
 	// что это тот же проект, можно только зная его устройство и слова, которыми
 	// команда о нём говорит.
 	Sources []Source `json:"sources"`
+	// Кто в проекте участвует — именами, которыми людей зовут вслух, а не
+	// подписью аккаунта. Это разные вещи и в этом вся беда: в git человек
+	// «TomXemmings», в календаре «Rustem T.», а на созвоне звучит «Рустем», и
+	// follow-up приписывает задачу тому, чьё имя он узнал.
+	//
+	// Люди вынесены из общего словаря отдельным списком по одной причине: цена
+	// ошибки. Приписать задачу не тому человеку — это задача, которая не будет
+	// сделана; принять сервис за человека — тоже (владельцем становится
+	// «Сапар»). Всё остальное — сокращения, названия систем — модели достаточно
+	// знать как слова этого проекта, отдельный список под каждый вид завёл бы
+	// пять полей, из которых заполняют одно.
+	People []string `json:"people"`
+	// Слова, которые у команды звучат вслух, а в коде их нет: имена людей,
+	// названия сервисов, сокращения. Идут в два места сразу.
+	//
+	// В whisper — подсказкой словаря. Без неё имя, которого нет в словаре
+	// модели, превращается в похожее обычное слово: «Орынгали» стало «Анвару» и
+	// пропало из задач вовсе. Распознавание чинится только так — задним числом
+	// из «Анвару» имя не восстановить.
+	//
+	// И в промпт follow-up — чтобы модель знала, что «Сапар» это сервис, а не
+	// человек, и не гадала по звучанию.
+	//
+	// Имена из People здесь тоже есть, и это не дубль, а обязательство: whisper
+	// читает один плоский список, и имя, оставшееся только в People, до него бы
+	// не доехало — то есть ровно тот случай, ради которого всё затевалось. За
+	// тем, чтобы People всегда были внутри, следит SaveProject.
+	Vocabulary []string `json:"vocabulary"`
 }
 
 // Source — откуда брать материал о проекте.
@@ -284,14 +328,14 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	if n, ok := strings.CutSuffix(s, "d"); ok {
 		days, err := strconv.ParseFloat(n, 64)
 		if err != nil {
-			return fmt.Errorf("длительность %q: %w", s, err)
+			return fmt.Errorf(tr("длительность %q: %w"), s, err)
 		}
 		*d = Duration(time.Duration(days * float64(24*time.Hour)))
 		return nil
 	}
 	v, err := time.ParseDuration(s)
 	if err != nil {
-		return fmt.Errorf("длительность %q: %w", s, err)
+		return fmt.Errorf(tr("длительность %q: %w"), s, err)
 	}
 	*d = Duration(v)
 	return nil
@@ -301,16 +345,44 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Duration(d).String())
 }
 
+// applyLangDefaults — те умолчания, которые зависят от языка интерфейса.
+// Отдельной функцией, потому что язык бывает выбран уже после defaultConfig():
+// так делает мастер, и пересчитать два поля ему дешевле, чем собирать конфиг
+// заново, рискуя потерять уже введённое.
+func applyLangDefaults(c *Config) {
+	// Имя бота в списке участников: его читают те, кто на созвоне.
+	c.Bot.DisplayName = tr("Steno · идёт запись")
+	// Язык субтитров Meet — он же язык распознавания. Жёсткое "ru" здесь
+	// означало, что английская установка слушает созвон по-русски и получает
+	// бессмысленный текст; язык интерфейса — куда более близкая догадка.
+	c.Bot.CaptionLanguage = langRU
+	if uiLang == langEN {
+		c.Bot.CaptionLanguage = langEN
+	}
+	// Язык follow-up по умолчанию — язык интерфейса. Промпт написан по-русски
+	// и без этой строки отвечает по-русски же; человеку, который поставил
+	// steno и увидел английский экран, это не то, чего он ждёт. Русская
+	// установка остаётся с пустым значением, как была.
+	c.Claude.OutputLanguage = ""
+	if uiLang == langEN {
+		c.Claude.OutputLanguage = "English"
+	}
+	// Русский маркер держим только в русской установке: в английском
+	// интерфейсе он выглядит как чужая строка, а не как настройка.
+	c.Calendar.SkipMarkers = []string{"#nosteno"}
+	if uiLang == langRU {
+		c.Calendar.SkipMarkers = append(c.Calendar.SkipMarkers, "#беззаписи")
+	}
+}
+
 func defaultConfig() *Config {
 	var c Config
 	c.DataDir = "./data"
-	c.Bot.DisplayName = "Steno · идёт запись"
 	c.Bot.Image = defaultBotImage()
 	c.Bot.AdmissionTimeout = Duration(5 * time.Minute)
 	c.Bot.EmptyFor = Duration(2 * time.Minute)
 	c.Bot.MaxDuration = Duration(4 * time.Hour)
 	c.Bot.ShutdownGrace = Duration(15 * time.Minute)
-	c.Bot.CaptionLanguage = "ru"
 	c.Transcribe.Source = "command"
 	c.Transcribe.Cmd = []string{"./adapters/whisper-cpp.sh", "{{audio}}", "{{language}}"}
 	c.Transcribe.Language = ""
@@ -319,6 +391,7 @@ func defaultConfig() *Config {
 	c.Transcribe.Timeout = Duration(4 * time.Hour)
 	c.Transcribe.MaxConcurrent = 1
 	c.Transcribe.Nice = true
+	c.Transcribe.Vocabulary = true
 	c.Claude.APIKeyEnv = "ANTHROPIC_API_KEY"
 	c.Claude.Model = "claude-opus-5"
 	c.Claude.Via = "auto"
@@ -333,7 +406,6 @@ func defaultConfig() *Config {
 	c.Calendar.PollEvery = Duration(2 * time.Minute)
 	c.Calendar.JoinBefore = Duration(time.Minute)
 	c.Calendar.MinAttendees = 2
-	c.Calendar.SkipMarkers = []string{"#nosteno", "#беззаписи"}
 	c.Calendar.MaxConcurrent = 4
 	c.Calendar.ScheduleDays = 7
 	c.Calendar.Remind = true
@@ -366,6 +438,7 @@ func defaultConfig() *Config {
 	c.Panel.PasswordEnv = "STENO_PANEL_PASSWORD"
 	c.HTTP.Addr = ":8787"
 	c.HTTP.TokenEnv = "STENO_HTTP_TOKEN"
+	applyLangDefaults(&c)
 	return &c
 }
 
@@ -408,7 +481,7 @@ func loadConfig(path string) (*Config, error) {
 func secret(envName, what string) (string, error) {
 	v := strings.TrimSpace(os.Getenv(envName))
 	if v == "" {
-		return "", fmt.Errorf("%s: переменная окружения %s пуста", what, envName)
+		return "", fmt.Errorf(tr("%s: переменная окружения %s пуста"), what, envName)
 	}
 	return v, nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,10 +56,10 @@ func cmdDoctor(args []string) error {
 	// выключена, модель не та, а адаптер не находится.
 	path := resolveConfigPath(*cfgPath)
 	if _, err := os.Stat(path); err != nil {
-		fmt.Printf("steno doctor · %s\n", paint("33", "конфига "+path+" нет — показываю умолчания"))
-		fmt.Printf("%s\n\n", dim("настроить одной командой:  steno setup"))
+		fmt.Printf("steno doctor · %s\n", paint("33", tr("конфига ")+path+tr(" нет — показываю умолчания")))
+		fmt.Printf("%s\n\n", dim(tr("настроить одной командой:  steno setup")))
 	} else {
-		fmt.Printf("steno doctor · конфиг %s\n\n", path)
+		fmt.Printf(tr("steno doctor · конфиг %s\n\n"), path)
 	}
 	blocked, broken := false, false
 	for _, c := range cs {
@@ -77,26 +78,26 @@ func cmdDoctor(args []string) error {
 
 	fmt.Println()
 	if blocked {
-		fmt.Println("Записать созвон пока нельзя — см. отмеченное выше.")
-		return fmt.Errorf("проверка не пройдена")
+		fmt.Println(tr("Записать созвон пока нельзя — см. отмеченное выше."))
+		return errors.New(tr("проверка не пройдена"))
 	}
 	if broken {
-		fmt.Println("Записать созвон можно. Часть шагов после записи не отработает — см. выше.")
+		fmt.Println(tr("Записать созвон можно. Часть шагов после записи не отработает — см. выше."))
 		return nil
 	}
-	fmt.Println("Всё готово.")
+	fmt.Println(tr("Всё готово."))
 	return nil
 }
 
 func checkData(cfg *Config) check {
 	probe := filepath.Join(cfg.DataDir, ".doctor")
 	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
-		return check{"данные", "fail", cfg.DataDir + " — нет записи", []string{
+		return check{tr("данные"), "fail", cfg.DataDir + tr(" — нет записи"), []string{
 			"→ " + err.Error(),
 		}, true}
 	}
 	os.Remove(probe)
-	return check{"данные", "ok", cfg.DataDir, nil, true}
+	return check{tr("данные"), "ok", cfg.DataDir, nil, true}
 }
 
 func checkBot(cfg *Config) check {
@@ -111,22 +112,22 @@ func checkBot(cfg *Config) check {
 			missing = removeString(missing, "chromium")
 		}
 		if len(missing) > 0 {
-			return check{"бот (local)", "fail",
-				"не хватает: " + strings.Join(missing, ", "),
-				[]string{"→ либо поставь их, либо убери bot.local — тогда бот пойдёт в docker"}, true}
+			return check{tr("бот (local)"), "fail",
+				tr("не хватает: ") + strings.Join(missing, ", "),
+				[]string{tr("→ либо поставь их, либо убери bot.local — тогда бот пойдёт в docker")}, true}
 		}
-		return check{"бот (local)", "ok", "chromium, ffmpeg и pulseaudio на месте", nil, true}
+		return check{tr("бот (local)"), "ok", tr("chromium, ffmpeg и pulseaudio на месте"), nil, true}
 	}
 
 	if _, err := exec.LookPath("docker"); err != nil {
-		return check{"бот (docker)", "fail", "docker не найден",
-			[]string{"→ поставь Docker Desktop или задай bot.local = true"}, true}
+		return check{tr("бот (docker)"), "fail", tr("docker не найден"),
+			[]string{tr("→ поставь Docker Desktop или задай bot.local = true")}, true}
 	}
 	// Через `docker images -q`: inspect по имени не находит образ, собранный
 	// BuildKit в новом хранилище Docker Desktop. См. haveImage в main.go.
 	out, err := exec.Command("docker", "images", "-q", cfg.Bot.Image).Output()
 	if err == nil && strings.TrimSpace(string(out)) == "" {
-		err = fmt.Errorf("нет такого образа")
+		err = errors.New(tr("нет такого образа"))
 	}
 	if err != nil {
 		// Отсутствие образа из реестра — не поломка: steno скачает его сам перед
@@ -134,11 +135,11 @@ func checkBot(cfg *Config) check {
 		// steno, незачем — раньше здесь стояло «✗» и требование склонировать
 		// репозиторий и собрать гигабайт руками.
 		if strings.Contains(cfg.Bot.Image, "/") {
-			return check{"бот (docker)", "ok",
-				"образа " + cfg.Bot.Image + " нет — скачается перед первым созвоном",
-				[]string{"→ можно заранее:  docker pull " + cfg.Bot.Image}, false}
+			return check{tr("бот (docker)"), "ok",
+				tr("образа ") + cfg.Bot.Image + tr(" нет — скачается перед первым созвоном"),
+				[]string{tr("→ можно заранее:  docker pull ") + cfg.Bot.Image}, false}
 		}
-		return check{"бот (docker)", "fail", "нет образа " + cfg.Bot.Image,
+		return check{tr("бот (docker)"), "fail", tr("нет образа ") + cfg.Bot.Image,
 			[]string{"→ make bot-image"}, true}
 	}
 	_ = out
@@ -147,31 +148,31 @@ func checkBot(cfg *Config) check {
 	// полдня чинить то, что уже починено: человек ставит новую версию, идёт на
 	// созвон и получает прежнее поведение. Молчать об этом нельзя.
 	if age := imageAge(strings.TrimSpace(string(out))); age != "" {
-		return check{"бот (docker)", "fail",
-			"образ " + cfg.Bot.Image + " старше самого steno (" + age + ")",
+		return check{tr("бот (docker)"), "fail",
+			tr("образ ") + cfg.Bot.Image + tr(" старше самого steno на ") + age,
 			fixes(cfg), false}
 	}
-	return check{"бот (docker)", "ok", "образ " + cfg.Bot.Image + " на месте", nil, true}
+	return check{tr("бот (docker)"), "ok", tr("образ ") + cfg.Bot.Image + tr(" на месте"), nil, true}
 }
 
 func checkTranscribe(cfg *Config) check {
 	if cfg.Transcribe.Source == "captions" {
-		return check{"расшифровка", "ok",
-			"из субтитров площадки — ставить ничего не нужно",
-			[]string{"качество ниже whisper; для продакшена смени transcribe.source на command"}, false}
+		return check{tr("расшифровка"), "ok",
+			tr("из субтитров площадки — ставить ничего не нужно"),
+			[]string{tr("качество ниже whisper; для продакшена смени transcribe.source на command")}, false}
 	}
 	if len(cfg.Transcribe.Cmd) == 0 {
-		return check{"расшифровка", "fail", "не задан transcribe.cmd",
-			[]string{`→ или поставь "source": "captions", чтобы взять текст из субтитров площадки`}, false}
+		return check{tr("расшифровка"), "fail", tr("не задан transcribe.cmd"),
+			[]string{tr(`→ или поставь "source": "captions", чтобы взять текст из субтитров площадки`)}, false}
 	}
 	// Через adapterPath: путь в конфиге мог указывать в каталог версии, которую
 	// снёс brew upgrade, а адаптер при этом лежит рядом с новой.
 	bin := adapterPath(cfg.Transcribe.Cmd[0])
 	if _, err := exec.LookPath(bin); err != nil {
-		return check{"расшифровка", "fail", "не запускается " + bin,
+		return check{tr("расшифровка"), "fail", tr("не запускается ") + bin,
 			[]string{
 				"→ " + err.Error(),
-				`→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`,
+				tr(`→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`),
 			}, false}
 	}
 	// Найти файл мало. Адаптеру нужна модель на полгигабайта, и без неё он
@@ -187,10 +188,10 @@ func checkTranscribe(cfg *Config) check {
 		for _, l := range lastLines(err.Error(), 5) {
 			fix = append(fix, "→ "+l)
 		}
-		fix = append(fix, `→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`)
-		return check{"расшифровка", "fail", "адаптер не отработал", fix, false}
+		fix = append(fix, tr(`→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`))
+		return check{tr("расшифровка"), "fail", tr("адаптер не отработал"), fix, false}
 	}
-	return check{"расшифровка", "ok", out, nil, false}
+	return check{tr("расшифровка"), "ok", out, nil, false}
 }
 
 // probeTranscriber прогоняет адаптер на полусекунде тишины и проверяет, что он
@@ -220,15 +221,15 @@ func probeTranscriber(cfg *Config) (string, error) {
 	// которого не было. Это опаснее пустоты, и молчать об этом нельзя.
 	if m := modelRe.FindStringSubmatch(notes); m != nil {
 		if smallModelRe.MatchString(m[1]) {
-			return "работает на " + m[1] + " — для русских созвонов мало, нужна large-v3", nil
+			return tr("работает на ") + m[1] + tr(" — для русских созвонов мало, нужна large-v3"), nil
 		}
-		return "адаптер отработал, модель " + m[1], nil
+		return tr("адаптер отработал, модель ") + m[1], nil
 	}
-	return "адаптер отработал на пробной записи", nil
+	return tr("адаптер отработал на пробной записи"), nil
 }
 
 var (
-	modelRe      = regexp.MustCompile(`модель\s+(\S+)`)
+	modelRe      = regexp.MustCompile(`(?:модель|model)\s+(\S+)`)
 	smallModelRe = regexp.MustCompile(`(?i)tiny|base|small`)
 )
 
@@ -276,11 +277,11 @@ func lastLines(s string, n int) []string {
 func checkClaude(cfg *Config) check {
 	_, how, err := resolveVia(cfg)
 	if err != nil {
-		return check{"Claude", "fail", "нет доступа",
+		return check{"Claude", "fail", tr("нет доступа"),
 			[]string{
-				"→ ключ API: console.anthropic.com → API keys, потом export " +
+				tr("→ ключ API: console.anthropic.com → API keys, потом export ") +
 					cfg.Claude.APIKeyEnv + "=sk-ant-…",
-				"→ либо подписка: поставь Claude Code и войди — steno возьмёт её через `claude -p`",
+				tr("→ либо подписка: поставь Claude Code и войди — steno возьмёт её через `claude -p`"),
 			}, false}
 	}
 	return check{"Claude", "ok",
@@ -293,30 +294,30 @@ func checkClaude(cfg *Config) check {
 func checkGoogle(cfg *Config) check {
 	key := credentialsFile(cfg.Calendar.CredentialsFile, cfg.GoogleDocs.CredentialsFile)
 	if t, err := loadGoogleToken(cfg); err == nil {
-		note := "подключён как " + t.Account
+		note := tr("подключён как ") + t.Account
 		var fix []string
 		if missing := missingScopes(t.Scopes, googleScopes); len(missing) > 0 {
-			note += "; доступ выдан не весь"
-			fix = append(fix, "→ не хватает доступа к "+strings.Join(humanScopes(missing), " и "))
-			fix = append(fix, "→ подключи ещё раз в настройках панели")
+			note += tr("; доступ выдан не весь")
+			fix = append(fix, tr("→ не хватает доступа к ")+strings.Join(humanScopes(missing), tr(" и ")))
+			fix = append(fix, tr("→ подключи ещё раз в настройках панели"))
 		}
 		if key != "" {
-			fix = append(fix, "→ ключ организации при этом не используется: "+
-				"подключённый аккаунт главнее")
+			fix = append(fix, tr("→ ключ организации при этом не используется: ")+
+				tr("подключённый аккаунт главнее"))
 		}
 		return check{"Google", "ok", note, fix, false}
 	}
 	if key != "" {
-		return check{"Google", "ok", "доступ ключом организации", nil, false}
+		return check{"Google", "ok", tr("доступ ключом организации"), nil, false}
 	}
 	if !cfg.Calendar.Enabled && !cfg.Gmail.Enabled && !cfg.GoogleDocs.Enabled {
-		return check{"Google", "off", "не подключён, и никому не нужен", nil, false}
+		return check{"Google", "off", tr("не подключён, и никому не нужен"), nil, false}
 	}
-	fix := []string{"→ панель, «Настройки» → «Подключить Google»"}
+	fix := []string{tr("→ панель, «Настройки» → «Подключить Google»")}
 	if !googleOAuthReady(cfg) {
-		fix = append(fix, "→ кнопки там пока нет: `steno setup` спросит client id и секрет")
+		fix = append(fix, tr("→ кнопки там пока нет: `steno setup` спросит client id и секрет"))
 	}
-	return check{"Google", "fail", "не подключён", fix, false}
+	return check{"Google", "fail", tr("не подключён"), fix, false}
 }
 
 // checkGoogleAccess — доступ для одного канала: сначала подключённый аккаунт,
@@ -329,12 +330,12 @@ func checkGoogle(cfg *Config) check {
 func checkGoogleAccess(cfg *Config, name, keyFile, subject string) check {
 	if t, err := loadGoogleToken(cfg); err == nil {
 		if subject != "" && !strings.EqualFold(subject, t.Account) {
-			return check{name, "fail", "нужен доступ от имени " + subject, []string{
-				"→ steno подключён как " + t.Account + " и работает только от него",
-				"→ либо поправь адрес, либо переходи на ключ организации",
+			return check{name, "fail", tr("нужен доступ от имени ") + subject, []string{
+				tr("→ steno подключён как ") + t.Account + tr(" и работает только от него"),
+				tr("→ либо поправь адрес, либо переходи на ключ организации"),
 			}, false}
 		}
-		return check{name, "ok", "от имени " + t.Account, nil, false}
+		return check{name, "ok", tr("от имени ") + t.Account, nil, false}
 	}
 	return checkGoogleKey(name, keyFile)
 }
@@ -342,25 +343,25 @@ func checkGoogleAccess(cfg *Config, name, keyFile, subject string) check {
 func checkSources(cfg *Config) []check {
 	var cs []check
 	if cfg.Calendar.Enabled {
-		c := checkGoogleAccess(cfg, "календарь",
+		c := checkGoogleAccess(cfg, tr("календарь"),
 			credentialsFile(cfg.Calendar.CredentialsFile, cfg.GoogleDocs.CredentialsFile), "")
 		if c.state == "ok" {
 			switch {
 			case len(cfg.Calendar.Calendars) == 0:
-				c = check{"календарь", "fail", "не указан ни один календарь",
-					[]string{"→ панель, «Каналы» → «Календарь» → «Чьи календари смотреть»"}, false}
+				c = check{tr("календарь"), "fail", tr("не указан ни один календарь"),
+					[]string{tr("→ панель, «Каналы» → «Календарь» → «Чьи календари смотреть»")}, false}
 			default:
-				c.note = fmt.Sprintf("%d календарей, %s", len(cfg.Calendar.Calendars), c.note)
+				c.note = fmt.Sprintf(tr("%d календарей, %s"), len(cfg.Calendar.Calendars), c.note)
 				// По кнопке steno видит только свой календарь. Чужой в списке
 				// будет молча пропускаться на каждом опросе — и человек узнает
 				// об этом, когда бот не придёт на чужую встречу.
 				if t, err := loadGoogleToken(cfg); err == nil {
 					if foreign := notMine(cfg.Calendar.Calendars, t.Account); len(foreign) > 0 {
 						c.state = "fail"
-						c.note = "чужие календари так не открыть: " + strings.Join(foreign, ", ")
+						c.note = tr("чужие календари так не открыть: ") + strings.Join(foreign, ", ")
 						c.fix = []string{
-							"→ steno подключён как " + t.Account + " и видит только его встречи",
-							"→ либо убери чужие из списка, либо переходи на ключ организации",
+							tr("→ steno подключён как ") + t.Account + tr(" и видит только его встречи"),
+							tr("→ либо убери чужие из списка, либо переходи на ключ организации"),
 						}
 					}
 				}
@@ -368,43 +369,43 @@ func checkSources(cfg *Config) []check {
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"календарь", "off", "выключен", nil, false})
+		cs = append(cs, check{tr("календарь"), "off", tr("выключен"), nil, false})
 	}
 
 	if cfg.Gmail.Enabled {
-		c := checkGoogleAccess(cfg, "почта бота",
+		c := checkGoogleAccess(cfg, tr("почта бота"),
 			credentialsFile(cfg.Gmail.CredentialsFile, cfg.GoogleDocs.CredentialsFile),
 			cfg.Gmail.Account)
 		if c.state == "ok" && cfg.Gmail.Account == "" {
-			c = check{"почта бота", "fail", "не указан ящик бота",
-				[]string{"→ панель, «Каналы» → «Почта бота» → «Ящик бота»"}, false}
+			c = check{tr("почта бота"), "fail", tr("не указан ящик бота"),
+				[]string{tr("→ панель, «Каналы» → «Почта бота» → «Ящик бота»")}, false}
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"почта бота", "off", "выключена", nil, false})
+		cs = append(cs, check{tr("почта бота"), "off", tr("выключена"), nil, false})
 	}
 
 	if cfg.Telegram.Listen {
 		if len(cfg.Telegram.AllowedChats) == 0 && cfg.Telegram.ChatID == "" {
-			cs = append(cs, check{"Telegram вход", "fail",
-				"не задан ни chat_id, ни allowed_chats",
-				[]string{"→ без этого сервис не стартует: принимать ссылки от кого угодно нельзя"}, false})
+			cs = append(cs, check{tr("Telegram вход"), "fail",
+				tr("не задан ни chat_id, ни allowed_chats"),
+				[]string{tr("→ без этого сервис не стартует: принимать ссылки от кого угодно нельзя")}, false})
 		} else {
-			cs = append(cs, checkEnv("Telegram вход", cfg.Telegram.TokenEnv))
+			cs = append(cs, checkEnv(tr("Telegram вход"), cfg.Telegram.TokenEnv))
 		}
 	} else {
-		cs = append(cs, check{"Telegram вход", "off", "выключен", nil, false})
+		cs = append(cs, check{tr("Telegram вход"), "off", tr("выключен"), nil, false})
 	}
 
 	if cfg.HTTP.Enabled {
-		c := checkEnv("HTTP вход", cfg.HTTP.TokenEnv)
+		c := checkEnv(tr("HTTP вход"), cfg.HTTP.TokenEnv)
 		if c.state == "ok" && os.Getenv(cfg.Slack.SigningSecretEnv) == "" {
-			c.note += "; слэш-команды Slack не принимаются"
-			c.fix = append(c.fix, "→ для них нужен "+cfg.Slack.SigningSecretEnv)
+			c.note += tr("; слэш-команды Slack не принимаются")
+			c.fix = append(c.fix, tr("→ для них нужен ")+cfg.Slack.SigningSecretEnv)
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"HTTP вход", "off", "выключен", nil, false})
+		cs = append(cs, check{tr("HTTP вход"), "off", tr("выключен"), nil, false})
 	}
 	return cs
 }
@@ -415,78 +416,78 @@ func checkTargets(cfg *Config) []check {
 		c := checkGoogleAccess(cfg, "Google Docs", cfg.GoogleDocs.CredentialsFile,
 			cfg.GoogleDocs.Subject)
 		if c.state == "ok" && cfg.GoogleDocs.FolderID == "" {
-			c.note += "; папка не указана — документы лягут в корень Drive"
+			c.note += tr("; папка не указана — документы лягут в корень Drive")
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"Google Docs", "off", "выключен", nil, false})
+		cs = append(cs, check{"Google Docs", "off", tr("выключен"), nil, false})
 	}
 	if cfg.Slack.Enabled {
 		c := checkEnv("Slack", cfg.Slack.TokenEnv)
 		if c.state == "ok" && cfg.Slack.Channel == "" {
-			c = check{"Slack", "fail", "не указан канал", nil, false}
+			c = check{"Slack", "fail", tr("не указан канал"), nil, false}
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"Slack", "off", "выключен", nil, false})
+		cs = append(cs, check{"Slack", "off", tr("выключен"), nil, false})
 	}
 	if cfg.Telegram.Enabled {
 		c := checkEnv("Telegram", cfg.Telegram.TokenEnv)
 		if c.state == "ok" && cfg.Telegram.ChatID == "" {
-			c = check{"Telegram", "fail", "не указан chat_id", nil, false}
+			c = check{"Telegram", "fail", tr("не указан chat_id"), nil, false}
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"Telegram", "off", "выключен", nil, false})
+		cs = append(cs, check{"Telegram", "off", tr("выключен"), nil, false})
 	}
 	return cs
 }
 
 func checkPanel(cfg *Config) check {
 	if !cfg.Panel.Enabled {
-		return check{"панель", "off", "выключена", nil, false}
+		return check{tr("панель"), "off", tr("выключена"), nil, false}
 	}
-	c := checkEnv("панель", cfg.Panel.PasswordEnv)
+	c := checkEnv(tr("панель"), cfg.Panel.PasswordEnv)
 	if c.state == "ok" {
-		c.note = "слушает " + cfg.Panel.Addr
+		c.note = tr("слушает ") + cfg.Panel.Addr
 	}
 	return c
 }
 
 func checkEnv(name, env string) check {
 	if env == "" {
-		return check{name, "fail", "не указано имя переменной с секретом", nil, false}
+		return check{name, "fail", tr("не указано имя переменной с секретом"), nil, false}
 	}
 	if strings.TrimSpace(os.Getenv(env)) == "" {
-		return check{name, "fail", "переменная " + env + " пуста",
+		return check{name, "fail", tr("переменная ") + env + tr(" пуста"),
 			[]string{"→ export " + env + "=..."}, false}
 	}
-	return check{name, "ok", env + " задана", nil, false}
+	return check{name, "ok", env + tr(" задана"), nil, false}
 }
 
 // checkGoogleKey читает ключ service-account и проверяет, что это он и есть.
 // Самая частая ошибка здесь — скачать не тот JSON из консоли Google.
 func checkGoogleKey(name, path string) check {
 	if path == "" {
-		return check{name, "fail", "нет доступа в Google", []string{
-			"→ панель, «Настройки» → «Подключить Google»",
-			"→ либо ключ организации в google_docs.credentials_file",
+		return check{name, "fail", tr("нет доступа в Google"), []string{
+			tr("→ панель, «Настройки» → «Подключить Google»"),
+			tr("→ либо ключ организации в google_docs.credentials_file"),
 		}, false}
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return check{name, "fail", "ключ не читается", []string{"→ " + err.Error()}, false}
+		return check{name, "fail", tr("ключ не читается"), []string{"→ " + err.Error()}, false}
 	}
 	var key struct {
 		Type        string `json:"type"`
 		ClientEmail string `json:"client_email"`
 	}
 	if err := json.Unmarshal(raw, &key); err != nil {
-		return check{name, "fail", "ключ — не JSON", []string{"→ " + err.Error()}, false}
+		return check{name, "fail", tr("ключ — не JSON"), []string{"→ " + err.Error()}, false}
 	}
 	if key.Type != "service_account" || key.ClientEmail == "" {
-		return check{name, "fail", "это не ключ service-account",
-			[]string{"→ в консоли Google: IAM → сервисные аккаунты → ключи → создать JSON"}, false}
+		return check{name, "fail", tr("это не ключ service-account"),
+			[]string{tr("→ в консоли Google: IAM → сервисные аккаунты → ключи → создать JSON")}, false}
 	}
 	return check{name, "ok", key.ClientEmail, nil, false}
 }
@@ -526,16 +527,16 @@ func checkPlatforms(cfg *Config) check {
 			noCaptions = append(noCaptions, p.Title())
 		}
 	}
-	note := "умею: " + strings.Join(names, ", ")
+	note := tr("умею: ") + strings.Join(names, ", ")
 	if len(noCaptions) == 0 {
-		return check{"площадки", "ok", note, nil, false}
+		return check{tr("площадки"), "ok", note, nil, false}
 	}
-	return check{"площадки", "ok", note, []string{
-		"→ у " + strings.Join(noCaptions, ", ") + " субтитры есть не всегда: на публичном " +
-			"meet.jit.si они выключены на сервере (transcription.enabled=false)",
-		"→ без них расшифровка идёт по звуку и без имён говорящих; что вышло на " +
-			"самом деле, бот пишет строкой «субтитры: …» и полем captions в result.json",
-		"→ свой сервер Jitsi добавляется в selectors.json, ключ jitsi.hosts",
+	return check{tr("площадки"), "ok", note, []string{
+		tr("→ у ") + strings.Join(noCaptions, ", ") + tr(" субтитры есть не всегда: на публичном ") +
+			tr("meet.jit.si они выключены на сервере (transcription.enabled=false)"),
+		tr("→ без них расшифровка идёт по звуку и без имён говорящих; что вышло на ") +
+			tr("самом деле, бот пишет строкой «субтитры: …» и полем captions в result.json"),
+		tr("→ свой сервер Jitsi добавляется в selectors.json, ключ jitsi.hosts"),
 	}, false}
 }
 
@@ -543,12 +544,12 @@ func checkPlatforms(cfg *Config) check {
 // имени: локально собранный «steno-bot:latest» тянуть неоткуда, и предлагать
 // это значит послать человека за несуществующим.
 func fixes(cfg *Config) []string {
-	out := []string{"→ пересобрать:  make bot-image"}
+	out := []string{tr("→ пересобрать:  make bot-image")}
 	if reg := defaultBotImage(); strings.Contains(reg, "/") && reg != cfg.Bot.Image {
-		out = append(out, "→ или взять готовый:  docker pull "+reg)
+		out = append(out, tr("→ или взять готовый:  docker pull ")+reg)
 	}
 	return append(out,
-		"запись и разбор страницы идут внутри образа — старый образ ведёт себя по-старому")
+		tr("запись и разбор страницы идут внутри образа — старый образ ведёт себя по-старому"))
 }
 
 // imageAge — насколько образ старше бинарника. Пустая строка, если не старше
@@ -581,5 +582,5 @@ func imageAge(imageID string) string {
 	if d < time.Hour {
 		return ""
 	}
-	return "на " + sinceText(d) + " старше"
+	return sinceText(d)
 }

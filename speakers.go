@@ -248,7 +248,7 @@ func (c SpeakerCoverage) Report(elapsedSeconds float64) string {
 		return ""
 	}
 	if c.Spans == 0 {
-		return "подсветка говорящего: ни разу — имена придётся брать только из субтитров"
+		return tr("подсветка говорящего: ни разу — имена придётся брать только из субтитров")
 	}
 	names := make([]string, 0, len(c.People))
 	for n := range c.People {
@@ -262,8 +262,8 @@ func (c SpeakerCoverage) Report(elapsedSeconds float64) string {
 	})
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
-		parts = append(parts, fmt.Sprintf("%s — %.0f с", n, c.People[n]))
+		parts = append(parts, fmt.Sprintf(tr("%s — %.0f с"), n, c.People[n]))
 	}
-	return fmt.Sprintf("подсветка говорящего: %d отрезков, %.0f с речи из %.0f (%.0f%%); %s",
+	return fmt.Sprintf(tr("подсветка говорящего: %d отрезков, %.0f с речи из %.0f (%.0f%%); %s"),
 		c.Spans, c.Talk, elapsedSeconds, 100*c.Talk/elapsedSeconds, strings.Join(parts, ", "))
 }

@@ -37,12 +37,12 @@ func resolveVia(cfg *Config) (llmVia, string, error) {
 		if _, _, err := claudeClient(cfg); err != nil {
 			return "", "", err
 		}
-		return viaAPI, "ключ " + cfg.Claude.APIKeyEnv, nil
+		return viaAPI, tr("ключ ") + cfg.Claude.APIKeyEnv, nil
 	case "cli":
 		if ok, why := claudeCLIAvailable(); !ok {
-			return "", "", fmt.Errorf("claude.via=cli, но CLI не готов: %s", why)
+			return "", "", fmt.Errorf(tr("claude.via=cli, но CLI не готов: %s"), why)
 		}
-		return viaCLI, "подписка через claude -p", nil
+		return viaCLI, tr("подписка через claude -p"), nil
 	}
 
 	// auto
@@ -50,12 +50,12 @@ func resolveVia(cfg *Config) (llmVia, string, error) {
 		return viaAPI, how, nil
 	}
 	if ok, note := claudeCLIAvailable(); ok {
-		return viaCLI, "подписка через claude -p (" + note + ")", nil
+		return viaCLI, tr("подписка через claude -p (") + note + ")", nil
 	}
 	return "", "", fmt.Errorf(
-		"нет доступа к Claude. Годится любое из двух:\n"+
-			"  → ключ API: console.anthropic.com → API keys, потом export %s=sk-ant-…\n"+
-			"  → или подписка: поставь Claude Code и войди — steno возьмёт её через `claude -p`",
+		tr("нет доступа к Claude. Годится любое из двух:\n")+
+			tr("  → ключ API: console.anthropic.com → API keys, потом export %s=sk-ant-…\n")+
+			tr("  → или подписка: поставь Claude Code и войди — steno возьмёт её через `claude -p`"),
 		cfg.Claude.APIKeyEnv)
 }
 
@@ -112,18 +112,18 @@ func askViaAPI(ctx context.Context, cfg *Config, system, user string,
 	var msg anthropic.Message
 	for stream.Next() {
 		if err := msg.Accumulate(stream.Current()); err != nil {
-			return "", Spend{}, fmt.Errorf("сборка ответа: %w", err)
+			return "", Spend{}, fmt.Errorf(tr("сборка ответа: %w"), err)
 		}
 	}
 	if err := stream.Err(); err != nil {
 		return "", Spend{}, fmt.Errorf("Claude: %w", err)
 	}
 	if msg.StopReason == anthropic.StopReasonRefusal {
-		return "", Spend{}, fmt.Errorf("Claude отказался: %s", msg.StopDetails.Explanation)
+		return "", Spend{}, fmt.Errorf(tr("Claude отказался: %s"), msg.StopDetails.Explanation)
 	}
 	if msg.StopReason == anthropic.StopReasonMaxTokens {
-		return "", Spend{}, fmt.Errorf("ответ не поместился в claude.max_tokens (%d) — "+
-			"подними его или поставь claude.effort пониже", maxTokens)
+		return "", Spend{}, fmt.Errorf(tr("ответ не поместился в claude.max_tokens (%d) — ")+
+			tr("подними его или поставь claude.effort пониже"), maxTokens)
 	}
 	var text strings.Builder
 	for _, block := range msg.Content {
@@ -132,7 +132,7 @@ func askViaAPI(ctx context.Context, cfg *Config, system, user string,
 		}
 	}
 	if strings.TrimSpace(text.String()) == "" {
-		return "", Spend{}, fmt.Errorf("Claude вернул пустой ответ (stop_reason=%s)", msg.StopReason)
+		return "", Spend{}, fmt.Errorf(tr("Claude вернул пустой ответ (stop_reason=%s)"), msg.StopReason)
 	}
 	spend := computeSpend(cfg, cfg.Claude.Model,
 		msg.Usage.InputTokens, msg.Usage.OutputTokens,
@@ -148,8 +148,8 @@ func askViaCLI(ctx context.Context, cfg *Config, system, user string,
 	// незамеченным.
 	if schema != nil {
 		raw, _ := json.MarshalIndent(schema, "", "  ")
-		system += "\n\nОтветь одним объектом JSON строго по этой схеме, без пояснений " +
-			"и без обрамления в блок кода:\n\n" + string(raw)
+		system += tr("\n\nОтветь одним объектом JSON строго по этой схеме, без пояснений ") +
+			tr("и без обрамления в блок кода:\n\n") + string(raw)
 	}
 	res, err := runClaudeCLI(ctx, cfg, system, user, cfg.Claude.MaxUSDPerCall)
 	if err != nil {
@@ -181,7 +181,7 @@ func claudeEffort(cfg *Config) (anthropic.OutputConfigEffort, error) {
 	case "low", "medium", "high", "xhigh", "max":
 		return anthropic.OutputConfigEffort(cfg.Claude.Effort), nil
 	}
-	return "", fmt.Errorf("claude.effort=%q — допустимы low, medium, high, xhigh, max",
+	return "", fmt.Errorf(tr("claude.effort=%q — допустимы low, medium, high, xhigh, max"),
 		cfg.Claude.Effort)
 }
 
@@ -226,8 +226,8 @@ func stripPreamble(s string) string {
 	head := t[:i]
 	// Настоящая справка не говорит о себе в первом лице и не поминает задание.
 	if !strings.Contains(head, "\n\n") &&
-		(strings.Contains(head, "задач") || strings.Contains(head, "План") ||
-			strings.Contains(head, "пишу") || strings.Contains(head, "Сейчас")) {
+		(strings.Contains(head, tr("задач")) || strings.Contains(head, tr("План")) ||
+			strings.Contains(head, tr("пишу")) || strings.Contains(head, tr("Сейчас"))) {
 		return strings.TrimSpace(strings.TrimLeft(t[i+4:], "-\n"))
 	}
 	return t

@@ -61,7 +61,7 @@ func daemonize(args []string) (bool, error) {
 		return false, holdDaemonLock(p)
 	}
 	if !daemonSupported() {
-		return true, fmt.Errorf("фоновый режим на этой системе не сделан; запусти `steno serve` в отдельном окне")
+		return true, errors.New(tr("фоновый режим на этой системе не сделан; запусти `steno serve` в отдельном окне"))
 	}
 	return true, startBackground(p, rest)
 }
@@ -80,8 +80,8 @@ func holdDaemonLock(p daemonPaths) error {
 	lock, err := acquireDaemonLock(p, info)
 	if err != nil {
 		if errors.Is(err, errAlreadyRunning) {
-			return fmt.Errorf("%w\n  посмотреть, что с ним:  steno status\n"+
-				"  остановить:             steno stop", err)
+			return fmt.Errorf(tr("%w\n  посмотреть, что с ним:  steno status\n")+
+				tr("  остановить:             steno stop"), err)
 		}
 		return err
 	}
@@ -90,7 +90,7 @@ func holdDaemonLock(p daemonPaths) error {
 	if bg {
 		// Шапка отделяет запуски друг от друга: без неё в логе не видно, где
 		// кончился прошлый и начался этот.
-		fmt.Fprintf(os.Stderr, "─── steno %s запущен %s, pid %d ───\n",
+		fmt.Fprintf(os.Stderr, tr("─── steno %s запущен %s, pid %d ───\n"),
 			stenoVersion(), time.Now().Format("2006-01-02 15:04:05"), os.Getpid())
 		go watchLogSize(make(chan struct{}), p.Log, logSizeLimit, logRotateEvery)
 	}
@@ -105,21 +105,21 @@ func holdDaemonLock(p daemonPaths) error {
 // docker. Человек увидел бы это только вечером, когда созвон не записался.
 func startBackground(p daemonPaths, rest []string) error {
 	if info, state := inspectDaemon(p); state == daemonRunning {
-		return fmt.Errorf("%w: pid %d, запущен %s\n  посмотреть: steno status",
+		return fmt.Errorf(tr("%w: pid %d, запущен %s\n  посмотреть: steno status"),
 			errAlreadyRunning, info.PID, info.Started.Local().Format("02.01 15:04"))
 	}
 	exe, err := daemonExecutable()
 	if err != nil {
-		return fmt.Errorf("не нашёл собственный бинарник: %w", err)
+		return fmt.Errorf(tr("не нашёл собственный бинарник: %w"), err)
 	}
 	// Режем лог до запуска: раз в жизни процесса это единственный момент, когда
 	// файл точно никем не открыт.
 	if _, err := rotateLog(p.Log, logSizeLimit); err != nil {
-		return fmt.Errorf("лог %s: %w", p.Log, err)
+		return fmt.Errorf(tr("лог %s: %w"), p.Log, err)
 	}
 	lf, err := openLog(p.Log)
 	if err != nil {
-		return fmt.Errorf("лог %s: %w", p.Log, err)
+		return fmt.Errorf(tr("лог %s: %w"), p.Log, err)
 	}
 	defer lf.Close()
 
@@ -131,7 +131,7 @@ func startBackground(p daemonPaths, rest []string) error {
 	cmd.Env = append(cmd.Env, daemonEnv+"=1")
 	detachChild(cmd)
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("не запустился фоновый steno: %w", err)
+		return fmt.Errorf(tr("не запустился фоновый steno: %w"), err)
 	}
 
 	// Wait в горутине — чтобы отличить «ещё поднимается» от «уже упал». Без
@@ -145,7 +145,7 @@ func startBackground(p daemonPaths, rest []string) error {
 	for {
 		select {
 		case werr := <-gone:
-			return fmt.Errorf("фоновый steno сразу вышел%s\n%s",
+			return fmt.Errorf(tr("фоновый steno сразу вышел%s\n%s"),
 				exitNote(werr), indent(logTail(p.Log, 12)))
 		case <-tick.C:
 			info, state := inspectDaemon(p)
@@ -154,26 +154,26 @@ func startBackground(p daemonPaths, rest []string) error {
 				return nil
 			}
 		case <-deadline:
-			return fmt.Errorf("фоновый steno (pid %d) не отметился за %s; смотри лог %s",
+			return fmt.Errorf(tr("фоновый steno (pid %d) не отметился за %s; смотри лог %s"),
 				cmd.Process.Pid, daemonStartWait, p.Log)
 		}
 	}
 }
 
 func announceStarted(p daemonPaths, info daemonInfo) {
-	fmt.Fprintln(daemonOut, "steno работает в фоне")
+	fmt.Fprintln(daemonOut, tr("steno работает в фоне"))
 	fmt.Fprintf(daemonOut, "  pid          %d\n", info.PID)
 	// Какая настройка взята — первым делом. Молчание тут однажды стоило часа:
 	// указатель на настройку протух, steno поднялся на умолчаниях (без панели и
 	// без Telegram), и выглядело это как успешный запуск.
 	if info.Config != "" {
-		fmt.Fprintf(daemonOut, "  настройка    %s\n", info.Config)
+		fmt.Fprintf(daemonOut, tr("  настройка    %s\n"), info.Config)
 	} else {
-		fmt.Fprintln(daemonOut, "  настройка    "+configLine(""))
+		fmt.Fprintln(daemonOut, tr("  настройка    ")+configLine(""))
 	}
-	fmt.Fprintf(daemonOut, "  лог          %s\n", p.Log)
-	fmt.Fprintf(daemonOut, "  посмотреть   tail -f %s\n", p.Log)
-	fmt.Fprintf(daemonOut, "  остановить   steno stop\n")
+	fmt.Fprintf(daemonOut, tr("  лог          %s\n"), p.Log)
+	fmt.Fprintf(daemonOut, tr("  посмотреть   tail -f %s\n"), p.Log)
+	fmt.Fprint(daemonOut, tr("  остановить   steno stop\n"))
 }
 
 // --- stop --------------------------------------------------------------------
@@ -182,7 +182,7 @@ func cmdStop(args []string) error {
 	fs := newFlagSet("stop")
 	cfgPath := setupFlags(fs)
 	timeout := fs.Duration("timeout", 0,
-		"сколько ждать выхода; 0 — взять из bot.shutdown_grace")
+		tr("сколько ждать выхода; 0 — взять из bot.shutdown_grace"))
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
@@ -200,15 +200,15 @@ func stopDaemon(cfgPath string, timeout time.Duration) error {
 	p, info, state := findDaemon(cfgPath)
 	switch state {
 	case daemonStopped:
-		fmt.Fprintln(daemonOut, "steno не запущен")
+		fmt.Fprintln(daemonOut, tr("steno не запущен"))
 		return nil
 	case daemonStale:
 		// Не «что-то не так», а «останавливать нечего»: pid-файл после выхода
 		// остаётся нарочно, по нему status показывает, чем кончился прошлый
 		// запуск.
-		fmt.Fprintln(daemonOut, "steno не запущен")
+		fmt.Fprintln(daemonOut, tr("steno не запущен"))
 		if info.PID > 0 {
-			fmt.Fprintf(daemonOut, "  прошлый запуск (pid %d%s) уже закончился\n",
+			fmt.Fprintf(daemonOut, tr("  прошлый запуск (pid %d%s) уже закончился\n"),
 				info.PID, startedAtText(info))
 		}
 		return nil
@@ -217,21 +217,21 @@ func stopDaemon(cfgPath string, timeout time.Duration) error {
 		timeout = stopTimeout(p, info)
 	}
 	if err := signalStop(info.PID); err != nil {
-		return fmt.Errorf("не отправился сигнал процессу %d: %w", info.PID, err)
+		return fmt.Errorf(tr("не отправился сигнал процессу %d: %w"), info.PID, err)
 	}
-	fmt.Fprintf(daemonOut, "останавливаю steno (pid %d); жду, пока допишутся идущие записи (до %s)\n",
+	fmt.Fprintf(daemonOut, tr("останавливаю steno (pid %d); жду, пока допишутся идущие записи (до %s)\n"),
 		info.PID, chDurText(Duration(timeout)))
 
 	deadline := time.Now().Add(timeout)
 	for {
 		if _, st := inspectDaemon(p); st != daemonRunning {
-			fmt.Fprintln(daemonOut, "steno остановлен")
+			fmt.Fprintln(daemonOut, tr("steno остановлен"))
 			return nil
 		}
 		if !time.Now().Before(deadline) {
-			return fmt.Errorf("steno (pid %d) не вышел за %s — возможно, идёт запись\n"+
-				"  посмотреть: tail -f %s\n"+
-				"  добить:     kill -9 %d  (запись оборвётся)",
+			return fmt.Errorf(tr("steno (pid %d) не вышел за %s — возможно, идёт запись\n")+
+				tr("  посмотреть: tail -f %s\n")+
+				tr("  добить:     kill -9 %d  (запись оборвётся)"),
 				info.PID, timeout, p.Log, info.PID)
 		}
 		time.Sleep(stopPollInterval)
@@ -262,40 +262,40 @@ func cmdStatus(args []string) error {
 func printDaemonStatus(cfgPath string) error {
 	p, info, state := findDaemon(cfgPath)
 	if state != daemonRunning {
-		fmt.Fprintln(daemonOut, "steno не запущен")
+		fmt.Fprintln(daemonOut, tr("steno не запущен"))
 		if state == daemonStale && info.PID > 0 {
-			fmt.Fprintf(daemonOut, "  прошлый запуск (pid %d%s) закончился\n",
+			fmt.Fprintf(daemonOut, tr("  прошлый запуск (pid %d%s) закончился\n"),
 				info.PID, startedAtText(info))
 		}
 		if n := fileSize(p.Log); n > 0 {
-			fmt.Fprintf(daemonOut, "  лог          %s  (%s)\n", p.Log, humanSize(n))
+			fmt.Fprintf(daemonOut, tr("  лог          %s  (%s)\n"), p.Log, humanSize(n))
 		}
-		fmt.Fprintln(daemonOut, "  настройка    "+configLine(cfgPath))
-		fmt.Fprintf(daemonOut, "  запустить    steno start  %s\n", dim("в фоне"))
-		fmt.Fprintln(daemonOut, "  автозапуск   "+autostartLine())
+		fmt.Fprintln(daemonOut, tr("  настройка    ")+configLine(cfgPath))
+		fmt.Fprintf(daemonOut, tr("  запустить    steno start  %s\n"), dim(tr("в фоне")))
+		fmt.Fprintln(daemonOut, tr("  автозапуск   ")+autostartLine())
 		return nil
 	}
 
-	fmt.Fprintln(daemonOut, "steno работает")
+	fmt.Fprintln(daemonOut, tr("steno работает"))
 	fmt.Fprintf(daemonOut, "  pid          %d%s\n", info.PID, orEmpty(modeText(info), "  "+modeText(info)))
 	if !info.Started.IsZero() {
-		fmt.Fprintf(daemonOut, "  запущен      %s  (%s назад)\n",
+		fmt.Fprintf(daemonOut, tr("  запущен      %s  (%s назад)\n"),
 			info.Started.Local().Format("02.01 15:04"), sinceText(time.Since(info.Started)))
 	}
-	fmt.Fprintln(daemonOut, "  созвонов     "+meetingsLine(p, info))
+	fmt.Fprintln(daemonOut, tr("  созвонов     ")+meetingsLine(p, info))
 	if cfgFile := daemonConfig(p, info); cfgFile != "" {
-		fmt.Fprintf(daemonOut, "  настройка    %s\n", cfgFile)
+		fmt.Fprintf(daemonOut, tr("  настройка    %s\n"), cfgFile)
 	}
 	if info.Log != "" {
-		fmt.Fprintf(daemonOut, "  лог          %s  (%s)\n", info.Log, humanSize(fileSize(info.Log)))
+		fmt.Fprintf(daemonOut, tr("  лог          %s  (%s)\n"), info.Log, humanSize(fileSize(info.Log)))
 	} else {
-		fmt.Fprintln(daemonOut, "  лог          пишет в терминал, из которого запущен")
+		fmt.Fprintln(daemonOut, tr("  лог          пишет в терминал, из которого запущен"))
 	}
 	if cfg, err := loadConfig(daemonConfig(p, info)); err == nil && cfg.Panel.Enabled {
-		fmt.Fprintf(daemonOut, "  панель       http://%s\n", cfg.Panel.Addr)
+		fmt.Fprintf(daemonOut, tr("  панель       http://%s\n"), cfg.Panel.Addr)
 	}
-	fmt.Fprintln(daemonOut, "  автозапуск   "+autostartLine())
-	fmt.Fprintln(daemonOut, "  остановить   steno stop")
+	fmt.Fprintln(daemonOut, tr("  автозапуск   ")+autostartLine())
+	fmt.Fprintln(daemonOut, tr("  остановить   steno stop"))
 	return nil
 }
 
@@ -311,9 +311,9 @@ func startedAtText(info daemonInfo) string {
 
 func modeText(info daemonInfo) string {
 	if info.Background {
-		return dim("в фоне")
+		return dim(tr("в фоне"))
 	}
-	return dim("в терминале")
+	return dim(tr("в терминале"))
 }
 
 // meetingsLine — сколько созвонов записано с этого запуска и всего.
@@ -324,25 +324,25 @@ func modeText(info daemonInfo) string {
 func meetingsLine(p daemonPaths, info daemonInfo) string {
 	cfg, err := loadConfig(daemonConfig(p, info))
 	if err != nil {
-		return dim("не знаю: не читается настройка")
+		return dim(tr("не знаю: не читается настройка"))
 	}
 	st, err := openStore(cfg.DataDir)
 	if err != nil {
-		return dim("не знаю: не открылась база")
+		return dim(tr("не знаю: не открылась база"))
 	}
 	defer st.Close()
 	total, err := st.CountMeetings()
 	if err != nil {
-		return dim("не знаю: не читается база")
+		return dim(tr("не знаю: не читается база"))
 	}
 	if info.Started.IsZero() {
-		return fmt.Sprintf("%d всего", total)
+		return fmt.Sprintf(tr("%d всего"), total)
 	}
 	since, err := st.countMeetingsSince(info.Started)
 	if err != nil {
-		return fmt.Sprintf("%d всего", total)
+		return fmt.Sprintf(tr("%d всего"), total)
 	}
-	return fmt.Sprintf("%d с этого запуска, %d всего", since, total)
+	return fmt.Sprintf(tr("%d с этого запуска, %d всего"), since, total)
 }
 
 // countMeetingsSince — сколько созвонов завели после момента t.
@@ -445,7 +445,7 @@ func configLine(cfgPath string) string {
 	}
 	p := resolveConfigPath(cfgPath)
 	if _, err := os.Stat(p); err != nil {
-		return dim("не найдена — работаю на умолчаниях, без панели и источников; настроить:  steno setup")
+		return dim(tr("не найдена — работаю на умолчаниях, без панели и источников; настроить:  steno setup"))
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {

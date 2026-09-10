@@ -52,15 +52,15 @@ func matchCommitsToTasks(ctx context.Context, cfg *Config, project string,
 		return nil, Spend{}, nil
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Проект: %s\n\nОткрытые задачи:\n", project)
+	fmt.Fprintf(&b, tr("Проект: %s\n\nОткрытые задачи:\n"), project)
 	for _, t := range tasks {
 		fmt.Fprintf(&b, "  [%s] %s", t.ID, t.Text)
 		if t.Owner != "" {
-			fmt.Fprintf(&b, " (на ком: %s)", t.Owner)
+			fmt.Fprintf(&b, tr(" (на ком: %s)"), t.Owner)
 		}
-		fmt.Fprintf(&b, " — с %s\n", t.OpenedAt.Format("2006-01-02"))
+		fmt.Fprintf(&b, tr(" — с %s\n"), t.OpenedAt.Format("2006-01-02"))
 	}
-	b.WriteString("\nНовые коммиты:\n")
+	b.WriteString(tr("\nНовые коммиты:\n"))
 	for _, c := range commits {
 		fmt.Fprintf(&b, "  %s  %s", c.Short(), c.Subject)
 		if c.Author != "" {
@@ -103,7 +103,7 @@ func matchCommitsToTasks(ctx context.Context, cfg *Config, project string,
 		Verdicts []commitVerdict `json:"verdicts"`
 	}
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		return nil, Spend{}, fmt.Errorf("разбор ответа: %w", err)
+		return nil, Spend{}, fmt.Errorf(tr("разбор ответа: %w"), err)
 	}
 
 	// Отсекаем выдуманное: задача и коммит должны быть из тех, что мы дали.
@@ -154,7 +154,7 @@ func (s *syncer) closeByCommits(ctx context.Context, p Project, commits []Commit
 	if len(verdicts) == 0 {
 		return nil
 	}
-	s.log.Printf("репозитории: сверка задач по «%s», %s", p.Name, spend)
+	s.log.Printf(tr("репозитории: сверка задач по «%s», %s"), p.Name, spend)
 
 	byID := map[string]ProjectItem{}
 	for _, t := range tasks {
@@ -173,7 +173,7 @@ func (s *syncer) closeByCommits(ctx context.Context, p Project, commits []Commit
 		if len(short) > 8 {
 			short = short[:8]
 		}
-		line := fmt.Sprintf("%s — %s\n    коммит %s «%s»\n    %s",
+		line := fmt.Sprintf(tr("%s — %s\n    коммит %s «%s»\n    %s"),
 			t.Text, orDash(t.Owner), short, subjects[v.Commit], v.Why)
 
 		switch v.Confidence {
@@ -182,12 +182,12 @@ func (s *syncer) closeByCommits(ctx context.Context, p Project, commits []Commit
 				digest.Maybe = append(digest.Maybe, line)
 				continue
 			}
-			note := fmt.Sprintf("закрыто коммитом %s «%s»", short, subjects[v.Commit])
+			note := fmt.Sprintf(tr("закрыто коммитом %s «%s»"), short, subjects[v.Commit])
 			if err := s.st.CloseItem(t.ID, "done", note, ""); err != nil {
-				s.log.Printf("репозитории: не закрыл %s: %v", t.ID, err)
+				s.log.Printf(tr("репозитории: не закрыл %s: %v"), t.ID, err)
 				continue
 			}
-			s.log.Printf("репозитории: закрыл %s — %s", t.ID, note)
+			s.log.Printf(tr("репозитории: закрыл %s — %s"), t.ID, note)
 			digest.Closed = append(digest.Closed, line)
 		case "medium":
 			digest.Maybe = append(digest.Maybe, line)

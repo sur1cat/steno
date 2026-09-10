@@ -39,8 +39,8 @@ func renderProjectHTML(name string, items []ProjectItem) string {
 	}
 
 	fmt.Fprintf(&b, "<h1>%s</h1>\n", e(name))
-	fmt.Fprintf(&b, "<p><i>Обновлено %s. Документ ведётся автоматически по итогам созвонов — "+
-		"правки в нём перезапишутся.</i></p>\n", e(time.Now().Format("2 January 2006, 15:04")))
+	fmt.Fprintf(&b, tr("<p><i>Обновлено %s. Документ ведётся автоматически по итогам созвонов — ")+
+		tr("правки в нём перезапишутся.</i></p>\n"), e(time.Now().Format("2 January 2006, 15:04")))
 
 	section := func(title string, list []ProjectItem, row func(ProjectItem) string) {
 		if len(list) == 0 {
@@ -53,37 +53,37 @@ func renderProjectHTML(name string, items []ProjectItem) string {
 		b.WriteString("</ul>\n")
 	}
 
-	section("Задачи", tasks, func(it ProjectItem) string {
+	section(tr("Задачи"), tasks, func(it ProjectItem) string {
 		s := ""
 		if it.Owner != "" {
 			s += "<b>" + e(it.Owner) + "</b> — "
 		}
 		s += e(it.Text)
-		s += fmt.Sprintf(" <i>(срок: %s, с %s, %s)</i>",
+		s += fmt.Sprintf(tr(" <i>(срок: %s, с %s, %s)</i>"),
 			e(dueOrText(it.Due)), e(it.OpenedAt.Format("02.01.2006")), e(it.ID))
 		if it.Quote != "" {
 			s += "<br/><span>«" + e(it.Quote) + "»</span>"
 		}
 		return s
 	})
-	section("Открытые вопросы", questions, func(it ProjectItem) string {
+	section(tr("Открытые вопросы"), questions, func(it ProjectItem) string {
 		s := e(it.Text)
 		if it.Owner != "" {
-			s += " <i>(ждём: " + e(it.Owner) + ")</i>"
+			s += tr(" <i>(ждём: ") + e(it.Owner) + ")</i>"
 		}
-		return s + fmt.Sprintf(" <i>(с %s, %s)</i>", e(it.OpenedAt.Format("02.01.2006")), e(it.ID))
+		return s + fmt.Sprintf(tr(" <i>(с %s, %s)</i>"), e(it.OpenedAt.Format("02.01.2006")), e(it.ID))
 	})
-	section("Решения", decisions, func(it ProjectItem) string {
+	section(tr("Решения"), decisions, func(it ProjectItem) string {
 		s := "<b>" + e(it.Text) + "</b>"
 		if it.Quote != "" {
 			s += " — " + e(it.Quote)
 		}
 		return s + fmt.Sprintf(" <i>(%s)</i>", e(it.OpenedAt.Format("02.01.2006")))
 	})
-	section("Закрыто", closed, func(it ProjectItem) string {
-		what := "снято"
+	section(tr("Закрыто"), closed, func(it ProjectItem) string {
+		what := tr("снято")
 		if it.Status == "done" {
-			what = "сделано"
+			what = tr("сделано")
 		}
 		s := e(it.Text) + " <i>(" + what + ", " + e(it.UpdatedAt.Format("02.01.2006")) + ")</i>"
 		if it.Note != "" {
@@ -93,14 +93,14 @@ func renderProjectHTML(name string, items []ProjectItem) string {
 	})
 
 	if len(items) == 0 {
-		b.WriteString("<p>Пока пусто.</p>\n")
+		b.WriteString(tr("<p>Пока пусто.</p>\n"))
 	}
 	return b.String()
 }
 
 func dueOrText(due string) string {
 	if strings.TrimSpace(due) == "" {
-		return "не назван"
+		return tr("не назван")
 	}
 	return due
 }
@@ -121,10 +121,10 @@ func publishProjectDocs(ctx context.Context, cfg *Config, st *Store, f *Followup
 		}
 		url, err := publishProjectDoc(ctx, cfg, st, name)
 		if err != nil {
-			lg.Printf("документ проекта «%s»: %v", name, err)
+			lg.Printf(tr("документ проекта «%s»: %v"), name, err)
 			continue
 		}
-		lg.Printf("документ проекта «%s»: %s", name, url)
+		lg.Printf(tr("документ проекта «%s»: %s"), name, url)
 	}
 }
 
@@ -166,7 +166,7 @@ func publishProjectDoc(ctx context.Context, cfg *Config, st *Store, name string)
 	}
 
 	file := &drive.File{
-		Name:     "Проект: " + name,
+		Name:     tr("Проект: ") + name,
 		MimeType: "application/vnd.google-apps.document",
 	}
 	if cfg.GoogleDocs.FolderID != "" {

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log"
 	"strings"
 	"sync"
@@ -29,17 +29,17 @@ type calendarSource struct {
 	svcs map[string]*calendar.Service
 }
 
-func (s *calendarSource) Name() string { return "календарь" }
+func (s *calendarSource) Name() string { return tr("календарь") }
 
 func (s *calendarSource) Run(ctx context.Context) error {
 	if len(s.cfg.Calendar.Calendars) == 0 {
-		return fmt.Errorf("не указан ни один календарь в calendar.calendars")
+		return errors.New(tr("не указан ни один календарь в calendar.calendars"))
 	}
 	every := s.cfg.Calendar.PollEvery.D()
 	if every <= 0 {
 		every = 2 * time.Minute
 	}
-	s.log.Printf("календарь: слежу за %d календарями, опрос раз в %s",
+	s.log.Printf(tr("календарь: слежу за %d календарями, опрос раз в %s"),
 		len(s.cfg.Calendar.Calendars), every)
 
 	t := time.NewTicker(every)
@@ -62,7 +62,7 @@ func (s *calendarSource) poll(ctx context.Context) {
 	for _, calID := range s.cfg.Calendar.Calendars {
 		events, err := s.upcoming(ctx, calID, now.Add(-2*time.Minute), horizon)
 		if err != nil {
-			s.log.Printf("календарь %s: %v", calID, err)
+			s.log.Printf(tr("календарь %s: %v"), calID, err)
 			continue
 		}
 		for _, ev := range events {
@@ -154,7 +154,7 @@ func (s *calendarSource) consider(ctx context.Context, calID string, ev *calenda
 		StartedAt:  time.Now(),
 		Invitees:   attendees,
 		Status:     "recording",
-	}, "календарь "+calID)
+	}, tr("календарь ")+calID)
 }
 
 // meetLink пропускает ссылку через ту же строгую проверку, что и остальные

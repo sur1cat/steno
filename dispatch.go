@@ -47,7 +47,7 @@ const (
 // же созвона, как бы про него ни узнали, — иначе на встречу придут два бота.
 func (d *Dispatcher) Start(ctx context.Context, key string, m *Meeting, why string) StartResult {
 	if seen, err := d.st.EventSeen(key); err != nil {
-		d.log.Printf("проверка «%s»: %v", key, err)
+		d.log.Printf(tr("проверка «%s»: %v"), key, err)
 		return StartError
 	} else if seen {
 		return Duplicate
@@ -57,14 +57,14 @@ func (d *Dispatcher) Start(ctx context.Context, key string, m *Meeting, why stri
 	select {
 	case d.sem <- struct{}{}:
 	default:
-		d.log.Printf("пропускаю «%s»: уже пишу %d созвонов", orDash(m.Title), cap(d.sem))
+		d.log.Printf(tr("пропускаю «%s»: уже пишу %d созвонов"), orDash(m.Title), cap(d.sem))
 		return NoCapacity
 	}
 	// Занять ключ и убедиться, что его занял именно ты, — это один шаг.
 	// Проверка выше только экономит работу; решает эта вставка.
 	claimed, err := d.st.MarkEventSeen(key, m.ID)
 	if err != nil {
-		d.log.Printf("не смог отметить «%s»: %v", key, err)
+		d.log.Printf(tr("не смог отметить «%s»: %v"), key, err)
 		<-d.sem
 		return StartError
 	}
@@ -82,7 +82,7 @@ func (d *Dispatcher) Start(ctx context.Context, key string, m *Meeting, why stri
 	go func() {
 		defer cancel()
 		defer func() { <-d.sem }()
-		d.log.Printf("иду на «%s» (%s, повод: %s)", orDash(m.Title), m.MeetURL, why)
+		d.log.Printf(tr("иду на «%s» (%s, повод: %s)"), orDash(m.Title), m.MeetURL, why)
 		started := time.Now()
 		err := d.run(recCtx, d.cfg, d.st, m)
 		if err == nil {
@@ -100,9 +100,9 @@ func (d *Dispatcher) Start(ctx context.Context, key string, m *Meeting, why stri
 		// сорваться она может все тридцать минут подряд.
 		if time.Since(started) < 15*time.Second {
 			if e := d.st.UnmarkEvent(key); e != nil {
-				d.log.Printf("не снял отметку с «%s»: %v", key, e)
+				d.log.Printf(tr("не снял отметку с «%s»: %v"), key, e)
 			} else {
-				d.log.Printf("«%s»: попробую ещё раз на следующем опросе", orDash(m.Title))
+				d.log.Printf(tr("«%s»: попробую ещё раз на следующем опросе"), orDash(m.Title))
 			}
 		}
 	}()
@@ -127,8 +127,8 @@ func (d *Dispatcher) WaitIdle(grace time.Duration) {
 	select {
 	case <-done:
 	case <-time.After(grace):
-		d.log.Printf("не дождался записей за %s — выхожу; незавершённые созвоны "+
-			"доводятся командой `steno process <id>`", grace)
+		d.log.Printf(tr("не дождался записей за %s — выхожу; незавершённые созвоны ")+
+			tr("доводятся командой `steno process <id>`"), grace)
 	}
 }
 

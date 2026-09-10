@@ -72,7 +72,7 @@ func publishToOrigin(ctx context.Context, cfg *Config, st *Store, m *Meeting, f 
 		if cfg.Telegram.Enabled && m.ReplyTo.Addr == cfg.Telegram.ChatID {
 			return nil
 		}
-		target = "telegram:откуда просили"
+		target = tr("telegram:откуда просили")
 		err = publishTelegram(ctx, cfg, m, f, m.ReplyTo.Addr, docURL)
 	case "slack":
 		// Сравниваем с id, который вернул сам Slack: в конфиге канал задан
@@ -80,7 +80,7 @@ func publishToOrigin(ctx context.Context, cfg *Config, st *Store, m *Meeting, f 
 		if slackChannelID != "" && m.ReplyTo.Addr == slackChannelID {
 			return nil
 		}
-		target = "slack:откуда просили"
+		target = tr("slack:откуда просили")
 		var token string
 		if token, err = secret(cfg.Slack.TokenEnv, "Slack"); err == nil {
 			sc := &slackClient{token: token}
@@ -108,10 +108,10 @@ func record(st *Store, lg *log.Logger, id, target, url string, err error) {
 	} else if url != "" {
 		lg.Printf("%s: %s", target, url)
 	} else {
-		lg.Printf("%s: отправлено", target)
+		lg.Printf(tr("%s: отправлено"), target)
 	}
 	if e := st.SavePublication(id, target, url, msg); e != nil {
-		lg.Printf("не записал результат публикации: %v", e)
+		lg.Printf(tr("не записал результат публикации: %v"), e)
 	}
 }
 
@@ -175,7 +175,7 @@ func publishSlack(ctx context.Context, cfg *Config, m *Meeting, f *Followup, seg
 			if _, err := sc.post(ctx, channelID, "```"+part+"```", ts); err != nil {
 				// Молчать нельзя: расшифровка ушла кусками, и следующий кусок
 				// уже не уйдёт — пусть это видно в publications.error.
-				return permalink, channelID, fmt.Errorf("расшифровка в тред: кусок %d из %d: %w", i+1, len(parts), err)
+				return permalink, channelID, fmt.Errorf(tr("расшифровка в тред: кусок %d из %d: %w"), i+1, len(parts), err)
 			}
 			// У Slack примерно одно сообщение в секунду на канал.
 			select {
@@ -285,25 +285,25 @@ func (c *slackClient) dmOwners(ctx context.Context, f *Followup, link string, lg
 		return
 	}
 	if err := c.loadUsers(ctx); err != nil {
-		lg.Printf("slack: не смог получить список пользователей: %v", err)
+		lg.Printf(tr("slack: не смог получить список пользователей: %v"), err)
 		return
 	}
 	for owner, items := range byOwner {
 		id, ok := c.users[normalizeName(owner)]
 		if !ok {
-			lg.Printf("slack: не нашёл в воркспейсе %q — задачи остались только в канале", owner)
+			lg.Printf(tr("slack: не нашёл в воркспейсе %q — задачи остались только в канале"), owner)
 			continue
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "На тебе с созвона:\n")
+		fmt.Fprint(&b, tr("На тебе с созвона:\n"))
 		for _, a := range items {
-			fmt.Fprintf(&b, "• %s _(%s)_\n", a.What, dueOr(a.Due, "срок не назван"))
+			fmt.Fprintf(&b, "• %s _(%s)_\n", a.What, dueOr(a.Due, tr("срок не назван")))
 		}
 		if link != "" {
-			fmt.Fprintf(&b, "\n<%s|Весь follow-up>", link)
+			fmt.Fprintf(&b, tr("\n<%s|Весь follow-up>"), link)
 		}
 		if _, err := c.post(ctx, id, b.String(), ""); err != nil {
-			lg.Printf("slack: личное сообщение %s: %v", owner, err)
+			lg.Printf(tr("slack: личное сообщение %s: %v"), owner, err)
 		}
 	}
 }
@@ -363,7 +363,7 @@ func normalizeName(s string) string {
 
 func publishTelegram(ctx context.Context, cfg *Config, m *Meeting, f *Followup, chatID, docURL string) error {
 	if chatID == "" {
-		return fmt.Errorf("telegram: не указан чат")
+		return errors.New(tr("telegram: не указан чат"))
 	}
 	token, err := secret(cfg.Telegram.TokenEnv, "Telegram")
 	if err != nil {

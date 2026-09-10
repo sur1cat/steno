@@ -86,10 +86,10 @@ func (meetPlatform) SetCaptionLanguage(ctx context.Context, sel *Selectors, lang
 	opened := false
 	for i := 0; i < captionSettingsTries && !opened; i++ {
 		if err := chromedp.Run(ctx, chromedp.Evaluate(
-			`window.__steno && window.__steno.captionSettingsStep
-				? window.__steno.captionSettingsStep() : {state:"нет скрипта страницы"}`,
+			tr(`window.__steno && window.__steno.captionSettingsStep
+				? window.__steno.captionSettingsStep() : {state:"нет скрипта страницы"}`),
 			&step)); err != nil {
-			lg.Printf("настройки субтитров: %v", err)
+			lg.Printf(tr("настройки субтитров: %v"), err)
 			return
 		}
 		if step.Done {
@@ -102,9 +102,9 @@ func (meetPlatform) SetCaptionLanguage(ctx context.Context, sel *Selectors, lang
 	if !opened {
 		// Именно так и выглядела поломка на живом созвоне: искали кнопку
 		// «настройки субтитров», которой в нынешнем Meet уже нет.
-		lg.Printf("не дошёл до настроек субтитров (остановился на %q%s) — Meet будет "+
-			"слушать тем языком, который стоит у него сейчас; %s",
-			step.State, describeStep(step.Tabs, step.Buttons), manualLanguageHint)
+		lg.Printf(tr("не дошёл до настроек субтитров (остановился на %q%s) — Meet будет ")+
+			tr("слушать тем языком, который стоит у него сейчас; %s"),
+			step.State, describeStep(step.Tabs, step.Buttons), tr(manualLanguageHint))
 		closeCaptionDialog(ctx)
 		return
 	}
@@ -119,14 +119,14 @@ func (meetPlatform) SetCaptionLanguage(ctx context.Context, sel *Selectors, lang
 	js := fmt.Sprintf("window.__steno ? window.__steno.pickCaptionLanguage(%s) : {ok:false}",
 		mustJSON(names))
 	if err := chromedp.Run(ctx, chromedp.Evaluate(js, &res)); err != nil {
-		lg.Printf("выбор языка субтитров: %v", err)
+		lg.Printf(tr("выбор языка субтитров: %v"), err)
 	} else if res.OK {
-		lg.Printf("язык субтитров: %s (%s)", res.Picked, res.How)
+		lg.Printf(tr("язык субтитров: %s (%s)"), res.Picked, res.How)
 	} else {
 		// Всегда говорим, чем кончилось: молчание здесь означало бы, что про
 		// чужой язык человек узнает только по пустой расшифровке.
-		lg.Printf("не нашёл %v среди языков субтитров; выпадашки: %v; варианты: %v; %s",
-			names, res.Combos, res.Options, manualLanguageHint)
+		lg.Printf(tr("не нашёл %v среди языков субтитров; выпадашки: %v; варианты: %v; %s"),
+			names, res.Combos, res.Options, tr(manualLanguageHint))
 	}
 
 	var now string
@@ -134,7 +134,7 @@ func (meetPlatform) SetCaptionLanguage(ctx context.Context, sel *Selectors, lang
 		`window.__steno && window.__steno.captionLanguage ? window.__steno.captionLanguage() : ""`,
 		&now))
 	if now != "" {
-		lg.Printf("Meet слушает языком: %s", now)
+		lg.Printf(tr("Meet слушает языком: %s"), now)
 	}
 
 	closeCaptionDialog(ctx)
@@ -145,9 +145,9 @@ func (meetPlatform) SetCaptionLanguage(ctx context.Context, sel *Selectors, lang
 func describeStep(tabs, buttons []string) string {
 	switch {
 	case len(tabs) > 0:
-		return fmt.Sprintf("; вкладки: %v", tabs)
+		return fmt.Sprintf(tr("; вкладки: %v"), tabs)
 	case len(buttons) > 0:
-		return fmt.Sprintf("; кнопки: %v", buttons)
+		return fmt.Sprintf(tr("; кнопки: %v"), buttons)
 	}
 	return ""
 }

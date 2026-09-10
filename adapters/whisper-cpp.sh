@@ -16,6 +16,9 @@
 #                                          мелкая экономит ~10 с на прогон)
 #   WHISPER_VAD_MODEL модель VAD          (по умолчанию ggml-silero-*.bin
 #                                          из WHISPER_MODEL_DIR, если лежит)
+#   STENO_PROMPT     словарь созвона: имена людей и названия сервисов через
+#                    запятую. Уходит в --prompt. Пусто или не задано — whisper
+#                    зовётся ровно теми же ключами, что и раньше.
 #
 # VAD стоит положить: 900 КБ, и на записи созвона он решает две задачи разом —
 # выкидывает тишину до прихода людей, на которой whisper иначе сочиняет текст,
@@ -24,7 +27,17 @@
 #     https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin
 set -euo pipefail
 
-AUDIO="${1:?нужен путь к аудио}"
+# Сообщения адаптера идут на языке steno: STENO_LANG=ru — по-русски, иначе
+# по-английски. Первым аргументом английский текст, вторым русский.
+say() {
+  case "${STENO_LANG:-}" in
+    ru*) printf '%s\n' "$2" >&2 ;;
+    *)   printf '%s\n' "$1" >&2 ;;
+  esac
+}
+
+
+AUDIO="${1:?path to the audio file is required}"
 # Пустой язык означает автоопределение, а не русский: language:"" в конфиге —
 # это осознанный выбор для созвонов, где переходят с языка на язык.
 LANG_CODE="${2:-}"
@@ -56,14 +69,14 @@ if [ -z "${WHISPER_MODEL:-}" ]; then
   done
 fi
 if [ -z "${WHISPER_MODEL:-}" ] || [ ! -f "$WHISPER_MODEL" ]; then
-  echo "whisper: не нашёл ggml-модель в $MODEL_DIR" >&2
+  say "whisper: no ggml model found in $MODEL_DIR" "whisper: не нашёл ggml-модель в $MODEL_DIR"
   echo "  → mkdir -p $MODEL_DIR && curl -L -o $MODEL_DIR/ggml-large-v3.bin \\" >&2
   echo "      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin" >&2
-  echo "  → или укажи свою: WHISPER_MODEL=/путь/до/ggml-*.bin" >&2
+  say "  → or point at your own: WHISPER_MODEL=/path/to/ggml-*.bin" "  → или укажи свою: WHISPER_MODEL=/путь/до/ggml-*.bin"
   exit 1
 fi
 MODEL="$WHISPER_MODEL"
-echo "whisper: модель $(basename "$MODEL")" >&2
+say "whisper: model $(basename "$MODEL")" "whisper: модель $(basename "$MODEL")"
 
 # Число потоков. WHISPER_THREADS ставит сервис: расшифровка не должна занимать
 # машину целиком, если она же используется для работы.
@@ -90,8 +103,8 @@ fi
 if [ -n "${WHISPER_VAD_MODEL:-}" ] && [ -f "$WHISPER_VAD_MODEL" ]; then
   VAD_ARGS=(--vad -vm "$WHISPER_VAD_MODEL")
 else
-  echo "whisper: VAD-модели нет в $MODEL_DIR — тишина пойдёт в расшифровку," >&2
-  echo "  и на ней whisper выдумывает текст. Ставится одной командой:" >&2
+  say "whisper: no VAD model in $MODEL_DIR — silence goes into the transcript," "whisper: VAD-модели нет в $MODEL_DIR — тишина пойдёт в расшифровку,"
+  say "  and whisper invents text on it. One command installs it:" "  и на ней whisper выдумывает текст. Ставится одной командой:"
   echo "  curl -L -o $MODEL_DIR/ggml-silero-v5.1.2.bin \\" >&2
   echo "    https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin" >&2
 fi
@@ -131,20 +144,62 @@ if [ "$LANG_CODE" = "auto" ]; then
     DET="$(sed -n 's/.*auto-detected language: \([a-z][a-z]*\).*/\1/p' \
              "$TMP/detect.log" | tail -1)"
   else
-    echo "whisper: определить язык не вышло, расшифровываю с auto:" >&2
+    say "whisper: could not detect the language, transcribing with auto:" "whisper: определить язык не вышло, расшифровываю с auto:"
     tail -5 "$TMP/detect.log" >&2
     DET=""
   fi
   if [ -n "$DET" ]; then
-    echo "whisper: язык определён как $DET" >&2
+    say "whisper: language detected as $DET" "whisper: язык определён как $DET"
     LANG_CODE="$DET"
   fi
 fi
 
-# -mc 0 — не тащить текст предыдущего окна в следующее. С контекстом whisper на
-# тишине сваливается в петлю («Редактор субтитров ...» сорок раз подряд) и
-# дальше повторяет её вместо речи: на этой записи петля съедала весь разговор.
-"$BIN" -m "$MODEL" -t "$THREADS" -mc 0 -l "$LANG_CODE" \
+# Словарь созвона. Имена людей и названия сервисов, которых нет в словаре
+# модели: без подсказки whisper подменяет их похожими обычными словами —
+# «Орынгали нужно закончить Сапар» становится «Анвару нужно закончить сапар».
+#
+# И здесь же — единственное место, где приходится трогать -mc, поэтому длинно.
+#
+# -mc 0 стоит не просто так: с контекстом whisper на тишине сваливается в петлю
+# («Редактор субтитров ...» сорок раз подряд) и дальше повторяет её вместо речи.
+# Но -mc 0 заодно молча выключает и --prompt: в whisper.cpp подсказка живёт в
+# той же истории, а история берётся под условием n_max_text_ctx > 0. Проверено:
+# с -mc 0 расшифровка с подсказкой и без неё совпадает байт в байт.
+#
+# Поэтому при подсказке -mc поднимаем — но ровно на её длину. Внутри whisper.cpp
+# бюджет истории делится так:
+#
+#   max_prompt_ctx = min(n_max_text_ctx, n_text_ctx/2)     // 224 у всех моделей
+#   взято из подсказки  = min(токенов подсказки, max_prompt_ctx - 1)
+#   взято из прошлого окна = max_prompt_ctx - взято_из_подсказки - 1
+#
+# То есть -mc = (токенов подсказки + 1) даёт ноль токенов прошлого окна:
+# словарь виден всегда, а текст, на котором whisper зацикливался, не переносится
+# по-прежнему. Ровно то же свойство, что у -mc 0, только словарь проходит.
+#
+# --carry-initial-prompt обязателен. Без него подсказка кладётся в «прошлое
+# окно», которое whisper переписывает после каждых тридцати секунд, — и словарь
+# действует только на первые полминуты созвона. С ним подсказка лежит отдельно
+# и подставляется в каждое окно. Стоит это тех же нескольких десятков токенов
+# в каждом окне, то есть ничего.
+#
+# Токены не считаем точно — токенизатор внутри модели. Оценка по байтам: и
+# кириллица (2 байта на символ, ~2 символа на токен), и латиница (1 байт, ~4
+# символа) дают около 0.3 токена на байт. Оценка нарочно щедрая: если её не
+# хватит, whisper обрежет подсказку сам — и обрежет с начала, по именам людей.
+PROMPT_ARGS=()
+if [ -n "${STENO_PROMPT:-}" ]; then
+  BYTES=$(printf '%s' "$STENO_PROMPT" | LC_ALL=C wc -c | tr -d ' ')
+  ITEMS=$(printf '%s' "$STENO_PROMPT" | tr -cd ',' | wc -c | tr -d ' ')
+  MC=$(( (3 * BYTES) / 10 + ITEMS + 2 ))
+  [ "$MC" -gt 224 ] && MC=224
+  PROMPT_ARGS=(--prompt "$STENO_PROMPT" --carry-initial-prompt -mc "$MC")
+  say "whisper: a $MC-token vocabulary: $STENO_PROMPT" "whisper: словарь на $MC токенов: $STENO_PROMPT"
+else
+  PROMPT_ARGS=(-mc 0)
+fi
+
+"$BIN" -m "$MODEL" -t "$THREADS" "${PROMPT_ARGS[@]}" -l "$LANG_CODE" \
   "${VAD_ARGS[@]+"${VAD_ARGS[@]}"}" -f "$TMP/a.wav" -oj -of "$TMP/out" >&2
 
 # whisper.cpp отдаёт offsets в миллисекундах — переводим в секунды.

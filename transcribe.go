@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -38,11 +39,11 @@ type transcriptOut struct {
 func segmentsFromCaptions(captionsPath string) ([]Segment, error) {
 	utts, err := readUtterances(captionsPath)
 	if err != nil {
-		return nil, fmt.Errorf("субтитры %s: %w", captionsPath, err)
+		return nil, fmt.Errorf(tr("субтитры %s: %w"), captionsPath, err)
 	}
 	if len(utts) == 0 {
-		return nil, fmt.Errorf("субтитры пусты: в звонке они не включились, "+
-			"и брать текст неоткуда (%s)", captionsPath)
+		return nil, fmt.Errorf(tr("субтитры пусты: в звонке они не включились, ")+
+			tr("и брать текст неоткуда (%s)"), captionsPath)
 	}
 	segs := make([]Segment, 0, len(utts))
 	for _, u := range utts {
@@ -75,9 +76,17 @@ func resizeTranscribeQueue(n int) {
 // runTranscriber возвращает ещё и то, что адаптер написал в stderr: там он
 // сообщает, какой моделью работал и какой язык определил. Это ровно те два
 // факта, по которым потом понимаешь, почему расшифровка вышла такой.
-func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segment, string, error) {
+//
+// Четвёртый параметр — словарь созвона (vocab.go), список слов через запятую.
+// Он вариативный по той же причине, что и у alignSpeakers: форму команды
+// расшифровки менять нельзя — она записана в конфигах у людей как
+// [адаптер, {{audio}}, {{language}}], и четвёртый аргумент сломал бы их все, —
+// а вызов из main.go сейчас правит другой человек. Словарь уходит окружением,
+// как уже уходит WHISPER_THREADS; адаптер без словаря работает ровно как
+// раньше.
+func runTranscriber(ctx context.Context, cfg *Config, audioPath string, vocabulary ...string) ([]Segment, string, error) {
 	if len(cfg.Transcribe.Cmd) == 0 {
-		return nil, "", fmt.Errorf("не настроен transcribe.cmd")
+		return nil, "", errors.New(tr("не настроен transcribe.cmd"))
 	}
 	args := make([]string, len(cfg.Transcribe.Cmd))
 	for i, a := range cfg.Transcribe.Cmd {
@@ -109,9 +118,23 @@ func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segme
 		}
 	}
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	// Адаптер печатает диагностику человеку и потому говорит на языке steno.
+	// Передаём всегда: язык мог прийти из конфига, а не из окружения, и сам
+	// по себе до адаптера тогда не доедет.
+	env := []string{"STENO_LANG=" + uiLang}
 	if n := cfg.Transcribe.Threads; n > 0 {
 		// Адаптеры читают это и не занимают машину целиком.
-		cmd.Env = append(os.Environ(), fmt.Sprintf("WHISPER_THREADS=%d", n))
+		env = append(env, fmt.Sprintf("WHISPER_THREADS=%d", n))
+	}
+	// Словарь созвона. Пустой не передаём вовсе: адаптер по отсутствию
+	// переменной отличает «словаря нет» от «словарь пустой» и в первом случае
+	// зовёт whisper теми же ключами, что и до всей этой истории.
+	if hint := vocabularyHint(vocabulary); hint != "" {
+		env = append(env, "STENO_PROMPT="+hint)
+		log.Printf(tr("словарь для распознавания: %s"), cut(hint, 200))
+	}
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
 	}
 	// По таймауту гасим всю группу процессов мягко, чтобы обёртка успела
 	// убрать временный WAV, а whisper не остался сиротой.
@@ -123,12 +146,12 @@ func runTranscriber(ctx context.Context, cfg *Config, audioPath string) ([]Segme
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, "", fmt.Errorf("адаптер расшифровки %v: %w\n%s", args, err, tail(stderr.String(), 800))
+		return nil, "", fmt.Errorf(tr("адаптер расшифровки %v: %w\n%s"), args, err, tail(stderr.String(), 800))
 	}
 
 	var out transcriptOut
 	if err := json.Unmarshal([]byte(stdout.String()), &out); err != nil {
-		return nil, "", fmt.Errorf("адаптер вернул не тот JSON: %w\n%s", err, tail(stdout.String(), 400))
+		return nil, "", fmt.Errorf(tr("адаптер вернул не тот JSON: %w\n%s"), err, tail(stdout.String(), 400))
 	}
 	segs := make([]Segment, 0, len(out.Segments))
 	for _, s := range out.Segments {
@@ -349,10 +372,10 @@ type speakerMix struct {
 }
 
 func (m speakerMix) Report() string {
-	msg := fmt.Sprintf("имена: %d от субтитров, %d от подсветки говорящего, %d без имени",
+	msg := fmt.Sprintf(tr("имена: %d от субтитров, %d от подсветки говорящего, %d без имени"),
 		m.FromCaptions, m.FromTiles, m.Unnamed)
 	if m.Conflicts > 0 {
-		msg += fmt.Sprintf("; разошлись на %d сегментах — там взято имя из субтитров", m.Conflicts)
+		msg += fmt.Sprintf(tr("; разошлись на %d сегментах — там взято имя из субтитров"), m.Conflicts)
 	}
 	return msg
 }
@@ -448,12 +471,12 @@ func checkTranscript(segs []Segment) error {
 		chars += len([]rune(t))
 	}
 	if real == 0 {
-		return fmt.Errorf("в расшифровке нет речи — %d строк, и все пустые или «нет звука». "+
-			"Обычно это значит, что определился не тот язык или запись почти вся тишина", len(segs))
+		return fmt.Errorf(tr("в расшифровке нет речи — %d строк, и все пустые или «нет звука». ")+
+			tr("Обычно это значит, что определился не тот язык или запись почти вся тишина"), len(segs))
 	}
 	if chars < minChars {
-		return fmt.Errorf("расшифровка почти пустая: %d значимых строк, %d символов. "+
-			"Проверь запись и язык распознавания", real, chars)
+		return fmt.Errorf(tr("расшифровка почти пустая: %d значимых строк, %d символов. ")+
+			tr("Проверь запись и язык распознавания"), real, chars)
 	}
 	return nil
 }

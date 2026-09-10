@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { Empty, Failed, GroupHead, Loading, PageHead } from "@/components/layout";
 import { InviteDialog } from "@/components/invite-dialog";
+import { t } from "@/lib/i18n";
 
 const DAYS = [
-  { value: "1", label: "сегодня" },
-  { value: "3", label: "три дня" },
-  { value: "7", label: "неделя" },
-  { value: "14", label: "две недели" },
+  { value: "1", label: t("сегодня") },
+  { value: "3", label: t("три дня") },
+  { value: "7", label: t("неделя") },
+  { value: "14", label: t("две недели") },
 ];
 
 export function SchedulePage() {
@@ -28,7 +29,7 @@ export function SchedulePage() {
     mutationFn: (v: { key: string; decision: "" | "skip" | "attend" }) =>
       api.scheduleOverride(v.key, v.decision),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["schedule"] }),
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "не получилось"),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
   });
 
   if (q.isPending) return <Loading />;
@@ -51,12 +52,12 @@ export function SchedulePage() {
   return (
     <>
       <PageHead
-        title="Расписание"
-        sub="Куда бот пойдёт, а куда нет и почему. Передумать можно заранее — выгонять его из уже идущего звонка на глазах у всех не придётся."
+        title={t("Расписание")}
+        sub={t("Куда бот пойдёт, а куда нет и почему. Передумать можно заранее — выгонять его из уже идущего звонка на глазах у всех не придётся.")}
         actions={
           <>
             <SelectMenu
-              label="На сколько дней"
+              label={t("На сколько дней")}
               value={days}
               onChange={setDays}
               options={DAYS}
@@ -67,7 +68,7 @@ export function SchedulePage() {
                 за гамбургер, и здесь кнопка остаётся единственной. */}
             <Button variant="outline" className="lg:hidden" onClick={() => setInviting(true)}>
               <Video className="h-4 w-4" />
-              Позвать бота
+              {t("Позвать бота")}
             </Button>
           </>
         }
@@ -75,9 +76,9 @@ export function SchedulePage() {
 
       {!q.data.calendarOn && (
         <div className="mb-5 rounded-2xl border border-[var(--border)] bg-[var(--muted)]/50 px-5 py-4 text-sm text-[var(--muted-foreground)]">
-          Календарь выключен, и расписанию неоткуда взяться. Включить его можно в{" "}
+          {t("Календарь выключен, и расписанию неоткуда взяться. Включить его можно в")}{" "}
           <Link to="/settings" className="text-primary underline-offset-4 hover:underline">
-            настройках
+            {t("настройках")}
           </Link>
           .
         </div>
@@ -85,9 +86,9 @@ export function SchedulePage() {
 
       {entries.length === 0 ? (
         <Empty>
-          Впереди ничего не запланировано.
+          {t("Впереди ничего не запланировано.")}
           <br />
-          Расписание собирается из календарей команды раз в пятнадцать минут.
+          {t("Расписание собирается из календарей команды раз в пятнадцать минут.")}
         </Empty>
       ) : (
         <div className="space-y-7">
@@ -95,7 +96,7 @@ export function SchedulePage() {
             <section key={g.day}>
               <GroupHead
                 title={dayRu(g.day)}
-                count={plural(g.items.length, "встреча", "встречи", "встреч")}
+                count={plural(g.items.length, t("встреча"), t("встречи"), t("встреч"))}
               />
               <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
                 {g.items.map((e) => (
@@ -111,21 +112,21 @@ export function SchedulePage() {
                       {/* Плашка идёт следом за названием: у правого края экрана
                           она читалась отдельно от того, к чему относится. */}
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="truncate">{e.title || "Без названия"}</span>
+                        <span className="truncate">{e.title || t("Без названия")}</span>
                         {e.recorded ? (
                           <Link to={`/m/${e.recorded}`} className="shrink-0">
-                            <Badge variant="success">записан</Badge>
+                            <Badge variant="success">{t("записан")}</Badge>
                           </Link>
                         ) : e.willAttend ? (
                           <Badge variant="success" className="shrink-0">
-                            иду
+                            {t("иду")}
                           </Badge>
                         ) : (
-                          <Badge className="shrink-0">не иду</Badge>
+                          <Badge className="shrink-0">{t("не иду")}</Badge>
                         )}
                       </div>
                       <div className="mt-0.5 truncate text-sm text-[var(--muted-foreground)]">
-                        {(e.attendees ?? []).join(", ") || "участники не указаны"}
+                        {(e.attendees ?? []).join(", ") || t("участники не указаны")}
                       </div>
                       {/* Причина названа словами: молчаливое «бот не пришёл»
                           разбирать невозможно, а названная причина чинится за
@@ -133,13 +134,13 @@ export function SchedulePage() {
                       {e.skip && (
                         <div className="mt-1 max-w-prose text-sm text-[var(--muted-foreground)]">
                           {e.override === "attend"
-                            ? `${e.skip} — но идти велено вручную`
+                            ? `${e.skip} ${t("— но идти велено вручную")}`
                             : e.skip}
                         </div>
                       )}
                       {!e.skip && e.override === "skip" && (
                         <div className="mt-1 text-sm text-[var(--muted-foreground)]">
-                          снято вручную
+                          {t("снято вручную")}
                         </div>
                       )}
                     </div>
@@ -153,17 +154,17 @@ export function SchedulePage() {
                             disabled={decide.isPending}
                             onClick={() => decide.mutate({ key: e.key, decision: "skip" })}
                           >
-                            не ходить
+                            {t("не ходить")}
                           </Button>
                         ) : (
                           <Button
                             variant="ghost"
                             size="sm"
                             disabled={decide.isPending || !e.meetUrl}
-                            title={e.meetUrl ? undefined : "без ссылки на Meet идти некуда"}
+                            title={e.meetUrl ? undefined : t("без ссылки на Meet идти некуда")}
                             onClick={() => decide.mutate({ key: e.key, decision: "attend" })}
                           >
-                            пойти
+                            {t("пойти")}
                           </Button>
                         ))}
 
@@ -175,7 +176,7 @@ export function SchedulePage() {
                           disabled={decide.isPending}
                           onClick={() => decide.mutate({ key: e.key, decision: "" })}
                         >
-                          как в календаре
+                          {t("как в календаре")}
                         </Button>
                       )}
                     </div>

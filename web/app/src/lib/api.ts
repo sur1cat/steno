@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // Разговор с сервисом. Один слой на всё приложение: страницы не знают ни про
 // заголовки, ни про то, как выглядит отказ, — они получают данные или ошибку
 // с текстом, который не стыдно показать.
@@ -24,11 +25,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     body = text ? JSON.parse(text) : null;
   } catch {
     // Сервер ответил не JSON — это уже поломка, и показывать её надо как есть.
-    throw new ApiError(res.status, text.slice(0, 200) || "непонятный ответ сервера");
+    throw new ApiError(res.status, text.slice(0, 200) || t("непонятный ответ сервера"));
   }
   if (!res.ok) {
     const msg = (body as { error?: string } | null)?.error;
-    throw new ApiError(res.status, msg ?? `ошибка ${res.status}`);
+    throw new ApiError(res.status, msg ?? `${t("ошибка")} ${res.status}`);
   }
   return body as T;
 }
@@ -105,6 +106,26 @@ export interface Spend {
   usd: number;
 }
 
+/** Цена удаления созвона: что уйдёт вместе с ним и что вернётся в работу.
+ *  Считает её Go — одной функцией на панель, `steno ui` и `steno rm`, — и
+ *  оттуда же приезжает готовая фраза: иначе в трёх местах три разных числа. */
+export interface Removal {
+  segments: number;
+  tasks: number;
+  followup: boolean;
+  publications: number;
+  events: number;
+  indexed: number;
+  openedTasks: number;
+  openedDecisions: number;
+  openedQuestions: number;
+  /** Чужие пункты, закрытые на этом созвоне: они откроются заново. */
+  reopen: number;
+  bytes: number;
+  /** Готовая фраза «уйдут: …» — ровно та же, что видит терминал. */
+  text: string;
+}
+
 export interface MeetingFull {
   id: string;
   title: string;
@@ -120,6 +141,7 @@ export interface MeetingFull {
   links: Record<string, string> | null;
   hasAudio: boolean;
   spend: Spend;
+  removal: Removal;
 }
 
 export interface HitPart {
@@ -198,6 +220,15 @@ export interface SettingsProject {
   aliases: string[] | null;
   about: string;
   sources: Source[] | null;
+  /** Имена людей — теми, которыми их зовут вслух, а не подписью аккаунта. */
+  people: string[] | null;
+  /**
+   * Остальные слова проекта: сервисы, системы, сокращения. Имена людей сервер
+   * из этого списка вычитает — в базе они лежат и здесь тоже (одним плоским
+   * словарём их читает whisper), но два поля с одним и тем же содержимым
+   * правятся вразнобой.
+   */
+  vocabulary: string[] | null;
   primerChars: number;
   builtAt: number;
   primer: string;
@@ -320,21 +351,21 @@ export function uploadRecording(
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
     };
-    xhr.onerror = () => reject(new ApiError(0, "связь оборвалась, файл не дошёл"));
-    xhr.onabort = () => reject(new ApiError(0, "отменено"));
+    xhr.onerror = () => reject(new ApiError(0, t("связь оборвалась, файл не дошёл")));
+    xhr.onabort = () => reject(new ApiError(0, t("отменено")));
     xhr.onload = () => {
       let body: unknown = null;
       try {
         body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
       } catch {
-        reject(new ApiError(xhr.status, "непонятный ответ сервера"));
+        reject(new ApiError(xhr.status, t("непонятный ответ сервера")));
         return;
       }
       if (xhr.status < 200 || xhr.status >= 300) {
         // Отказ в режиме субтитров объясняет причину словами — её и показываем,
         // а не «ошибка 400».
         const msg = (body as { error?: string } | null)?.error;
-        reject(new ApiError(xhr.status, msg ?? `ошибка ${xhr.status}`));
+        reject(new ApiError(xhr.status, msg ?? `${t("ошибка")} ${xhr.status}`));
         return;
       }
       resolve(body as UploadResult);
@@ -354,6 +385,8 @@ export const api = {
 
   meetings: (page: number) => get<MeetingsPage>(`/api/meetings?page=${page}`),
   meeting: (id: string) => get<MeetingFull>(`/api/meetings/${encodeURIComponent(id)}`),
+  deleteMeeting: (id: string) =>
+    del<{ ok: boolean; removed: Removal }>(`/api/meetings/${encodeURIComponent(id)}`),
   search: (q: string) => get<{ q: string; hits: SearchHit[] | null }>(`/api/search?q=${encodeURIComponent(q)}`),
   tasks: (owner: string) =>
     get<{ tasks: TaskRow[] | null; owners: string[] | null; owner: string }>(
@@ -369,6 +402,8 @@ export const api = {
     about: string;
     aliases: string[];
     sources: Source[];
+    people: string[];
+    vocabulary: string[];
   }) => post<{ name: string }>("/api/projects", body),
   deleteProject: (name: string) => del<{ ok: boolean }>(`/api/projects/${encodeURIComponent(name)}`),
   buildContext: (name: string) =>

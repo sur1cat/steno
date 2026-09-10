@@ -39,7 +39,7 @@ func stenoVersion() string {
 func cmdVersion() error {
 	v := stenoVersion()
 	fmt.Printf("steno %s\n", v)
-	fmt.Printf("образ бота: %s\n", defaultBotImage())
+	fmt.Printf(tr("образ бота: %s\n"), defaultBotImage())
 	return nil
 }
 

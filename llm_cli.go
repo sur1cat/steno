@@ -44,7 +44,7 @@ type cliUsage struct {
 // запустится и попросит логин, а мы увидим невнятную ошибку в середине созвона.
 func claudeCLIAvailable() (bool, string) {
 	if _, err := exec.LookPath("claude"); err != nil {
-		return false, "команда claude не найдена"
+		return false, tr("команда claude не найдена")
 	}
 	cmd := exec.Command("claude", "auth", "status")
 	cmd.Env = scrubClaudeEnv(os.Environ())
@@ -61,12 +61,12 @@ func claudeCLIAvailable() (bool, string) {
 	}
 	if err := json.Unmarshal(out, &st); err != nil {
 		// Формат мог поменяться — на это падать незачем, вход всё равно есть.
-		return true, "вход выполнен"
+		return true, tr("вход выполнен")
 	}
 	if !st.LoggedIn {
-		return false, "вход в Claude Code не выполнен — запусти `claude` и войди"
+		return false, tr("вход в Claude Code не выполнен — запусти `claude` и войди")
 	}
-	return true, firstNonEmpty(st.AuthMethod, "вход выполнен")
+	return true, firstNonEmpty(st.AuthMethod, tr("вход выполнен"))
 }
 
 // runClaudeCLI отправляет запрос и возвращает текст ответа.
@@ -121,13 +121,13 @@ func runClaudeCLI(ctx context.Context, cfg *Config, system, user string, maxUSD 
 		Usage   cliUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(out, &env); err != nil {
-		return res, fmt.Errorf("claude -p вернул не JSON: %w\n%s", err, tail(string(out), 300))
+		return res, fmt.Errorf(tr("claude -p вернул не JSON: %w\n%s"), err, tail(string(out), 300))
 	}
 	if env.IsError {
 		return res, fmt.Errorf("claude -p: %s", firstNonEmpty(env.Subtype, tail(env.Result, 300)))
 	}
 	if strings.TrimSpace(env.Result) == "" {
-		return res, fmt.Errorf("claude -p вернул пустой ответ")
+		return res, errors.New(tr("claude -p вернул пустой ответ"))
 	}
 	res.Text = env.Result
 	res.USD = env.Cost

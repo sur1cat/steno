@@ -18,13 +18,23 @@
 #   GROQ_MODEL  модель (по умолчанию whisper-large-v3)
 set -euo pipefail
 
-AUDIO="${1:?нужен путь к аудио}"
+# Сообщения адаптера идут на языке steno: STENO_LANG=ru — по-русски, иначе
+# по-английски. Первым аргументом английский текст, вторым русский.
+say() {
+  case "${STENO_LANG:-}" in
+    ru*) printf '%s\n' "$2" >&2 ;;
+    *)   printf '%s\n' "$1" >&2 ;;
+  esac
+}
+
+
+AUDIO="${1:?path to the audio file is required}"
 LANG_CODE="${2:-}"
 MODEL="${GROQ_MODEL:-whisper-large-v3}"
 
 if [ -z "${GROQ_API_KEY:-}" ]; then
-  echo "groq: пуста переменная GROQ_API_KEY" >&2
-  echo "  → ключ заводится на console.groq.com/keys" >&2
+  say "groq: GROQ_API_KEY is empty" "groq: пуста переменная GROQ_API_KEY"
+  say "  → a key is created at console.groq.com/keys" "  → ключ заводится на console.groq.com/keys"
   exit 1
 fi
 
@@ -38,7 +48,7 @@ ffmpeg -nostdin -loglevel error -i "$AUDIO" -ac 1 -ar 16000 -c:a libopus -b:a 24
   "$TMP/a.ogg"
 
 SIZE=$(wc -c < "$TMP/a.ogg" | tr -d ' ')
-echo "groq: модель $MODEL, отправляю $((SIZE / 1024)) КБ" >&2
+say "groq: model $MODEL, sending $((SIZE / 1024)) KB" "groq: модель $MODEL, отправляю $((SIZE / 1024)) КБ"
 
 ARGS=(-sS --fail-with-body
   -H "Authorization: Bearer $GROQ_API_KEY"
@@ -54,9 +64,16 @@ ARGS=(-sS --fail-with-body
 # расшифровывать.
 [ -n "$LANG_CODE" ] && ARGS+=(-F "language=$LANG_CODE")
 
+# Словарь созвона: имена людей и названия сервисов, которых нет в словаре
+# модели. У Groq это поле API prompt — та же initial prompt, что и --prompt у
+# whisper.cpp, с тем же потолком в 224 токена. Про перенос подсказки из окна в
+# окно решать не приходится: файл уходит целиком, и подсказку к окнам
+# приставляет сама их сторона.
+[ -n "${STENO_PROMPT:-}" ] && ARGS+=(-F "prompt=$STENO_PROMPT")
+
 if ! curl "${ARGS[@]}" \
      https://api.groq.com/openai/v1/audio/transcriptions > "$TMP/out.json" 2> "$TMP/err"; then
-  echo "groq: запрос не прошёл" >&2
+  say "groq: the request failed" "groq: запрос не прошёл"
   # Ключ в заголовке, а не в URL, поэтому в тело ошибки он не попадает.
   head -c 500 "$TMP/out.json" >&2 2>/dev/null || true
   cat "$TMP/err" >&2 2>/dev/null || true
@@ -64,13 +81,13 @@ if ! curl "${ARGS[@]}" \
 fi
 
 jq -e '.segments' "$TMP/out.json" >/dev/null 2>&1 || {
-  echo "groq: в ответе нет сегментов" >&2
+  say "groq: no segments in the answer" "groq: в ответе нет сегментов"
   head -c 500 "$TMP/out.json" >&2
   exit 1
 }
 
 DET=$(jq -r '.language // empty' "$TMP/out.json")
-[ -n "$DET" ] && echo "groq: язык $DET" >&2
+[ -n "$DET" ] && say "groq: language $DET" "groq: язык $DET"
 
 jq '{segments: [.segments[] | {
       start: .start,

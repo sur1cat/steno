@@ -103,7 +103,12 @@ CREATE TABLE IF NOT EXISTS projects (
   about      TEXT NOT NULL DEFAULT '',
   sources    TEXT NOT NULL DEFAULT '[]',
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  -- Кто участвует и какими словами о проекте говорят вслух. Порядок колонок
+  -- тот же, в каком их дописывает migrate: у заведённой сегодня базы и у базы,
+  -- догнанной миграцией, таблица должна выглядеть одинаково.
+  people     TEXT NOT NULL DEFAULT '[]',
+  vocabulary TEXT NOT NULL DEFAULT '[]'
 );
 
 -- Каналы тоже живут в базе: «завести бота в наш Slack» — работа того, кто в
@@ -193,13 +198,13 @@ func openStore(dir string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
-		return nil, fmt.Errorf("схема: %w", err)
+		return nil, fmt.Errorf(tr("схема: %w"), err)
 	}
 	if _, err := db.Exec(searchSchema); err != nil {
-		return nil, fmt.Errorf("индекс поиска: %w", err)
+		return nil, fmt.Errorf(tr("индекс поиска: %w"), err)
 	}
 	if _, err := db.Exec(scheduleSchema); err != nil {
-		return nil, fmt.Errorf("схема расписания: %w", err)
+		return nil, fmt.Errorf(tr("схема расписания: %w"), err)
 	}
 	if err := migrate(db); err != nil {
 		return nil, err
@@ -221,6 +226,13 @@ func migrate(db *sql.DB) error {
 			"cache_read":    "INTEGER NOT NULL DEFAULT 0",
 			"cache_write":   "INTEGER NOT NULL DEFAULT 0",
 			"cost_usd":      "REAL NOT NULL DEFAULT 0",
+		},
+		// Словарь проекта: имена людей отдельно, остальные слова вместе.
+		// База, заведённая до него, открывается и дочитывается здесь — иначе
+		// первый же SELECT по проектам упал бы на «no such column».
+		"projects": {
+			"people":     "TEXT NOT NULL DEFAULT '[]'",
+			"vocabulary": "TEXT NOT NULL DEFAULT '[]'",
 		},
 	}
 	for table, cols := range want {
@@ -250,7 +262,7 @@ func migrate(db *sql.DB) error {
 		}
 		for name, decl := range missing {
 			if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + name + ` ` + decl); err != nil {
-				return fmt.Errorf("миграция %s.%s: %w", table, name, err)
+				return fmt.Errorf(tr("миграция %s.%s: %w"), table, name, err)
 			}
 		}
 	}
@@ -326,6 +338,16 @@ func (s *Store) FinishMeeting(id string, startedAt, endedAt time.Time, participa
 		startedAt.Unix(), endedAt.Unix(), string(par), status, errMsg, leftReason, id)
 	return err
 }
+
+// SetTitle переименовывает встречу. Созвону это не нужно — название приходит
+// из календаря, — а заметке нужно: его придумывает Claude по сказанному.
+func (s *Store) SetTitle(id, title string) error {
+	_, err := s.db.Exec(`UPDATE meetings SET title=? WHERE id=?`, title, id)
+	return err
+}
+
+// DeleteMeeting живёт в meeting_rm.go: удалить созвон — это семь таблиц и
+// каталог на диске, и одной строкой в meetings оно не обходится.
 
 func (s *Store) SetStatus(id, status, errMsg string) error {
 	_, err := s.db.Exec(`UPDATE meetings SET status=?, error=? WHERE id=?`, status, errMsg, id)
@@ -458,7 +480,7 @@ func (s *Store) SaveSpend(meetingID string, sp Spend) error {
 	// UPDATE, не нашедший строки, — не ошибка для SQL, но здесь это потерянный
 	// расход. Проверяем явно: молчаливый ноль в учёте хуже, чем его отсутствие.
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return fmt.Errorf("нет follow-up для %s — расход некуда записать", meetingID)
+		return fmt.Errorf(tr("нет follow-up для %s — расход некуда записать"), meetingID)
 	}
 	return nil
 }

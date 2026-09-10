@@ -10,6 +10,7 @@ import { Empty, Failed, Loading, PageHead } from "@/components/layout";
 import { ProjectDialog } from "@/components/project-dialog";
 import { ChannelDialog } from "@/components/channel-dialog";
 import { GOOGLE_STATUS_KEY } from "@/components/google-connect";
+import { t } from "@/lib/i18n";
 
 // Настройки разложены по разделам, а не идут одной простынёй: раньше всё шло
 // подряд одним свитком, и до нужного места приходилось проматывать остальные.
@@ -44,8 +45,8 @@ export function SettingsPage() {
     const why = params.get("why") ?? "";
     setNotice(
       g === "ok"
-        ? { ok: true, text: "Google подключён." }
-        : { ok: false, text: why || "Подключить Google не получилось." },
+        ? { ok: true, text: t("Google подключён.") }
+        : { ok: false, text: why || t("Подключить Google не получилось.") },
     );
     qc.invalidateQueries({ queryKey: GOOGLE_STATUS_KEY });
     qc.invalidateQueries({ queryKey: ["settings"] });
@@ -63,8 +64,8 @@ export function SettingsPage() {
   // «Каналы 0» при семи выключенных каналах читается как «каналов нет», и это
   // ровно то место, куда человек идёт их включать.
   const tabs: { key: TabKey; label: string; count: number }[] = [
-    { key: "projects", label: "Проекты", count: projects.length },
-    { key: "channels", label: "Каналы", count: channels.length },
+    { key: "projects", label: t("Проекты"), count: projects.length },
+    { key: "channels", label: t("Каналы"), count: channels.length },
   ];
 
   const openProject = (p: SettingsProject | null) => {
@@ -75,8 +76,8 @@ export function SettingsPage() {
   return (
     <>
       <PageHead
-        title="Настройки"
-        sub="Проекты — чтобы steno понимал, о чём речь на созвоне. Каналы — откуда он берёт созвоны и куда потом присылает итог."
+        title={t("Настройки")}
+        sub={t("Проекты — чтобы steno понимал, о чём речь на созвоне. Каналы — откуда он берёт созвоны и куда потом присылает итог.")}
       />
 
       {/* Про итог возвращения из Google говорим строкой на странице, а не
@@ -95,7 +96,7 @@ export function SettingsPage() {
           <button
             type="button"
             onClick={() => setNotice(null)}
-            aria-label="Скрыть сообщение"
+            aria-label={t("Скрыть сообщение")}
             className="shrink-0 rounded-lg p-0.5 opacity-60 transition-opacity hover:opacity-100"
           >
             <X className="h-4 w-4" />
@@ -106,21 +107,21 @@ export function SettingsPage() {
       {/* w-fit: полоса разделов обнимает свои три кнопки. Растянутая во всю
           ширину, она читается как пустая панель с кнопками в углу. */}
       <div className="mb-6 flex w-fit max-w-full flex-wrap items-center gap-1 rounded-xl bg-[var(--muted)] p-1">
-        {tabs.map((t) => (
+        {tabs.map((item) => (
           <button
-            key={t.key}
+            key={item.key}
             type="button"
-            onClick={() => setParams(t.key === "projects" ? {} : { tab: t.key })}
-            aria-current={tab === t.key ? "page" : undefined}
+            onClick={() => setParams(item.key === "projects" ? {} : { tab: item.key })}
+            aria-current={tab === item.key ? "page" : undefined}
             className={cn(
               "flex items-center gap-2 rounded-lg px-4 py-2 text-sm transition-colors",
-              tab === t.key
+              tab === item.key
                 ? "bg-[var(--card)] text-[var(--foreground)] shadow-[0_1px_3px_rgba(0,0,0,0.06)]"
                 : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
             )}
           >
-            {t.label}
-            <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{t.count}</span>
+            {item.label}
+            <span className="text-xs tabular-nums text-[var(--muted-foreground)]">{item.count}</span>
           </button>
         ))}
       </div>
@@ -129,21 +130,19 @@ export function SettingsPage() {
         <section>
           <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
             <p className="max-w-prose text-sm leading-relaxed text-[var(--muted-foreground)]">
-              Проект — это то, по чему потом раскладываются задачи и решения с созвонов. Чем
-              лучше steno знает, чем проект занят, тем точнее он понимает, о чём шла речь.
+              {t("Проект — это то, по чему потом раскладываются задачи и решения с созвонов. Чем\n              лучше steno знает, чем проект занят, тем точнее он понимает, о чём шла речь.")}
             </p>
             <Button variant="outline" size="sm" onClick={() => openProject(null)}>
               <Plus className="h-4 w-4" />
-              добавить проект
+              {t("добавить проект")}
             </Button>
           </div>
 
           {projects.length === 0 ? (
             <Empty>
-              Проектов пока нет.
+              {t("Проектов пока нет.")}
               <br />
-              Без них follow-up остаётся плоским списком, из которого через месяц не вытащить,
-              что к чему относилось.
+              {t("Без них follow-up остаётся плоским списком, из которого через месяц не вытащить,\n              что к чему относилось.")}
             </Empty>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
@@ -159,19 +158,26 @@ export function SettingsPage() {
                     {/* Сколько именно символов в справке — счётчик для того,
                         кто её собирал. Человеку важно одно: собрана или нет. */}
                     {p.primerChars > 0 ? (
-                      <Badge className="shrink-0">steno в курсе</Badge>
+                      <Badge className="shrink-0">{t("steno в курсе")}</Badge>
                     ) : (
                       <Badge variant="warning" className="shrink-0">
-                        ещё не изучен
+                        {t("ещё не изучен")}
                       </Badge>
                     )}
                   </span>
                   <span className="text-sm leading-relaxed text-[var(--muted-foreground)]">
-                    {p.about || "без описания"}
+                    {p.about || t("без описания")}
                   </span>
                   {(p.aliases ?? []).length > 0 && (
                     <span className="text-[13px] text-[var(--muted-foreground)]/80">
-                      вслух: {(p.aliases ?? []).join(", ")}
+                      {t("вслух:")} {(p.aliases ?? []).join(", ")}
+                    </span>
+                  )}
+                  {/* Люди — то, из-за чего задача уезжает не тому, поэтому
+                      видно их прямо в списке, а не только внутри карточки. */}
+                  {(p.people ?? []).length > 0 && (
+                    <span className="text-[13px] text-[var(--muted-foreground)]/80">
+                      {t("кто участвует:")} {(p.people ?? []).join(", ")}
                     </span>
                   )}
                 </button>
@@ -184,8 +190,7 @@ export function SettingsPage() {
       {tab === "channels" && (
         <section>
           <p className="mb-3 max-w-prose text-sm leading-relaxed text-[var(--muted-foreground)]">
-            Откуда steno узнаёт о созвонах и куда присылает итог. Открой любой, чтобы включить
-            или поменять — что там настраивать, канал расскажет сам.
+            {t("Откуда steno узнаёт о созвонах и куда присылает итог. Открой любой, чтобы включить\n            или поменять — что там настраивать, канал расскажет сам.")}
           </p>
           <div className="divide-y divide-[var(--border)] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)]">
             {channels.map((c) => (
@@ -199,16 +204,16 @@ export function SettingsPage() {
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span>{c.name}</span>
                     <Badge variant={c.enabled ? "success" : "default"} className="shrink-0">
-                      {c.enabled ? "вкл" : "выкл"}
+                      {c.enabled ? t("вкл") : t("выкл")}
                     </Badge>
                     {/* Теми же словами, что и в самой модалке канала: «вход» и
                         «выход» короче, но требуют догадаться, чей это вход. */}
                     <span className="text-[13px] text-[var(--muted-foreground)]/70">
                       {c.in && c.out
-                        ? "приносит созвоны и уносит follow-up"
+                        ? t("приносит созвоны и уносит follow-up")
                         : c.in
-                          ? "приносит созвоны"
-                          : "уносит follow-up"}
+                          ? t("приносит созвоны")
+                          : t("уносит follow-up")}
                     </span>
                   </span>
                   <span className="mt-1 block max-w-prose text-sm leading-relaxed text-[var(--muted-foreground)]">

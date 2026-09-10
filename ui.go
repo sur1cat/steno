@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -38,8 +38,8 @@ func cmdUI(ctx context.Context, args []string) error {
 
 func runUI(ctx context.Context, cfg *Config, st *Store) error {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return fmt.Errorf("steno ui — полноэкранный интерфейс, ему нужен терминал.\n" +
-			"Для вывода в файл или в конвейер есть steno list, steno projects и steno show")
+		return errors.New(tr("steno ui — полноэкранный интерфейс, ему нужен терминал.\n") +
+			tr("Для вывода в файл или в конвейер есть steno list, steno projects и steno show"))
 	}
 
 	m := newUIModel(cfg, st)

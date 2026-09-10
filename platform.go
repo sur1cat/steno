@@ -52,11 +52,11 @@ const (
 func (c CaptionSupport) String() string {
 	switch c {
 	case CaptionsBuiltIn:
-		return "есть"
+		return tr("есть")
 	case CaptionsOptional:
-		return "зависит от сервера"
+		return tr("зависит от сервера")
 	default:
-		return "нет"
+		return tr("нет")
 	}
 }
 
@@ -79,20 +79,20 @@ const (
 
 // Explain — строка для лога и для отчёта человеку.
 func (c CaptionState) Explain(p Platform) string {
-	name := "площадка"
+	name := tr("площадка")
 	if p != nil {
 		name = p.Title()
 	}
 	switch c {
 	case CaptionsWorked:
-		return "субтитры сняты, имена говорящих есть"
+		return tr("субтитры сняты, имена говорящих есть")
 	case CaptionsNone:
-		return "субтитров нет (" + name + " их не отдаёт) — расшифровка по звуку, " +
-			"имена только от подсветки говорящего"
+		return tr("субтитров нет (") + name + tr(" их не отдаёт) — расшифровка по звуку, ") +
+			tr("имена только от подсветки говорящего")
 	default:
-		return "субтитры не включились, хотя должны были — расшифровка по звуку, " +
-			"имена только от подсветки говорящего; похоже на смену вёрстки, " +
-			"смотри selectors.json"
+		return tr("субтитры не включились, хотя должны были — расшифровка по звуку, ") +
+			tr("имена только от подсветки говорящего; похоже на смену вёрстки, ") +
+			tr("смотри selectors.json")
 	}
 }
 
@@ -177,20 +177,28 @@ func platformOf(rawURL string) (Platform, error) {
 //
 // Хост привязан к границе слова слева ([^\w.-]), иначе notmeet.jit.si и
 // evilzoom.us тоже считались бы своими.
-var knownUnsupported = []struct {
+// unsupportedPlatform — площадка, которую мы узнаём в лицо только затем,
+// чтобы честно сказать «не умею».
+type unsupportedSite struct {
 	re    *regexp.Regexp
 	title string
-}{
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])zoom\.(?:us|com)/`), "Zoom"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])teams\.(?:microsoft|live)\.com/`), "Microsoft Teams"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])teams\.cloud\.microsoft/`), "Microsoft Teams"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])[\w-]*\.?webex\.com/`), "Webex"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])whereby\.com/`), "Whereby"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])telemost\.yandex\.[a-z]+/`), "Яндекс Телемост"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])ktalk\.ru/`), "Контур.Толк"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])dion\.vc/`), "Dion"},
-	{regexp.MustCompile(`(?i)(?:^|[^\w.-])discord\.(?:gg|com)/`), "Discord"},
 }
+
+// См. uiTabTitles: названия площадок переводятся, поэтому таблица
+// собирается лениво, а не при инициализации пакета.
+var knownUnsupported = sync.OnceValue(func() []unsupportedSite {
+	return []unsupportedSite{
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])zoom\.(?:us|com)/`), "Zoom"},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])teams\.(?:microsoft|live)\.com/`), "Microsoft Teams"},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])teams\.cloud\.microsoft/`), "Microsoft Teams"},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])[\w-]*\.?webex\.com/`), "Webex"},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])whereby\.com/`), "Whereby"},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])telemost\.yandex\.[a-z]+/`), tr("Яндекс Телемост")},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])ktalk\.ru/`), tr("Контур.Толк")},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])dion\.vc/`), "Dion"},
+		{regexp.MustCompile(`(?i)(?:^|[^\w.-])discord\.(?:gg|com)/`), "Discord"},
+	}
+})
 
 // Ссылка-приглашение Meet без кода комнаты. Формально это Meet, но идти по
 // ней некуда, и отдельная подсказка тут стоит дороже общего «не умею».
@@ -199,7 +207,7 @@ var meetLookupRe = regexp.MustCompile(`(?i)meet\.google\.com/lookup/`)
 // unsupportedPlatform возвращает название площадки, которую мы узнали, но не
 // умеем. Пустая строка — ссылки на созвон в тексте нет вовсе.
 func unsupportedPlatform(text string) string {
-	for _, u := range knownUnsupported {
+	for _, u := range knownUnsupported() {
 		if u.re.MatchString(text) {
 			return u.title
 		}
@@ -221,11 +229,11 @@ func supportedPlatforms() string {
 // на такое отвечать нечего, это обычная переписка.
 func linkHint(text string) string {
 	if meetLookupRe.MatchString(text) {
-		return "это ссылка вида meet.google.com/lookup — кода комнаты в ней нет; " +
-			"нужна ссылка с кодом вида abc-defg-hij"
+		return tr("это ссылка вида meet.google.com/lookup — кода комнаты в ней нет; ") +
+			tr("нужна ссылка с кодом вида abc-defg-hij")
 	}
 	if name := unsupportedPlatform(text); name != "" {
-		return name + " я пока не умею — работаю только с " + supportedPlatforms()
+		return name + tr(" я пока не умею — работаю только с ") + supportedPlatforms()
 	}
 	return ""
 }
@@ -237,7 +245,7 @@ func meetingLinkError(text string) error {
 	if h := linkHint(text); h != "" {
 		return errors.New(h)
 	}
-	return fmt.Errorf("не нашёл ссылку на созвон — умею %s", supportedPlatforms())
+	return fmt.Errorf(tr("не нашёл ссылку на созвон — умею %s"), supportedPlatforms())
 }
 
 // --- свои серверы Jitsi -----------------------------------------------------
@@ -282,7 +290,7 @@ func registerJitsiHosts(hosts []string) {
 func applyPlatformConfig(cfg *Config, lg *log.Logger) {
 	sel, err := loadSelectors(cfg.Bot.Selectors)
 	if err != nil {
-		lg.Printf("selectors: %v — беру встроенные", err)
+		lg.Printf(tr("selectors: %v — беру встроенные"), err)
 		return
 	}
 	registerJitsiHosts(sel.Jitsi.Hosts)

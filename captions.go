@@ -359,23 +359,23 @@ func (y CaptionYield) Report(speech time.Duration, wantLang string) string {
 	}
 	n := y.letters()
 	rate := float64(n) / speech.Minutes()
-	msg := fmt.Sprintf("субтитры: %d реплик, %d букв за %s (%.0f букв в минуту)",
+	msg := fmt.Sprintf(tr("субтитры: %d реплик, %d букв за %s (%.0f букв в минуту)"),
 		y.Utterances, n, speech.Round(time.Second), rate)
 	if s := y.Script(); s != "" {
-		msg += "; письменность — " + s
+		msg += tr("; письменность — ") + scriptName(s)
 	}
 
 	want := langScript[strings.ToLower(wantLang)]
 	got := y.Script()
 	if want != "" && got != "" && got != want {
-		return msg + fmt.Sprintf(". Meet слушает не тот язык: просили %s (%s), "+
-			"а текст идёт %s. Имена говорящих от этого верные, а текст субтитров "+
-			"брать нельзя — язык распознавания ставится в самом Meet: "+
-			"⋮ → Настройки → Субтитры → язык встречи", wantLang, want, got)
+		return msg + fmt.Sprintf(tr(". Meet слушает не тот язык: просили %s (%s), ")+
+			tr("а текст идёт %s. Имена говорящих от этого верные, а текст субтитров ")+
+			tr("брать нельзя — язык распознавания ставится в самом Meet: ")+
+			tr("⋮ → Настройки → Субтитры → язык встречи"), wantLang, want, got)
 	}
 	if rate < sparseCaptions {
-		return msg + ". Это в разы меньше, чем речи: либо в звонке молчали, " +
-			"либо Meet распознаёт не тот язык — проверь ⋮ → Настройки → Субтитры"
+		return msg + tr(". Это в разы меньше, чем речи: либо в звонке молчали, ") +
+			tr("либо Meet распознаёт не тот язык — проверь ⋮ → Настройки → Субтитры")
 	}
 	return msg
 }

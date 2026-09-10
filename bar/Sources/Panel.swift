@@ -77,9 +77,15 @@ struct PanelView: View {
 
     // --- шапка ---------------------------------------------------------------
 
+    /// Микрофон вместо волны, пока идёт заметка: это её признак и в строке
+    /// меню, и здесь — одно и то же должно выглядеть одинаково.
+    private var headerIcon: String {
+        loader.liveNote != nil ? "mic.fill" : "waveform"
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "waveform").font(.system(size: 12, weight: .semibold))
+            Image(systemName: headerIcon).font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(loader.snapshot.live.isEmpty ? AnyShapeStyle(.secondary)
                                                               : AnyShapeStyle(Color.red))
             // Идущая запись видна из любой вкладки: это то, ради чего в строку
@@ -88,7 +94,7 @@ struct PanelView: View {
                 Text(Format.stopwatch(loader.now.timeIntervalSince(call.started)))
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.red)
-                Text(call.title.isEmpty ? "созвон без названия" : call.title)
+                Text(call.isNote ? "заметка" : (call.title.isEmpty ? "созвон без названия" : call.title))
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 if loader.snapshot.live.count > 1 {
                     Text("+\(loader.snapshot.live.count - 1)")
@@ -98,6 +104,7 @@ struct PanelView: View {
                 Text("steno").font(.system(size: 12.5, weight: .semibold))
             }
             Spacer(minLength: 6)
+            noteButton
             IconButton(icon: "arrow.clockwise", help: "обновить") {
                 Task { await loader.refresh() }
             }
@@ -482,7 +489,15 @@ struct PanelView: View {
         HStack(spacing: 8) {
             // Отмена закрытия живёт в подвале: это единственное место, которое
             // видно из любой вкладки, а промахнуться галочкой легко.
-            if let closed = loader.justClosed {
+            if let m = loader.noteMessage {
+                Image(systemName: m.ok ? "mic.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(m.ok ? Color.green : Color.orange)
+                Text(m.text).font(.system(size: 10.5)).lineLimit(2)
+                    .foregroundStyle(m.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+                Spacer(minLength: 4)
+                IconButton(icon: "xmark", help: "скрыть") { loader.forgetNoteMessage() }
+            } else if let closed = loader.justClosed {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 10)).foregroundStyle(.green)
                 Text(closed.text).font(.system(size: 10.5)).lineLimit(1)
@@ -517,6 +532,53 @@ struct PanelView: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
+    }
+
+    /// Кнопка заметки. Стоит в шапке, а не в подвале: заметку наговаривают на
+    /// ходу, и до неё должно быть одно движение из любой вкладки. В подвале она
+    /// делила бы строку с «позвать бота» и состоянием сервиса — на 360 точках
+    /// это три подписи в ряд, то есть обрезанный текст.
+    ///
+    /// Состояние берётся из базы (liveNote), а не из своего флага: приложение
+    /// могли перезапустить посреди записи, и кнопка обязана показывать то, что
+    /// есть на самом деле, а не то, что помнит.
+    @ViewBuilder private var noteButton: some View {
+        if loader.liveNote != nil {
+            Button("отмена") { Task { await loader.cancelNote() } }
+                .buttonStyle(LinkLike())
+                .disabled(loader.noteBusy)
+                .help("выбросить запись, не разбирая")
+            // Без секундомера на самой кнопке: он уже бежит слева, красным и
+            // крупно. Вторые те же цифры не добавляют ничего, зато переносят
+            // подпись на две строки — панель шириной 360 этого не прощает.
+            Button {
+                Task { await loader.stopNote() }
+            } label: {
+                Label("стоп", systemImage: "stop.fill")
+                    .labelStyle(.titleAndIcon)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .buttonStyle(Flat())
+            .disabled(loader.noteBusy)
+            .keyboardShortcut("n", modifiers: .command)
+            .help("остановить и разобрать (⌘N)")
+        } else {
+            Button {
+                Task { await loader.startNote() }
+            } label: {
+                Label(loader.noteBusy ? "включаю…" : "заметка", systemImage: "mic.fill")
+                    .labelStyle(.titleAndIcon)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .buttonStyle(Flat())
+            .disabled(loader.noteBusy || !loader.service.isRunning)
+            .keyboardShortcut("n", modifiers: .command)
+            .help(loader.service.isRunning
+                  ? "наговорить заметку — запись начнётся сразу (⌘N)"
+                  : "заметку пишет сервис, а он не запущен")
+        }
     }
 
     private var serviceLine: String {

@@ -3,11 +3,12 @@ import { Check, Monitor, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme, type ThemeChoice } from "@/lib/theme";
 import { DropdownItem, DropdownMenu } from "@/components/ui/dropdown-menu";
+import { t } from "@/lib/i18n";
 
 const OPTIONS: { value: ThemeChoice; label: string; icon: typeof Sun }[] = [
-  { value: "light", label: "Светлая", icon: Sun },
-  { value: "dark", label: "Тёмная", icon: Moon },
-  { value: "system", label: "Как в системе", icon: Monitor },
+  { value: "light", label: t("Светлая"), icon: Sun },
+  { value: "dark", label: t("Тёмная"), icon: Moon },
+  { value: "system", label: t("Как в системе"), icon: Monitor },
 ];
 
 // Выбор темы. Не переключатель на два положения: «как в системе» — это
@@ -28,7 +29,7 @@ export function ThemeToggle({ className }: { className?: string }) {
         <button
           ref={trigger}
           type="button"
-          aria-label="Тема оформления"
+          aria-label={t("Тема оформления")}
           className={cn(
             "flex h-9 w-9 items-center justify-center rounded-xl text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]",
             className,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -24,7 +25,9 @@ type uiProjectRow struct {
 	About      string
 	Aliases    []string
 	Sources    []Source
-	Tasks      int // открытых задач
+	People     []string
+	Vocabulary []string // весь словарь, включая имена людей
+	Tasks      int      // открытых задач
 	Questions  int
 	Decisions  int
 	Closed     int
@@ -36,7 +39,8 @@ func (p uiProjectRow) openCount() int { return p.Tasks + p.Questions + p.Decisio
 
 // project — то, что уходит в сборку справки и в форму правки.
 func (p uiProjectRow) project() Project {
-	return Project{Name: p.Name, About: p.About, Aliases: p.Aliases, Sources: p.Sources}
+	return Project{Name: p.Name, About: p.About, Aliases: p.Aliases, Sources: p.Sources,
+		People: p.People, Vocabulary: p.Vocabulary}
 }
 
 // uiLoadProjects собирает список так же, как это делает `steno projects`:
@@ -68,6 +72,8 @@ func uiLoadProjects(st *Store) ([]uiProjectRow, error) {
 		r.About = p.About
 		r.Aliases = p.Aliases
 		r.Sources = p.Sources
+		r.People = p.People
+		r.Vocabulary = p.Vocabulary
 	}
 	for _, n := range known {
 		add(n)
@@ -229,7 +235,10 @@ func uiFilterProjects(rows []uiProjectRow, text string) []uiProjectRow {
 	}
 	out := make([]uiProjectRow, 0, len(rows))
 	for _, r := range rows {
-		hay := strings.ToLower(r.Name + " " + r.About + " " + strings.Join(r.Aliases, " "))
+		// Словарь тоже ищется: «где у нас Сапар?» — это вопрос, на который
+		// список проектов должен отвечать, а не заставлять открывать каждый.
+		hay := strings.ToLower(r.Name + " " + r.About + " " +
+			strings.Join(r.Aliases, " ") + " " + strings.Join(r.Vocabulary, " "))
 		if strings.Contains(hay, needle) {
 			out = append(out, r)
 		}
@@ -246,13 +255,13 @@ func uiRenameProject(st *Store, old string, p Project) error {
 	old = strings.TrimSpace(old)
 	name := strings.TrimSpace(p.Name)
 	if name == "" {
-		return fmt.Errorf("у проекта должно быть название")
+		return errors.New(tr("у проекта должно быть название"))
 	}
 	if old == "" || old == name {
 		return st.SaveProject(p)
 	}
 	if _, err := st.Project(name); err == nil {
-		return fmt.Errorf("проект «%s» уже есть — выбери другое название", name)
+		return fmt.Errorf(tr("проект «%s» уже есть — выбери другое название"), name)
 	}
 
 	tx, err := st.db.Begin()
@@ -292,13 +301,13 @@ var uiSourceKinds = []string{"repo", "path", "url", "text"}
 func uiSourceKindTitle(kind string) string {
 	switch kind {
 	case "repo":
-		return "репозиторий"
+		return tr("репозиторий")
 	case "path":
-		return "каталог"
+		return tr("каталог")
 	case "url":
-		return "ссылка"
+		return tr("ссылка")
 	case "text":
-		return "текст"
+		return tr("текст")
 	}
 	return kind
 }

@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { t } from "@/lib/i18n";
 
 // Выбор папки мышью вместо вписывания пути руками.
 //
@@ -52,17 +53,16 @@ export function FolderPicker({
 
   // Путь, которого нет (вписали руками и ошиблись), не должен запирать окно:
   // сервер объяснит, что не так, а вернуться можно в домашний каталог.
-  const failed = q.isError ? (q.error instanceof Error ? q.error.message : "не открылось") : "";
+  const failed = q.isError ? (q.error instanceof Error ? q.error.message : t("не открылось")) : "";
   const here = q.data?.path ?? path;
   const dirs = q.data?.dirs ?? [];
 
   return (
     <Dialog open={open} onClose={onClose} className="max-w-lg">
       <DialogHeader>
-        <DialogTitle>Выберите папку</DialogTitle>
+        <DialogTitle>{t("Выберите папку")}</DialogTitle>
         <DialogDescription>
-          Это папки на том компьютере, где работает steno. Если панель открыта с другого —
-          здесь будет чужой диск, и путь придётся вписать руками.
+          {t("Это папки на том компьютере, где работает steno. Если панель открыта с другого —\n          здесь будет чужой диск, и путь придётся вписать руками.")}
         </DialogDescription>
       </DialogHeader>
 
@@ -76,14 +76,14 @@ export function FolderPicker({
             variant="ghost"
             size="sm"
             className="h-9 w-9 shrink-0 p-0"
-            aria-label="На папку выше"
+            aria-label={t("На папку выше")}
             disabled={!q.data?.parent}
             onClick={() => setPath(q.data?.parent ?? "")}
           >
             <ArrowUp className="h-4 w-4" />
           </Button>
           <div className="min-w-0 flex-1 truncate rounded-xl bg-[var(--muted)] px-3 py-2 text-sm">
-            {here || "домашний каталог"}
+            {here || t("домашний каталог")}
           </div>
         </div>
 
@@ -93,19 +93,19 @@ export function FolderPicker({
               {failed}
               <div className="mt-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => setPath("")}>
-                  В домашний каталог
+                  {t("В домашний каталог")}
                 </Button>
               </div>
             </div>
           ) : q.isPending ? (
             <div className="px-4 py-6 text-center text-sm text-[var(--muted-foreground)]">
-              Смотрю…
+              {t("Смотрю…")}
             </div>
           ) : dirs.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm leading-relaxed text-[var(--muted-foreground)]">
-              Внутри нет вложенных папок.
+              {t("Внутри нет вложенных папок.")}
               <br />
-              Если нужна эта — выбирай её кнопкой ниже.
+              {t("Если нужна эта — выбирай её кнопкой ниже.")}
             </div>
           ) : (
             <div className="divide-y divide-[var(--border)]">
@@ -131,7 +131,7 @@ export function FolderPicker({
                   </span>
                   {d.isRepo && (
                     <span className="shrink-0 text-[11px] uppercase tracking-wide text-primary/70">
-                      репозиторий
+                      {t("репозиторий")}
                     </span>
                   )}
                 </button>
@@ -143,7 +143,7 @@ export function FolderPicker({
 
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onClose}>
-          Отмена
+          {t("Отмена")}
         </Button>
         <Button
           type="button"
@@ -151,7 +151,7 @@ export function FolderPicker({
           disabled={!here || Boolean(failed)}
           onClick={() => onPick(here)}
         >
-          Выбрать эту папку
+          {t("Выбрать эту папку")}
         </Button>
       </DialogFooter>
     </Dialog>

@@ -1,5 +1,6 @@
 import { Sheet } from "@/components/ui/sheet";
 import { NavActions, NavList, Wordmark } from "./sidebar";
+import { t } from "@/lib/i18n";
 
 // Та же навигация на узком экране. Список берётся из того же nav-items.ts, что
 // и колонка, — иначе на телефоне однажды не хватит раздела, и заметит это не
@@ -20,7 +21,7 @@ export function NavDrawer({
     <Sheet
       open={open}
       onClose={onClose}
-      label="Разделы"
+      label={t("Разделы")}
       className="bg-[var(--sidebar-bg)] border-r-0 text-[var(--sidebar-text)]"
     >
       <div className="flex min-h-full flex-col">

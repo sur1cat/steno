@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -8,7 +9,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,6 +21,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const usage = `steno — заметки и follow-up с созвонов.
@@ -36,23 +41,36 @@ const usage = `steno — заметки и follow-up с созвонов.
                              --record-only  только запись
                              --no-followup  запись и расшифровка, без Claude
                              --captions     текст из субтитров Meet
+  steno note                 наговорить заметку в микрофон: Enter — стоп,
+                             дальше та же расшифровка и тот же разбор
+                             --devices      список микрофонов
+                             --device N     каким писать
+                             --title "…"    назвать самому
+                             --max 30m      потолок записи
+                             steno note <id> — разобрать записанную заново
   steno process [id]         расшифровать и разослать записанный созвон
                              без id — последний
   steno publish [id]         разослать готовый follow-up ещё раз
   steno show [id]            показать follow-up
   steno transcript [id]      показать расшифровку
   steno list                 последние созвоны
+  steno rm <id>              забыть созвон целиком: запись, расшифровку,
+                             follow-up и то, что из него вышло. Спросит
+                             --yes          не спрашивать, для скриптов
   steno prune                удалить старые записи по срокам из конфига
   steno doctor               проверить, чего не хватает для запуска
   steno version              версия и какой образ бота ей соответствует
   steno cost [дней]          сколько потрачено на follow-up
   steno projects [проект]    что открыто по проектам
-  steno projects add <имя>   завести проект
+  steno projects add <имя>   завести проект. Без флагов спросит сам:
+                             кто участвует, какие слова звучат вслух
                              --repo <url>   репозиторий (можно несколько)
                              --path <dir>   каталог с кодом на этой машине
                              --url <адрес>  сайт или документ
                              --about "…"    одна строка, что это за проект
                              --alias a,b    как называют вслух
+                             --people а,б   имена людей, как их зовут вслух
+                             --word а,б     сервисы и сокращения проекта
   steno projects rm <имя>    убрать проект из реестра
   steno context [проект]     собрать справки о проектах по коду и сайтам
   steno bot --url <u>        сам бот; запускается внутри контейнера
@@ -64,7 +82,7 @@ const usage = `steno — заметки и follow-up с созвонов.
 func main() {
 	log.SetFlags(log.Ltime)
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, tr(usage))
 		os.Exit(2)
 	}
 	cmd, args := os.Args[1], os.Args[2:]
@@ -98,6 +116,8 @@ func main() {
 		err = cmdJoin(ctx, args)
 	case "process":
 		err = cmdProcess(ctx, args)
+	case "note":
+		err = cmdNote(ctx, args)
 	case "publish":
 		err = cmdPublish(ctx, args)
 	case "show":
@@ -106,6 +126,8 @@ func main() {
 		err = cmdTranscript(args)
 	case "list":
 		err = cmdList(args)
+	case "rm":
+		err = cmdMeetingRm(args)
 	case "doctor":
 		err = cmdDoctor(args)
 	case "version", "--version", "-v":
@@ -123,14 +145,14 @@ func main() {
 	case "bot":
 		err = cmdBot(ctx, args)
 	case "-h", "--help", "help":
-		fmt.Print(usage)
+		fmt.Print(tr(usage))
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "неизвестная команда %q\n\n%s", cmd, usage)
+		fmt.Fprintf(os.Stderr, tr("неизвестная команда %q\n\n%s"), cmd, tr(usage))
 		os.Exit(2)
 	}
 	if err != nil {
-		log.Fatalf("ошибка: %v", err)
+		log.Fatalf(tr("ошибка: %v"), err)
 	}
 }
 
@@ -160,7 +182,7 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 }
 
 func setupFlags(fs *flag.FlagSet) *string {
-	return fs.String("c", envOr("STENO_CONFIG", defaultConfigPath), "путь к конфигу")
+	return fs.String("c", envOr("STENO_CONFIG", defaultConfigPath), tr("путь к конфигу"))
 }
 
 func envOr(k, def string) string {
@@ -179,7 +201,7 @@ func open(configPath string) (*Config, *Store, error) {
 
 	if p := resolveConfigPath(configPath); p != configPath {
 		configPath = p
-		log.Printf("настройка: %s", configPath)
+		log.Printf(tr("настройка: %s"), configPath)
 		_ = loadDotEnv(filepath.Join(filepath.Dir(p), ".env"))
 	}
 	if _, err := os.Stat(configPath); err != nil {
@@ -187,11 +209,16 @@ func open(configPath string) (*Config, *Store, error) {
 		// Иначе опечатка в -c тихо запускала бы сервис без единого адресата:
 		// созвон записан, токены Claude потрачены, follow-up никуда не ушёл.
 		if configPath != defaultConfigPath {
-			return nil, nil, fmt.Errorf("конфиг %s: %w", configPath, err)
+			return nil, nil, fmt.Errorf(tr("конфиг %s: %w"), configPath, err)
 		}
 		configPath = ""
 	}
 	cfg, err := loadConfig(configPath)
+	if err == nil {
+		// Язык из конфига — сразу после чтения и до всего остального:
+		// дальше начинается вывод, и переключать язык посреди него поздно.
+		setLang(cfg.Lang)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -205,24 +232,24 @@ func open(configPath string) (*Config, *Store, error) {
 	applyPlatformConfig(cfg, log.Default())
 	if n, err := importProjects(st, cfg); err != nil {
 		st.Close()
-		return nil, nil, fmt.Errorf("перенос проектов из конфига: %w", err)
+		return nil, nil, fmt.Errorf(tr("перенос проектов из конфига: %w"), err)
 	} else if n > 0 {
-		log.Printf("перенёс %d проектов из конфига в базу — дальше правь их в панели", n)
+		log.Printf(tr("перенёс %d проектов из конфига в базу — дальше правь их в панели"), n)
 	}
 	if n, err := importChannels(st, cfg); err != nil {
 		st.Close()
-		return nil, nil, fmt.Errorf("перенос каналов из конфига: %w", err)
+		return nil, nil, fmt.Errorf(tr("перенос каналов из конфига: %w"), err)
 	} else if n > 0 && configPath != "" {
 		// Без конфига переносить нечего: в базу уезжают умолчания, и сообщать
 		// человеку о «переносе из конфига», которого у него нет, — вводить в
 		// заблуждение на первом же запуске.
-		log.Printf("перенёс %d каналов из конфига в базу — дальше правь их в панели", n)
+		log.Printf(tr("перенёс %d каналов из конфига в базу — дальше правь их в панели"), n)
 	}
 	// База главнее конфига: канал, выключенный в панели, должен остаться
 	// выключенным и после перезапуска.
 	if err := applyChannels(st, cfg); err != nil {
 		st.Close()
-		return nil, nil, fmt.Errorf("настройки каналов: %w", err)
+		return nil, nil, fmt.Errorf(tr("настройки каналов: %w"), err)
 	}
 	return cfg, st, nil
 }
@@ -238,22 +265,22 @@ func newID(t time.Time) string {
 func cmdJoin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("join", flag.ExitOnError)
 	cfgPath := setupFlags(fs)
-	title := fs.String("title", "", "название встречи")
-	invitees := fs.String("invitees", "", "приглашённые через запятую")
-	local := fs.Bool("local", false, "запустить бота прямо здесь, без docker (нужны Chromium, ffmpeg и pulseaudio)")
-	noPublish := fs.Bool("no-publish", false, "только записать и расшифровать")
+	title := fs.String("title", "", tr("название встречи"))
+	invitees := fs.String("invitees", "", tr("приглашённые через запятую"))
+	local := fs.Bool("local", false, tr("запустить бота прямо здесь, без docker (нужны Chromium, ffmpeg и pulseaudio)"))
+	noPublish := fs.Bool("no-publish", false, tr("только записать и расшифровать"))
 	recordOnly := fs.Bool("record-only", false,
-		"только записать: ни расшифровки, ни follow-up, ни рассылки")
+		tr("только записать: ни расшифровки, ни follow-up, ни рассылки"))
 	noFollowup := fs.Bool("no-followup", false,
-		"записать и расшифровать, показать расшифровку и остановиться (Claude не нужен)")
+		tr("записать и расшифровать, показать расшифровку и остановиться (Claude не нужен)"))
 	useCaptions := fs.Bool("captions", false,
-		"взять текст из субтитров Meet вместо whisper")
+		tr("взять текст из субтитров Meet вместо whisper"))
 	rest, err := parseArgs(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(rest) < 1 {
-		return fmt.Errorf("нужна ссылка на созвон (%s): steno join https://meet.google.com/abc-defg-hij",
+		return fmt.Errorf(tr("нужна ссылка на созвон (%s): steno join https://meet.google.com/abc-defg-hij"),
 			supportedPlatforms())
 	}
 	cfg, st, err := open(*cfgPath)
@@ -317,7 +344,7 @@ func recordOnce(ctx context.Context, cfg *Config, st *Store, m *Meeting) error {
 	}
 	utts, err := readUtterances(m.CaptionsPath)
 	if err != nil {
-		log.Printf("субтитры не прочитались: %v", err)
+		log.Printf(tr("субтитры не прочитались: %v"), err)
 	}
 	named := map[string]int{}
 	for _, u := range utts {
@@ -327,18 +354,18 @@ func recordOnce(ctx context.Context, cfg *Config, st *Store, m *Meeting) error {
 	if st, err := os.Stat(m.AudioPath); err == nil {
 		size = st.Size()
 	}
-	log.Printf("готово: аудио %.1f МБ, реплик в субтитрах %d, говорящих %d",
+	log.Printf(tr("готово: аудио %.1f МБ, реплик в субтитрах %d, говорящих %d"),
 		float64(size)/(1<<20), len(utts), len(named))
 	for who, n := range named {
-		log.Printf("  %s — %d реплик", orDash(who), n)
+		log.Printf(tr("  %s — %d реплик"), orDash(who), n)
 	}
 	if len(utts) == 0 {
 		// Что именно случилось, бот уже сказал строкой «субтитры: …» — она
 		// различает «площадка их не отдаёт» и «должны были быть, но не
 		// включились». Повторять здесь догадку про Meet нельзя: у Jitsi
 		// пустые субтитры это норма, а не поломка вёрстки.
-		log.Printf("субтитров нет — расшифровка пойдёт по звуку, без имён говорящих; " +
-			"причину смотри выше, в строке бота «субтитры: …»")
+		log.Print(tr("субтитров нет — расшифровка пойдёт по звуку, без имён говорящих; ") +
+			tr("причину смотри выше, в строке бота «субтитры: …»"))
 	}
 	return nil
 }
@@ -351,7 +378,7 @@ func transcribeOnly(ctx context.Context, cfg *Config, st *Store, id string) erro
 	if err != nil {
 		return err
 	}
-	segs, err := transcribeMeeting(ctx, cfg, m)
+	segs, err := transcribeMeeting(ctx, cfg, st, m)
 	if err != nil {
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
@@ -367,10 +394,10 @@ func transcribeOnly(ctx context.Context, cfg *Config, st *Store, id string) erro
 		return err
 	}
 	_ = st.SetStatus(id, "transcribed", "")
-	log.Printf("реплик: %d, из них с именем: %d", len(segs), namedCount(segs))
+	log.Printf(tr("реплик: %d, из них с именем: %d"), len(segs), namedCount(segs))
 	fmt.Println()
 	fmt.Print(renderTranscript(segs))
-	fmt.Printf("\nfollow-up: steno process %s (нужен ключ Claude)\n", id)
+	fmt.Printf(tr("\nfollow-up: steno process %s (нужен ключ Claude)\n"), id)
 	return nil
 }
 
@@ -392,7 +419,7 @@ func recordMeeting(ctx context.Context, cfg *Config, st *Store, m *Meeting) erro
 	if err := st.CreateMeeting(m); err != nil {
 		return err
 	}
-	log.Printf("созвон %s", m.ID)
+	log.Printf(tr("созвон %s"), m.ID)
 
 	var (
 		res *BotResult
@@ -411,7 +438,7 @@ func recordMeeting(ctx context.Context, cfg *Config, st *Store, m *Meeting) erro
 		"recorded", "", res.LeftReason); err != nil {
 		return err
 	}
-	log.Printf("записано: %s (%s)", m.AudioPath, res.LeftReason)
+	log.Printf(tr("записано: %s (%s)"), m.AudioPath, res.LeftReason)
 	return nil
 }
 
@@ -512,12 +539,12 @@ func runBotInDocker(ctx context.Context, cfg *Config, meetingID, meetURL, outDir
 	cmd.WaitDelay = 20 * time.Second
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	log.Printf("запускаю бота в контейнере %s", name)
+	log.Printf(tr("запускаю бота в контейнере %s"), name)
 	if err := cmd.Run(); err != nil {
 		// Контекст мог закончиться уже после того, как бот дописал результат.
 		if _, statErr := os.Stat(filepath.Join(outDir, "result.json")); statErr != nil {
 			_ = exec.Command("docker", "kill", name).Run()
-			return nil, fmt.Errorf("контейнер бота: %w", err)
+			return nil, fmt.Errorf(tr("контейнер бота: %w"), err)
 		}
 	}
 	return readBotResult(outDir)
@@ -526,7 +553,7 @@ func runBotInDocker(ctx context.Context, cfg *Config, meetingID, meetURL, outDir
 func readBotResult(outDir string) (*BotResult, error) {
 	b, err := os.ReadFile(filepath.Join(outDir, "result.json"))
 	if err != nil {
-		return nil, fmt.Errorf("бот не оставил result.json: %w", err)
+		return nil, fmt.Errorf(tr("бот не оставил result.json: %w"), err)
 	}
 	var res BotResult
 	if err := json.Unmarshal(b, &res); err != nil {
@@ -539,24 +566,24 @@ func readBotResult(outDir string) (*BotResult, error) {
 
 func cmdBot(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bot", flag.ExitOnError)
-	meetURL := fs.String("url", "", "ссылка на созвон")
-	outDir := fs.String("out", "/out", "куда писать")
-	name := fs.String("name", "Steno · идёт запись", "имя бота в списке участников")
-	selectors := fs.String("selectors", envOr("STENO_SELECTORS", ""), "путь к selectors.json")
-	source := fs.String("source", envOr("STENO_AUDIO_SOURCE", "meet_out.monitor"), "источник PulseAudio")
-	admission := fs.Duration("admission", 5*time.Minute, "сколько ждать, пока впустят")
-	emptyFor := fs.Duration("empty-for", 2*time.Minute, "уйти, если остался один дольше этого")
-	maxDur := fs.Duration("max", 4*time.Hour, "потолок длительности")
-	headless := fs.Bool("headless", false, "без Xvfb (Meet работает хуже)")
+	meetURL := fs.String("url", "", tr("ссылка на созвон"))
+	outDir := fs.String("out", "/out", tr("куда писать"))
+	name := fs.String("name", tr("Steno · идёт запись"), tr("имя бота в списке участников"))
+	selectors := fs.String("selectors", envOr("STENO_SELECTORS", ""), tr("путь к selectors.json"))
+	source := fs.String("source", envOr("STENO_AUDIO_SOURCE", "meet_out.monitor"), tr("источник PulseAudio"))
+	admission := fs.Duration("admission", 5*time.Minute, tr("сколько ждать, пока впустят"))
+	emptyFor := fs.Duration("empty-for", 2*time.Minute, tr("уйти, если остался один дольше этого"))
+	maxDur := fs.Duration("max", 4*time.Hour, tr("потолок длительности"))
+	headless := fs.Bool("headless", false, tr("без Xvfb (Meet работает хуже)"))
 	debugCaptions := fs.Bool("debug-captions", false,
-		"печатать, что на странице похоже на субтитры")
+		tr("печатать, что на странице похоже на субтитры"))
 	captionLang := fs.String("caption-language", "",
-		"язык субтитров Meet — он же язык распознавания")
+		tr("язык субтитров Meet — он же язык распознавания"))
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if *meetURL == "" {
-		return fmt.Errorf("нужен --url")
+		return errors.New(tr("нужен --url"))
 	}
 	sel, err := loadSelectors(*selectors)
 	if err != nil {
@@ -598,11 +625,11 @@ func cmdBot(ctx context.Context, args []string) error {
 func cmdProcess(ctx context.Context, args []string) error {
 	fs := newFlagSet("process")
 	cfgPath := setupFlags(fs)
-	noPublish := fs.Bool("no-publish", false, "не публиковать")
+	noPublish := fs.Bool("no-publish", false, tr("не публиковать"))
 	noFollowup := fs.Bool("no-followup", false,
-		"только расшифровать и показать — Claude не нужен")
+		tr("только расшифровать и показать — Claude не нужен"))
 	useCaptions := fs.Bool("captions", false,
-		"взять текст из субтитров Meet вместо whisper")
+		tr("взять текст из субтитров Meet вместо whisper"))
 	rest, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -628,20 +655,25 @@ func cmdProcess(ctx context.Context, args []string) error {
 func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPublish bool) error {
 	m, err := st.Meeting(id)
 	if err != nil {
-		return fmt.Errorf("созвон %s: %w", id, err)
+		return fmt.Errorf(tr("созвон %s: %w"), id, err)
+	}
+	// Заметку разбирает свой промпт: у монолога нет ни участников, ни спора,
+	// и правила follow-up ищут в ней людей, которых там нет.
+	if isNote(m) {
+		return processNote(ctx, cfg, st, id, noPublish)
 	}
 
 	if cfg.Transcribe.Source != "captions" && m.AudioPath == "" {
 		// Запись удалена по сроку хранения. Расшифровка и follow-up при этом
 		// целы, и портить им статус на «сорвался» незачем.
-		return fmt.Errorf("запись созвона %s удалена по сроку хранения — расшифровывать нечего", id)
+		return fmt.Errorf(tr("запись созвона %s удалена по сроку хранения — расшифровывать нечего"), id)
 	}
 	if cfg.Transcribe.Source != "captions" {
 		if _, err := os.Stat(m.AudioPath); err != nil {
-			return fmt.Errorf("запись %s недоступна: %w", m.AudioPath, err)
+			return fmt.Errorf(tr("запись %s недоступна: %w"), m.AudioPath, err)
 		}
 	}
-	segs, err := transcribeMeeting(ctx, cfg, m)
+	segs, err := transcribeMeeting(ctx, cfg, st, m)
 	if err != nil {
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
@@ -654,18 +686,18 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 		return err
 	}
 	_ = st.SetStatus(id, "transcribed", "")
-	log.Printf("реплик: %d, из них с именем: %d", len(segs), namedCount(segs))
+	log.Printf(tr("реплик: %d, из них с именем: %d"), len(segs), namedCount(segs))
 
 	if _, how, err := claudeClient(cfg); err == nil {
-		log.Printf("делаю follow-up (%s, доступ: %s)", cfg.Claude.Model, how)
+		log.Printf(tr("делаю follow-up (%s, доступ: %s)"), cfg.Claude.Model, how)
 	} else {
-		log.Printf("делаю follow-up (%s)", cfg.Claude.Model)
+		log.Printf(tr("делаю follow-up (%s)"), cfg.Claude.Model)
 	}
 	// Модель должна видеть, что уже висит открытым: иначе каждый созвон
 	// заводит копии тех же задач, и состояние проекта тонет в дублях.
 	open, err := st.OpenItems("")
 	if err != nil {
-		log.Printf("не прочитал открытые пункты: %v", err)
+		log.Printf(tr("не прочитал открытые пункты: %v"), err)
 	}
 	projects := activeProjects(st, cfg)
 	f, spend, err := makeFollowup(ctx, cfg, m, segs, projects,
@@ -674,7 +706,7 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
 	}
-	log.Printf("расход: %s", spend)
+	log.Printf(tr("расход: %s"), spend)
 	// Порядок важен: расход дописывается в строку follow-up, а создаёт её
 	// SaveFollowup. Наоборот UPDATE не находил строки и молча терял расход —
 	// на повторном запуске всё сходилось, на первом `steno cost` показывал ноль.
@@ -683,15 +715,15 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 		return err
 	}
 	if err := st.SaveSpend(id, spend); err != nil {
-		log.Printf("не записал расход: %v", err)
+		log.Printf(tr("не записал расход: %v"), err)
 	}
 	_ = st.SetStatus(id, "summarized", "")
-	log.Printf("задач: %d, решений: %d, открытых вопросов: %d",
+	log.Printf(tr("задач: %d, решений: %d, открытых вопросов: %d"),
 		len(f.ActionItems), len(f.Decisions), len(f.OpenQuestions))
 	if addedN, closedN, err := applyFollowup(st, projects, id, f); err != nil {
-		log.Printf("состояние проектов: %v", err)
+		log.Printf(tr("состояние проектов: %v"), err)
 	} else if addedN > 0 || closedN > 0 {
-		log.Printf("по проектам: добавлено %d, закрыто %d", addedN, closedN)
+		log.Printf(tr("по проектам: добавлено %d, закрыто %d"), addedN, closedN)
 	}
 	publishProjectDocs(ctx, cfg, st, f, id, log.New(os.Stderr, "", log.Ltime))
 
@@ -702,20 +734,20 @@ func processMeeting(ctx context.Context, cfg *Config, st *Store, id string, noPu
 	if len(errs) > 0 {
 		msg := errors.Join(errs...).Error()
 		_ = st.SetStatus(id, "publish_failed", msg)
-		return fmt.Errorf("follow-up сделан, но не разослан: %s", msg)
+		return fmt.Errorf(tr("follow-up сделан, но не разослан: %s"), msg)
 	}
 	return st.SetStatus(id, "published", "")
 }
 
 // transcribeMeeting превращает записанный созвон в реплики с именами — из
 // whisper или прямо из субтитров Meet, смотря что настроено.
-func transcribeMeeting(ctx context.Context, cfg *Config, m *Meeting) ([]Segment, error) {
+func transcribeMeeting(ctx context.Context, cfg *Config, st *Store, m *Meeting) ([]Segment, error) {
 	if cfg.Transcribe.Source == "captions" {
-		log.Printf("беру текст из субтитров Meet (%s)", m.CaptionsPath)
+		log.Printf(tr("беру текст из субтитров Meet (%s)"), m.CaptionsPath)
 		return segmentsFromCaptions(m.CaptionsPath)
 	}
-	log.Printf("расшифровываю %s", m.AudioPath)
-	segs, notes, err := runTranscriber(ctx, cfg, m.AudioPath)
+	log.Printf(tr("расшифровываю %s"), m.AudioPath)
+	segs, notes, err := runTranscriber(ctx, cfg, m.AudioPath, meetingVocabulary(ctx, cfg, st, m))
 	if err != nil {
 		return nil, err
 	}
@@ -724,7 +756,7 @@ func transcribeMeeting(ctx context.Context, cfg *Config, m *Meeting) ([]Segment,
 	}
 	utts, uerr := readUtterances(m.CaptionsPath)
 	if uerr != nil {
-		log.Printf("субтитры не прочитались (%v) — расшифровка будет без имён", uerr)
+		log.Printf(tr("субтитры не прочитались (%v) — расшифровка будет без имён"), uerr)
 	}
 	// Третий источник имён — лента активного говорящего, снятая ботом со
 	// страницы. Она нужна там, где субтитров нет или почти нет: у Jitsi их на
@@ -765,13 +797,13 @@ func cmdPublish(ctx context.Context, args []string) error {
 	}
 	f, err := st.Followup(id)
 	if err != nil {
-		return fmt.Errorf("follow-up ещё не сделан — сначала steno process %s", id)
+		return fmt.Errorf(tr("follow-up ещё не сделан — сначала steno process %s"), id)
 	}
 	segs, err := st.Segments(id)
 	if err != nil {
 		// Молча опубликовать документ без расшифровки — хуже, чем не
 		// опубликовать: снаружи он выглядит полным.
-		return fmt.Errorf("расшифровка %s: %w", id, err)
+		return fmt.Errorf(tr("расшифровка %s: %w"), id, err)
 	}
 	if errs := publishAll(ctx, cfg, st, m, f, segs, log.New(os.Stderr, "", log.Ltime)); len(errs) > 0 {
 		return errors.Join(errs...)
@@ -782,7 +814,7 @@ func cmdPublish(ctx context.Context, args []string) error {
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
 	cfgPath := setupFlags(fs)
-	asJSON := fs.Bool("json", false, "выдать JSON")
+	asJSON := fs.Bool("json", false, tr("выдать JSON"))
 	rest, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -802,7 +834,7 @@ func cmdShow(args []string) error {
 	}
 	f, err := st.Followup(id)
 	if err != nil {
-		return fmt.Errorf("follow-up для %s ещё нет", id)
+		return fmt.Errorf(tr("follow-up для %s ещё нет"), id)
 	}
 	if *asJSON {
 		b, _ := json.MarshalIndent(f, "", "  ")
@@ -822,8 +854,8 @@ func cmdShow(args []string) error {
 func cmdContext(ctx context.Context, args []string) error {
 	fs := newFlagSet("context")
 	cfgPath := setupFlags(fs)
-	force := fs.Bool("force", false, "пересобрать, даже если материал не менялся")
-	show := fs.Bool("show", false, "показать готовые справки, не пересобирая")
+	force := fs.Bool("force", false, tr("пересобрать, даже если материал не менялся"))
+	show := fs.Bool("show", false, tr("показать готовые справки, не пересобирая"))
 	rest, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -835,7 +867,7 @@ func cmdContext(ctx context.Context, args []string) error {
 	defer st.Close()
 	projects := activeProjects(st, cfg)
 	if len(projects) == 0 {
-		return fmt.Errorf("нет ни одного проекта — заведи в панели или в конфиге")
+		return errors.New(tr("нет ни одного проекта — заведи в панели или в конфиге"))
 	}
 
 	only := rest[0]
@@ -847,19 +879,19 @@ func cmdContext(ctx context.Context, args []string) error {
 		if *show {
 			c, err := st.ProjectContext(p.Name)
 			if err != nil {
-				fmt.Printf("\n%s — справки нет\n", p.Name)
+				fmt.Printf(tr("\n%s — справки нет\n"), p.Name)
 				continue
 			}
-			fmt.Printf("\n%s — собрана %s\n\n%s\n", p.Name,
+			fmt.Printf(tr("\n%s — собрана %s\n\n%s\n"), p.Name,
 				c.BuiltAt.Format("02.01.2006 15:04"), c.Primer)
 			continue
 		}
 		if len(p.Sources) == 0 {
-			log.Printf("%s: источников нет — пропускаю", p.Name)
+			log.Printf(tr("%s: источников нет — пропускаю"), p.Name)
 			continue
 		}
 
-		log.Printf("%s: читаю источники", p.Name)
+		log.Printf(tr("%s: читаю источники"), p.Name)
 		material, fp, err := gatherSources(ctx, cfg.DataDir, p)
 		if err != nil {
 			log.Printf("%s: %v", p.Name, err)
@@ -868,13 +900,13 @@ func cmdContext(ctx context.Context, args []string) error {
 		// Материал не менялся — незачем платить за ту же справку снова.
 		if !*force {
 			if c, err := st.ProjectContext(p.Name); err == nil && c.Fingerprint == fp {
-				log.Printf("%s: материал тот же, справка от %s",
+				log.Printf(tr("%s: материал тот же, справка от %s"),
 					p.Name, c.BuiltAt.Format("02.01.2006"))
 				continue
 			}
 		}
 
-		log.Printf("%s: собираю справку (%d символов материала)", p.Name, len([]rune(material)))
+		log.Printf(tr("%s: собираю справку (%d символов материала)"), p.Name, len([]rune(material)))
 		primer, spend, err := buildPrimer(ctx, cfg, p, material)
 		if err != nil {
 			log.Printf("%s: %v", p.Name, err)
@@ -887,10 +919,10 @@ func cmdContext(ctx context.Context, args []string) error {
 		}); err != nil {
 			return err
 		}
-		log.Printf("%s: готово, %s", p.Name, spend)
+		log.Printf(tr("%s: готово, %s"), p.Name, spend)
 	}
 	if total > 0 {
-		log.Printf("всего на справки: $%.3f", total)
+		log.Printf(tr("всего на справки: $%.3f"), total)
 	}
 	return nil
 }
@@ -956,20 +988,20 @@ func cmdProjects(args []string) error {
 		}
 	}
 	if len(names) == 0 || names[0] == "" {
-		fmt.Println("проектов нет. Завести:  steno projects add <название> --path ~/code/…")
+		fmt.Println(tr("проектов нет. Завести:  steno projects add <название> --path ~/code/…"))
 		return nil
 	}
 	kinds := []struct {
 		k     ItemKind
 		title string
-	}{{KindTask, "Задачи"}, {KindQuestion, "Открытые вопросы"}, {KindDecision, "Решения"}}
+	}{{KindTask, tr("Задачи")}, {KindQuestion, tr("Открытые вопросы")}, {KindDecision, tr("Решения")}}
 
 	for _, name := range names {
 		items, err := st.OpenItems(name)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("\n%s — открыто %d\n", name, len(items))
+		fmt.Printf(tr("\n%s — открыто %d\n"), name, len(items))
 		for _, kd := range kinds {
 			first := true
 			for _, it := range items {
@@ -985,7 +1017,7 @@ func cmdProjects(args []string) error {
 					line += " — " + it.Owner
 				}
 				if it.Due != "" {
-					line += " (до " + it.Due + ")"
+					line += tr(" (до ") + it.Due + ")"
 				}
 				fmt.Println(line)
 			}
@@ -1005,7 +1037,7 @@ func cmdCost(args []string) error {
 	if len(rest) > 0 {
 		n, err := strconv.Atoi(rest[0])
 		if err != nil || n <= 0 {
-			return fmt.Errorf("сколько дней? нужно число")
+			return errors.New(tr("сколько дней? нужно число"))
 		}
 		days = n
 	}
@@ -1021,24 +1053,24 @@ func cmdCost(args []string) error {
 		return err
 	}
 	if n == 0 {
-		fmt.Printf("за %d дней follow-up не делался\n", days)
+		fmt.Printf(tr("за %d дней follow-up не делался\n"), days)
 		return nil
 	}
-	fmt.Printf("за %d дней: %d follow-up, $%.2f\n", days, n, usd)
-	fmt.Printf("  токенов: вход %d, выход %d\n", in, out)
-	fmt.Printf("  в среднем: $%.3f за созвон\n", usd/float64(n))
+	fmt.Printf(tr("за %d дней: %d follow-up, $%.2f\n"), days, n, usd)
+	fmt.Printf(tr("  токенов: вход %d, выход %d\n"), in, out)
+	fmt.Printf(tr("  в среднем: $%.3f за созвон\n"), usd/float64(n))
 	// Про effort говорим тот, что стоит на самом деле: совет «снизь high» на
 	// установке с medium читается как «инструмент не смотрит на конфиг».
 	eff := cfg.Claude.Effort
 	if eff == "" {
 		eff = "high"
 	}
-	fmt.Printf("\nВыход дороже входа в пять раз, и при effort=%s основная его часть —\n", eff)
+	fmt.Printf(tr("\nВыход дороже входа в пять раз, и при effort=%s основная его часть —\n"), eff)
 	if eff == "low" {
-		fmt.Printf("рассуждение модели, а не сам follow-up. Ниже уже не опустить —\n")
-		fmt.Printf("дальше только модель подешевле в claude.model.\n")
+		fmt.Print(tr("рассуждение модели, а не сам follow-up. Ниже уже не опустить —\n"))
+		fmt.Print(tr("дальше только модель подешевле в claude.model.\n"))
 	} else {
-		fmt.Printf("рассуждение модели, а не сам follow-up. Дорого — сначала claude.effort.\n")
+		fmt.Print(tr("рассуждение модели, а не сам follow-up. Дорого — сначала claude.effort.\n"))
 	}
 	return nil
 }
@@ -1064,7 +1096,7 @@ func cmdTranscript(args []string) error {
 		return err
 	}
 	if len(segs) == 0 {
-		return fmt.Errorf("расшифровки для %s ещё нет", id)
+		return fmt.Errorf(tr("расшифровки для %s ещё нет"), id)
 	}
 	fmt.Print(renderTranscript(segs))
 	return nil
@@ -1103,9 +1135,85 @@ func cmdList(args []string) error {
 		return err
 	}
 	if n == 0 {
-		fmt.Println("созвонов пока нет")
+		fmt.Println(tr("созвонов пока нет"))
 	}
 	return nil
+}
+
+// cmdMeetingRm — `steno rm <id>`. Имя выбрано по соседям: `show`, `process`,
+// `transcript`, `publish` — все верхнего уровня и все про созвон, а `projects`
+// — своё пространство со своим `rm`. `steno rm <id>` читается там же, где
+// человек взял id, — в `steno list`.
+//
+// id обязателен, хотя соседи умеют брать последний созвон без аргумента.
+// Умолчание, стирающее данные, — ловушка: `steno rm` с промахом мимо клавиши
+// унёс бы только что записанный созвон, а вместе с --yes сделал бы это молча.
+func cmdMeetingRm(args []string) error {
+	fs := newFlagSet("rm")
+	cfgPath := setupFlags(fs)
+	// Флаг для скриптов. Спрашивать в конвейере некого: вопрос уходит в лог,
+	// ответа не будет никогда, и без флага такой вызов просто висел бы.
+	yes := fs.Bool("yes", false, tr("не спрашивать подтверждения (для скриптов)"))
+	rest, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	id := strings.TrimSpace(strings.Join(rest, " "))
+	if id == "" {
+		return errors.New(tr("какой созвон удалить? steno rm <id>, id — из steno list"))
+	}
+	_, st, err := open(*cfgPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	m, err := st.Meeting(id)
+	if err != nil {
+		return fmt.Errorf(tr("созвона %s нет — посмотри steno list"), id)
+	}
+	toll, err := st.MeetingToll(id)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s  %s  %s\n", m.ID, m.StartedAt.Format("02.01 15:04"), orDash(m.Title))
+	fmt.Printf("  %s\n", toll.Text)
+
+	if !*yes && !askYes(tr("Удалить созвон? Это навсегда")) {
+		fmt.Println(tr("отменил"))
+		return nil
+	}
+	toll, err = st.DeleteMeeting(id)
+	if err != nil {
+		return err
+	}
+	fmt.Printf(tr("созвон %s удалён\n"), id)
+	if toll.Reopen > 0 {
+		fmt.Printf(tr("вернулось в работу: %s\n"), toll.reopenWords())
+	}
+	return nil
+}
+
+// askYes — согласие на необратимое. Пустой ответ — отказ, и Enter согласием не
+// считается: тот же уговор, что на экране подтверждения в `steno ui`. Enter по
+// инерции после предыдущей команды слишком дёшев для действия, которое нечем
+// отменить.
+//
+// Оборванный ввод (Ctrl+D, труба, скрипт без --yes) — тоже отказ: спросить
+// некого, а молча удалить нельзя.
+func askYes(question string) bool {
+	fmt.Printf("%s [%s]: ", question, dim("y/N"))
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		// Ввод оборвался, перевода строки не будет — допечатываем сами, иначе
+		// следующая строка вывода приклеивается к вопросу.
+		fmt.Println()
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes", "д", "да":
+		return true
+	}
+	return false
 }
 
 // --- serve -----------------------------------------------------------------
@@ -1157,7 +1265,7 @@ func cmdServe(ctx context.Context, args []string) error {
 	if cfg.Panel.Enabled {
 		p, err := newPanel(cfg, st, lg)
 		if err != nil {
-			return fmt.Errorf("панель: %w", err)
+			return fmt.Errorf(tr("панель: %w"), err)
 		}
 		// Из панели можно позвать бота на созвон — тем же путём, что из
 		// Telegram и по HTTP. Диспетчер отдаётся здесь, а не в newPanel:
@@ -1166,8 +1274,8 @@ func cmdServe(ctx context.Context, args []string) error {
 		sources = append(sources, p)
 	}
 	if len(sources) == 0 {
-		return fmt.Errorf("нечего запускать: включи хотя бы один источник созвонов "+
-			"(calendar, telegram.listen, gmail, http) или панель в %s", *cfgPath)
+		return fmt.Errorf(tr("нечего запускать: включи хотя бы один источник созвонов ")+
+			tr("(calendar, telegram.listen, gmail, http) или панель в %s"), *cfgPath)
 	}
 
 	go func() {
@@ -1175,9 +1283,9 @@ func cmdServe(ctx context.Context, args []string) error {
 		defer t.Stop()
 		for {
 			if res, err := prune(st, cfg, lg); err != nil {
-				lg.Printf("уборка: %v", err)
+				lg.Printf(tr("уборка: %v"), err)
 			} else if res.Recordings > 0 || res.Events > 0 {
-				lg.Printf("уборка: %s", res)
+				lg.Printf(tr("уборка: %s"), res)
 			}
 			select {
 			case <-ctx.Done():
@@ -1193,13 +1301,14 @@ func cmdServe(ctx context.Context, args []string) error {
 		go func(src source) {
 			defer wg.Done()
 			if err := src.Run(ctx); err != nil && ctx.Err() == nil {
-				lg.Printf("%s: остановился — %v", src.Name(), err)
+				lg.Printf(tr("%s: остановился — %v"), src.Name(), err)
 			}
 		}(src)
 	}
 	wg.Wait()
 
-	lg.Printf("останавливаюсь, жду текущие записи (до %s)", cfg.Bot.ShutdownGrace.D())
+	lg.Printf(tr("останавливаюсь, жду текущие записи (до %s)"), cfg.Bot.ShutdownGrace.D())
+	notes.Park(st, lg)
 	d.WaitIdle(cfg.Bot.ShutdownGrace.D())
 	return nil
 }
@@ -1232,55 +1341,260 @@ type source interface {
 
 // cmdProjectAdd заводит проект из терминала. Источники повторяются: один
 // проект — это обычно и репозиторий, и сайт, и пара слов о том, что это.
+//
+// Названного одним именем проекта мало, и молчать в ответ на это неправильно.
+// Из репозитория steno достаёт и авторов коммитов, и состав сервисов — но у
+// половины проектов кода нет вовсе (продажи, поддержка, руководство), в
+// коммитах человек подписан не тем именем, которым его зовут вслух, а часть
+// сервисов живёт в чужих репозиториях. Поэтому `projects add <имя>` без
+// подробностей переходит в разговор — по одному вопросу, каждый пропускается
+// пустым ответом.
+//
+// С флагами — молчит. `projects add` зовут из скриптов, и вопрос, заданный
+// такому вызову, — это подвисший навсегда конвейер.
 func cmdProjectAdd(args []string) error {
 	fs := newFlagSet("projects add")
 	cfgPath := setupFlags(fs)
-	var about, aliases string
+	var about, aliases, people, words string
 	var repos, paths, urls stringList
-	fs.StringVar(&about, "about", "", "одна строка о том, что это за проект")
-	fs.StringVar(&aliases, "alias", "", "как называют вслух, через запятую")
-	fs.Var(&repos, "repo", "ссылка на репозиторий (можно несколько раз)")
-	fs.Var(&paths, "path", "каталог с кодом на этой машине (можно несколько раз)")
-	fs.Var(&urls, "url", "адрес сайта или документа (можно несколько раз)")
+	fs.StringVar(&about, "about", "", tr("одна строка о том, что это за проект"))
+	fs.StringVar(&aliases, "alias", "", tr("как называют вслух, через запятую"))
+	fs.StringVar(&people, "people", "", tr("кто участвует: имена, которыми зовут вслух, через запятую"))
+	fs.StringVar(&words, "word", "", tr("сервисы, системы и сокращения, звучащие вслух, через запятую"))
+	fs.Var(&repos, "repo", tr("ссылка на репозиторий (можно несколько раз)"))
+	fs.Var(&paths, "path", tr("каталог с кодом на этой машине (можно несколько раз)"))
+	fs.Var(&urls, "url", tr("адрес сайта или документа (можно несколько раз)"))
 	rest, err := parseArgs(fs, args)
 	if err != nil {
 		return err
 	}
-	name := strings.TrimSpace(strings.Join(rest, " "))
-	if name == "" {
-		return fmt.Errorf("как назвать проект? steno projects add <название> [--repo …] [--about …]")
-	}
 
-	var sources []Source
+	p := Project{
+		Name:       strings.TrimSpace(strings.Join(rest, " ")),
+		About:      strings.TrimSpace(about),
+		Aliases:    commaList(aliases),
+		People:     commaList(people),
+		Vocabulary: commaList(words),
+	}
 	for _, v := range repos {
-		sources = append(sources, Source{Kind: "repo", Value: v})
+		p.Sources = append(p.Sources, Source{Kind: "repo", Value: v})
 	}
 	for _, v := range paths {
-		sources = append(sources, Source{Kind: "path", Value: expandHome(v)})
+		p.Sources = append(p.Sources, Source{Kind: "path", Value: expandHome(v)})
 	}
 	for _, v := range urls {
-		sources = append(sources, Source{Kind: "url", Value: v})
+		p.Sources = append(p.Sources, Source{Kind: "url", Value: v})
 	}
 
+	// База открывается до разговора, а не после: спросить пять раз и упасть на
+	// ненайденном конфиге — худший из возможных порядков.
 	_, st, err := open(*cfgPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	if err := st.SaveProject(Project{
-		Name: name, About: strings.TrimSpace(about),
-		Aliases: commaList(aliases), Sources: sources,
-	}); err != nil {
+
+	if projectIsBare(p) && askableStdin() {
+		// Проект под этим именем мог быть заведён раньше: тогда разговор
+		// дописывает, а не заводит заново, и сказать об этом надо до вопросов,
+		// а не после — иначе пустой ответ читается как «сотри, что было».
+		_, err := st.Project(p.Name)
+		(&projectAsk{in: bufio.NewReader(os.Stdin), out: os.Stdout}).run(&p, err == nil)
+	}
+	if p.Name == "" {
+		return errors.New(tr("как назвать проект? steno projects add <название> [--repo …] [--about …]"))
+	}
+
+	// Проект с таким именем уже заведён — дописываем к нему, а не заменяем.
+	// `steno projects add Платежи --path ~/code/pay` — обычный способ приложить
+	// репозиторий к тому, что уже описано, и молча стереть этим описание и
+	// список людей нельзя: пропажу имени из словаря видно не сразу, а через
+	// месяц, в задаче, уехавшей не тому человеку.
+	known := false
+	if old, err := st.Project(p.Name); err == nil {
+		p, known = mergeProject(old, p), true
+	}
+	if err := st.SaveProject(p); err != nil {
 		return err
 	}
-	fmt.Printf("проект «%s» заведён\n", name)
-	if len(sources) == 0 {
-		fmt.Println("источников нет — справку собрать не из чего.")
-		fmt.Println("  steno projects add " + name + " --repo git@github.com:…  или --path ~/code/…")
+	if known {
+		fmt.Printf(tr("проект «%s» дополнен\n"), p.Name)
+	} else {
+		fmt.Printf(tr("проект «%s» заведён\n"), p.Name)
+	}
+	if len(p.People) > 0 {
+		fmt.Printf(tr("  люди: %s\n"), strings.Join(p.People, ", "))
+	}
+	if other := p.otherWords(); len(other) > 0 {
+		fmt.Printf(tr("  слова проекта: %s\n"), strings.Join(other, ", "))
+	}
+	if len(p.Sources) == 0 {
+		fmt.Println(tr("источников нет — справку собрать не из чего."))
+		fmt.Println("  steno projects add " + p.Name + tr(" --repo git@github.com:…  или --path ~/code/…"))
 		return nil
 	}
-	fmt.Println("собрать справку по коду:  steno context " + name)
+	fmt.Println(tr("собрать справку по коду:  steno context ") + p.Name)
 	return nil
+}
+
+// mergeProject накладывает названное сейчас на уже записанное. Пустое поле не
+// стирает: в командной строке «не сказал» и «сказал, что пусто» неразличимы, а
+// цена ошибки несимметрична — стёртое описание человек увидит сразу, стёртый
+// список людей не увидит вовсе.
+func mergeProject(old, add Project) Project {
+	out := old
+	if add.About != "" {
+		out.About = add.About
+	}
+	out.Aliases = mergeWords(old.Aliases, add.Aliases)
+	out.People = mergeWords(old.People, add.People)
+	out.Vocabulary = mergeWords(old.Vocabulary, add.Vocabulary)
+	out.Sources = mergeSources(old.Sources, add.Sources)
+	return out
+}
+
+// mergeSources складывает списки источников, не заводя второй такой же: тот же
+// каталог, приложенный дважды, — это вдвое больше материала в справке и вдвое
+// больший поход в Claude за тем же самым.
+func mergeSources(old, add []Source) []Source {
+	seen := map[string]bool{}
+	out := make([]Source, 0, len(old)+len(add))
+	for _, s := range append(append([]Source{}, old...), add...) {
+		key := s.Kind + "\x00" + s.Value
+		if strings.TrimSpace(s.Value) == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// projectIsBare — про проект не сказано ничего, кроме, может быть, названия.
+// Только в этом случае есть смысл спрашивать: человек, назвавший хоть один
+// флаг, уже сказал, что хотел, а остальное допишет там, где ему удобно.
+func projectIsBare(p Project) bool {
+	return p.About == "" && len(p.Aliases) == 0 && len(p.People) == 0 &&
+		len(p.Vocabulary) == 0 && len(p.Sources) == 0
+}
+
+// askableStdin — есть ли на том конце человек, которому можно задать вопрос.
+// Вопрос, заданный конвейеру, висит до конца времён, а `projects add` в скрипте
+// развёртывания — обычное дело.
+//
+// Смотрим на оба конца, а не только на ввод. `steno projects add Платежи >
+// log.txt` запущен из терминала, отвечать есть кому — но вопрос уходит в файл,
+// человек видит пустой экран и убивает программу, решив, что она повисла.
+//
+// Переменной, а не вызовом на месте, чтобы тест мог прогнать разговор: у теста
+// стдин всегда труба.
+var askableStdin = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// projectAsk — разговор при заведении проекта: по одному вопросу, пустой ответ
+// пропускает. Приёмы те же, что в `steno setup`, но состояние своё: тащить
+// сюда мастер установки целиком ради чтения пяти строк незачем.
+type projectAsk struct {
+	in  *bufio.Reader
+	out io.Writer
+	// Ввод кончился: Ctrl+D или закрытая труба. Дальше не спрашиваем вовсе —
+	// иначе на экран вываливаются все оставшиеся вопросы разом, каждый с
+	// пустым ответом.
+	eof bool
+}
+
+func (a *projectAsk) line(question, hint string) string {
+	if a.eof {
+		return ""
+	}
+	if hint != "" {
+		fmt.Fprintf(a.out, "  %s %s\n", question, dim("— "+hint))
+		fmt.Fprint(a.out, "  ")
+	} else {
+		fmt.Fprintf(a.out, "  %s: ", question)
+	}
+	s, err := a.in.ReadString('\n')
+	if err != nil {
+		a.eof = true
+		fmt.Fprintln(a.out)
+	}
+	return strings.TrimSpace(s)
+}
+
+// run задаёт вопросы. known — проект с таким именем уже заведён: тогда пустой
+// ответ не стирает записанное, и сказать об этом надо до вопросов, а не после.
+func (a *projectAsk) run(p *Project, known bool) {
+	fmt.Fprintln(a.out)
+	fmt.Fprintln(a.out, bold(tr("Пара вопросов о проекте")))
+	if known {
+		fmt.Fprintln(a.out, dim(tr("Такой проект уже заведён — допишем к нему. Пустой ответ ничего не сотрёт.")))
+	} else {
+		fmt.Fprintln(a.out, dim(tr("Пустой ответ пропускает вопрос. Всё это правится потом: steno ui или панель.")))
+	}
+	fmt.Fprintln(a.out)
+
+	if p.Name == "" {
+		p.Name = a.line(tr("Как называется проект"), "")
+		if p.Name == "" {
+			return // сохранять нечего, дальше спрашивать не о чем
+		}
+	}
+	p.About = a.line(tr("О чём он, одной строкой"),
+		tr("по ней модель отличает его от соседнего проекта"))
+	p.Aliases = commaList(a.line(tr("Как его называют вслух"),
+		tr("через запятую: «биллинг», «платежи»")))
+	// Главный вопрос из всех. Имена людей — то, чего нет ни в одном источнике
+	// в пригодном виде: в git человек подписан логином, в календаре — тем, что
+	// он однажды вписал в аккаунт, а на созвоне его зовут по имени.
+	p.People = commaList(a.line(tr("Кто в нём участвует"),
+		tr("именами, которыми зовут на созвоне, а не подписью в git")))
+	p.Vocabulary = commaList(a.line(tr("Какие сервисы и сокращения звучат вслух"),
+		tr("через запятую; чужие сервисы тоже — их в репозитории нет")))
+
+	question, hint := tr("Где лежит код или документы"),
+		tr("путь, ссылка на репозиторий или адрес сайта")
+	for {
+		v := a.line(question, hint)
+		if v == "" {
+			return
+		}
+		kind := guessSourceKind(v)
+		if kind == "path" {
+			v = expandHome(v)
+		}
+		p.Sources = append(p.Sources, Source{Kind: kind, Value: v})
+		question, hint = tr("Ещё один источник"), tr("пусто — хватит")
+	}
+}
+
+// guessSourceKind различает репозиторий, адрес и каталог по самой строке.
+// Отдельный вопрос «а это что?» человек читает как недоверие: он только что
+// вставил ссылку на GitHub, и по ней всё видно.
+func guessSourceKind(v string) string {
+	switch {
+	case strings.HasPrefix(v, "git@"), strings.HasPrefix(v, "ssh://"),
+		strings.HasSuffix(v, ".git"):
+		return "repo"
+	case strings.HasPrefix(v, "http://"), strings.HasPrefix(v, "https://"):
+		// Ссылка на сам репозиторий — это репозиторий: склонировать его
+		// полезнее, чем прочитать одну его страницу. А вот ссылка вглубь
+		// (issues, pull, wiki) — обычный адрес, клонировать по ней нечего.
+		if u, err := url.Parse(v); err == nil && isGitHost(u.Host) &&
+			len(strings.Split(strings.Trim(u.Path, "/"), "/")) == 2 {
+			return "repo"
+		}
+		return "url"
+	}
+	return "path"
+}
+
+func isGitHost(host string) bool {
+	switch strings.TrimPrefix(strings.ToLower(host), "www.") {
+	case "github.com", "gitlab.com", "bitbucket.org", "codeberg.org":
+		return true
+	}
+	return false
 }
 
 func cmdProjectRm(args []string) error {
@@ -1292,7 +1606,7 @@ func cmdProjectRm(args []string) error {
 	}
 	name := strings.TrimSpace(strings.Join(rest, " "))
 	if name == "" {
-		return fmt.Errorf("какой проект удалить? steno projects rm <название>")
+		return errors.New(tr("какой проект удалить? steno projects rm <название>"))
 	}
 	_, st, err := open(*cfgPath)
 	if err != nil {
@@ -1304,7 +1618,7 @@ func cmdProjectRm(args []string) error {
 	}
 	// Задачи и решения остаются: они принадлежат созвонам, а не проекту, и
 	// молча уносить их вместе с записью в реестре — потеря без предупреждения.
-	fmt.Printf("проект «%s» удалён; задачи и решения по нему остались\n", name)
+	fmt.Printf(tr("проект «%s» удалён; задачи и решения по нему остались\n"), name)
 	return nil
 }
 
@@ -1338,8 +1652,8 @@ func ensureBotImage(ctx context.Context, image string, log *log.Logger) (string,
 		return image, nil
 	}
 	if look.Err() != nil && ctx.Err() == nil {
-		return "", fmt.Errorf("docker не отвечает уже 20 секунд — похоже, он завис;\n" +
-			"  перезапусти Docker Desktop и попробуй снова")
+		return "", errors.New(tr("docker не отвечает уже 20 секунд — похоже, он завис;\n") +
+			tr("  перезапусти Docker Desktop и попробуй снова"))
 	}
 	if !strings.Contains(image, "/") {
 		// Настройки, написанные до появления образа в реестре, хранят имя
@@ -1348,26 +1662,26 @@ func ensureBotImage(ctx context.Context, image string, log *log.Logger) (string,
 		// готовый образ, и правильнее взять его, сказав об этом вслух.
 		reg := defaultBotImage()
 		if !strings.Contains(reg, "/") {
-			return "", fmt.Errorf("нет образа %s — он собирается из исходников:\n"+
+			return "", fmt.Errorf(tr("нет образа %s — он собирается из исходников:\n")+
 				"  git clone https://github.com/sur1cat/steno && cd steno && make bot-image", image)
 		}
-		log.Printf("в настройке образ %s, которого нет; беру %s", image, reg)
+		log.Printf(tr("в настройке образ %s, которого нет; беру %s"), image, reg)
 		image = reg
 		if haveImage(ctx, image) {
 			return image, nil
 		}
 	}
-	log.Printf("образа %s нет, скачиваю (около гигабайта, один раз)", image)
+	log.Printf(tr("образа %s нет, скачиваю (около гигабайта, один раз)"), image)
 	// Скачивание — дело долгое (гигабайт), но не бесконечное.
 	pullCtx, cancelPull := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancelPull()
 	cmd := exec.CommandContext(pullCtx, "docker", "pull", image)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("не скачался образ %s: %s\n"+
-			"  можно собрать самому: git clone https://github.com/sur1cat/steno && cd steno && make bot-image",
+		return "", fmt.Errorf(tr("не скачался образ %s: %s\n")+
+			tr("  можно собрать самому: git clone https://github.com/sur1cat/steno && cd steno && make bot-image"),
 			image, tail(string(out), 300))
 	}
-	log.Printf("образ %s готов", image)
+	log.Printf(tr("образ %s готов"), image)
 	return image, nil
 }
 

@@ -133,21 +133,21 @@ func uiWrapLines(prefix, text string, width int) []string {
 func uiStatusWord(status string) string {
 	switch status {
 	case "uploading":
-		return "разбираю файл"
+		return tr("разбираю файл")
 	case "recording":
-		return "идёт запись"
+		return tr("идёт запись")
 	case "recorded":
-		return "записан"
+		return tr("записан")
 	case "transcribed":
-		return "расшифрован"
+		return tr("расшифрован")
 	case "summarized":
-		return "есть follow-up"
+		return tr("есть follow-up")
 	case "published":
-		return "разослан"
+		return tr("разослан")
 	case "publish_failed":
-		return "не разослан"
+		return tr("не разослан")
 	case "failed":
-		return "сорвался"
+		return tr("сорвался")
 	}
 	return status
 }
@@ -192,11 +192,11 @@ func uiDueCell(due string, width int) string {
 func uiKindWord(k ItemKind) string {
 	switch k {
 	case KindTask:
-		return "задача"
+		return tr("задача")
 	case KindQuestion:
-		return "вопрос"
+		return tr("вопрос")
 	case KindDecision:
-		return "решение"
+		return tr("решение")
 	}
 	return string(k)
 }
@@ -204,11 +204,11 @@ func uiKindWord(k ItemKind) string {
 func uiKindLetter(k ItemKind) string {
 	switch k {
 	case KindTask:
-		return "З"
+		return tr("З")
 	case KindQuestion:
-		return "В"
+		return tr("В")
 	case KindDecision:
-		return "Р"
+		return tr("Р")
 	}
 	return "·"
 }
@@ -219,9 +219,9 @@ func uiDur(d time.Duration) string {
 	}
 	m := int(d.Minutes())
 	if m < 60 {
-		return fmt.Sprintf("%d мин", m)
+		return fmt.Sprintf(tr("%d мин"), m)
 	}
-	return fmt.Sprintf("%d ч %02d", m/60, m%60)
+	return fmt.Sprintf(tr("%d ч %02d"), m/60, m%60)
 }
 
 // uiHighlight превращает разметку сниппета в подсветку. В индексе лежит сырой
@@ -252,7 +252,7 @@ func uiLinkLines(links map[string]string) []string {
 	for _, target := range sortedKeys(links) {
 		url := links[target]
 		if url == "" {
-			url = uiDim.Render("отправлено")
+			url = uiDim.Render(tr("отправлено"))
 		}
 		out = append(out, uiDim.Render(uiFit(target, 12))+url)
 	}
@@ -295,7 +295,7 @@ func (m *uiModel) rebuildBody() {
 
 func (m *uiModel) meetingBody(w int) []string {
 	if m.meeting == nil {
-		return []string{uiDim.Render("созвон не открыт")}
+		return []string{uiDim.Render(tr("созвон не открыт"))}
 	}
 	mt := m.meeting
 	var out []string
@@ -315,38 +315,38 @@ func (m *uiModel) meetingBody(w int) []string {
 	meta += " · " + uiStatusWord(mt.Status)
 	add(uiDim.Render(meta))
 	if len(mt.Participants) > 0 {
-		out = append(out, uiWrapLines(uiDim.Render("участники: "),
+		out = append(out, uiWrapLines(uiDim.Render(tr("участники: ")),
 			strings.Join(mt.Participants, ", "), w)...)
 	}
 	if mt.Error != "" {
-		out = append(out, uiWrapLines(uiErrStyle.Render("сбой: "), mt.Error, w)...)
+		out = append(out, uiWrapLines(uiErrStyle.Render(tr("сбой: ")), mt.Error, w)...)
 	}
 	if mt.LeftReason != "" {
-		add(uiDim.Render("бот вышел: " + mt.LeftReason))
+		add(uiDim.Render(tr("бот вышел: ") + mt.LeftReason))
 	}
 	out = append(out, uiLinkLines(m.links)...)
 
 	f := m.followup
 	if f == nil {
-		head("Follow-up ещё нет")
-		out = append(out, uiWrapLines("", "Созвон записан, но не разобран. Сделать разбор:  steno process "+mt.ID, w)...)
+		head(tr("Follow-up ещё нет"))
+		out = append(out, uiWrapLines("", tr("Созвон записан, но не разобран. Сделать разбор:  steno process ")+mt.ID, w)...)
 		if len(m.segments) > 0 {
-			add(uiDim.Render("расшифровка есть — t покажет её целиком"))
+			add(uiDim.Render(tr("расшифровка есть — t покажет её целиком")))
 		}
 		return out
 	}
 
 	if len(f.TLDR) > 0 {
-		head("Коротко")
+		head(tr("Коротко"))
 		for _, s := range f.TLDR {
 			out = append(out, uiWrapLines("  • ", s, w)...)
 		}
 	}
 	if len(f.ActionItems) > 0 {
-		head("Задачи")
+		head(tr("Задачи"))
 		for _, a := range f.ActionItems {
 			out = append(out, uiWrapLines("  • ", a.What, w)...)
-			tail := uiAccent.Render(orDash(a.Owner)) + uiDim.Render(" · срок "+dueOr(a.Due, "не назван"))
+			tail := uiAccent.Render(orDash(a.Owner)) + uiDim.Render(tr(" · срок ")+dueOr(a.Due, tr("не назван")))
 			if a.Project != "" {
 				tail += uiDim.Render(" · " + a.Project)
 			}
@@ -355,31 +355,31 @@ func (m *uiModel) meetingBody(w int) []string {
 		}
 	}
 	if len(f.Decisions) > 0 {
-		head("Решения")
+		head(tr("Решения"))
 		for _, d := range f.Decisions {
 			out = append(out, uiWrapLines("  • ", d.What, w)...)
 			if d.Why != "" {
-				out = append(out, uiWrapLines(uiDim.Render(strings.Repeat(" ", uiItemIndent)+"почему: "), d.Why, w)...)
+				out = append(out, uiWrapLines(uiDim.Render(strings.Repeat(" ", uiItemIndent)+tr("почему: ")), d.Why, w)...)
 			}
 			add(uiDim.Render(strings.Repeat(" ", uiItemIndent) + clock(d.At)))
 		}
 	}
 	if len(f.OpenQuestions) > 0 {
-		head("Открытые вопросы")
+		head(tr("Открытые вопросы"))
 		for _, q := range f.OpenQuestions {
 			out = append(out, uiWrapLines("  • ", q.Question, w)...)
-			add(uiDim.Render(strings.Repeat(" ", uiItemIndent) + "ждём: " +
-				dueOr(q.WaitingOn, "не определено") + " · " + clock(q.At)))
+			add(uiDim.Render(strings.Repeat(" ", uiItemIndent) + tr("ждём: ") +
+				dueOr(q.WaitingOn, tr("не определено")) + " · " + clock(q.At)))
 		}
 	}
 	if len(f.Risks) > 0 {
-		head("Риски")
+		head(tr("Риски"))
 		for _, r := range f.Risks {
 			out = append(out, uiWrapLines("  "+uiWarn.Render("!")+" ", r, w)...)
 		}
 	}
 	if len(f.Timeline) > 0 {
-		head("Как шёл разговор")
+		head(tr("Как шёл разговор"))
 		for _, t := range f.Timeline {
 			out = append(out, uiWrapLines("  "+uiDim.Render(clock(t.At))+" ", uiBold.Render(t.Title), w)...)
 			if t.Summary != "" {
@@ -388,8 +388,8 @@ func (m *uiModel) meetingBody(w int) []string {
 		}
 	}
 	if f.empty() {
-		head("Пусто")
-		out = append(out, uiWrapLines("", "Разбор есть, но в нём ничего не оказалось: ни задач, ни решений. Обычно так выходит с очень короткой записью.", w)...)
+		head(tr("Пусто"))
+		out = append(out, uiWrapLines("", tr("Разбор есть, но в нём ничего не оказалось: ни задач, ни решений. Обычно так выходит с очень короткой записью."), w)...)
 	}
 	return out
 }
@@ -402,9 +402,9 @@ func (m *uiModel) transcriptBody(w int) []string {
 			id = m.meeting.ID
 		}
 		return []string{
-			uiDim.Render("расшифровки нет"),
+			uiDim.Render(tr("расшифровки нет")),
 			"",
-			"Созвон записан, но не расшифрован. Расшифровать:  steno process " + id,
+			tr("Созвон записан, но не расшифрован. Расшифровать:  steno process ") + id,
 		}
 	}
 	var out []string
@@ -422,7 +422,7 @@ func (m *uiModel) transcriptBody(w int) []string {
 func (m *uiModel) projectBody(w int) []string {
 	p, ok := m.openProjectRow()
 	if !ok {
-		return []string{uiDim.Render("проекта больше нет")}
+		return []string{uiDim.Render(tr("проекта больше нет"))}
 	}
 	var out []string
 	add := func(s string) { out = append(out, s) }
@@ -430,31 +430,44 @@ func (m *uiModel) projectBody(w int) []string {
 
 	add(uiBold.Render(p.Name))
 	if !p.Registered {
-		out = append(out, uiWrapLines(uiWarn.Render("  "), "Проекта нет в реестре: он встречается в задачах, но не заведён. Заведи с тем же названием (n), чтобы приложить репозиторий и описание.", w)...)
+		out = append(out, uiWrapLines(uiWarn.Render("  "), tr("Проекта нет в реестре: он встречается в задачах, но не заведён. Заведи с тем же названием (n), чтобы приложить репозиторий и описание."), w)...)
 	}
 	if p.About != "" {
 		out = append(out, uiWrapLines("", p.About, w)...)
 	}
 	if len(p.Aliases) > 0 {
-		out = append(out, uiWrapLines(uiDim.Render("зовут также: "), strings.Join(p.Aliases, ", "), w)...)
+		out = append(out, uiWrapLines(uiDim.Render(tr("зовут также: ")), strings.Join(p.Aliases, ", "), w)...)
 	}
 
-	head("Источники")
+	head(tr("Что звучит вслух"))
+	if len(p.People) == 0 && len(p.Vocabulary) == 0 {
+		add(uiDim.Render(tr("  пусто — а без имён задача уезжает не тому (e — правка)")))
+	}
+	if len(p.People) > 0 {
+		out = append(out, uiWrapLines(uiDim.Render(fmt.Sprintf("  %-13s ", tr("люди"))),
+			strings.Join(p.People, ", "), w)...)
+	}
+	if other := p.project().otherWords(); len(other) > 0 {
+		out = append(out, uiWrapLines(uiDim.Render(fmt.Sprintf("  %-13s ", tr("сервисы"))),
+			strings.Join(other, ", "), w)...)
+	}
+
+	head(tr("Источники"))
 	if len(p.Sources) == 0 {
-		add(uiDim.Render("  нет — справку собрать не из чего (e — правка, ctrl+n — добавить)"))
+		add(uiDim.Render(tr("  нет — справку собрать не из чего (e — правка, ctrl+n — добавить)")))
 	}
 	for _, s := range p.Sources {
 		out = append(out, uiWrapLines(fmt.Sprintf("  %-13s ", uiSourceKindTitle(s.Kind)), s.Value, w)...)
 	}
 
-	head("Справка по коду")
+	head(tr("Справка по коду"))
 	switch {
 	case m.building[p.Name]:
-		add(uiDim.Render("  собирается…"))
+		add(uiDim.Render(tr("  собирается…")))
 	case p.ContextAt.IsZero() || strings.TrimSpace(p.Primer) == "":
-		add(uiDim.Render("  не собрана — s соберёт (это поход в Claude)"))
+		add(uiDim.Render(tr("  не собрана — s соберёт (это поход в Claude)")))
 	default:
-		add(uiDim.Render("  собрана " + p.ContextAt.Format("02.01.2006 15:04")))
+		add(uiDim.Render(tr("  собрана ") + p.ContextAt.Format("02.01.2006 15:04")))
 		add("")
 		for _, line := range strings.Split(strings.TrimSpace(p.Primer), "\n") {
 			out = append(out, uiWrapLines("  ", line, w)...)
@@ -475,9 +488,9 @@ func (m *uiModel) projectBody(w int) []string {
 			open++
 		}
 	}
-	head(fmt.Sprintf("Открыто — %d", open))
+	head(fmt.Sprintf(tr("Открыто — %d"), open))
 	if open == 0 {
-		add(uiDim.Render("  ничего не висит"))
+		add(uiDim.Render(tr("  ничего не висит")))
 	}
 	for _, it := range items {
 		if it.Status != "open" {
@@ -486,7 +499,7 @@ func (m *uiModel) projectBody(w int) []string {
 		out = append(out, m.itemLines(it, w)...)
 	}
 	if closed := len(items) - open; closed > 0 {
-		head(fmt.Sprintf("Закрыто — %d", closed))
+		head(fmt.Sprintf(tr("Закрыто — %d"), closed))
 		for _, it := range items {
 			if it.Status == "open" {
 				continue
@@ -511,12 +524,12 @@ func (m *uiModel) itemLines(it ProjectItem, w int) []string {
 		tail = append(tail, it.Owner)
 	}
 	if it.Due != "" {
-		tail = append(tail, "до "+it.Due)
+		tail = append(tail, tr("до ")+it.Due)
 	}
 	if it.Status != "open" {
-		word := "сделано"
+		word := tr("сделано")
 		if it.Status == "dropped" {
-			word = "снято"
+			word = tr("снято")
 		}
 		tail = append(tail, word)
 	}
@@ -563,7 +576,7 @@ func (m *uiModel) View() string {
 			}
 			p = p[:inner]
 			if cut && inner > 0 {
-				p[inner-1] = uiDim.Render("  … enter — целиком")
+				p[inner-1] = uiDim.Render(tr("  … enter — целиком"))
 			}
 			below = append([]string{""}, m.box(m.previewTitle(), "", p)...)
 		}
@@ -657,9 +670,9 @@ func (m *uiModel) boxTitle() string {
 		return m.placeName()
 	}
 	if n := m.rowCount(); n > 0 {
-		return fmt.Sprintf("%s · %d", uiTabTitles[m.tab], n)
+		return fmt.Sprintf("%s · %d", uiTabTitles()[m.tab], n)
 	}
-	return uiTabTitles[m.tab]
+	return uiTabTitles()[m.tab]
 }
 
 // titleBar — где я нахожусь и сколько тут всего. Полоса во всю ширину: на
@@ -689,24 +702,24 @@ func (m *uiModel) placeName() string {
 	case scrMeeting:
 		return "Follow-up"
 	case scrTranscript:
-		return "Расшифровка"
+		return tr("Расшифровка")
 	case scrProject:
-		return "Проект"
+		return tr("Проект")
 	case scrHelp:
-		return "Клавиши"
+		return tr("Клавиши")
 	case scrForm:
 		if m.form != nil && m.form.old != "" {
-			return "Правка проекта"
+			return tr("Правка проекта")
 		}
-		return "Новый проект"
+		return tr("Новый проект")
 	case scrChannel:
-		return "Настройка канала"
+		return tr("Настройка канала")
 	case scrPicker:
-		return "Выбор"
+		return tr("Выбор")
 	case scrConfirm:
-		return "Подтверждение"
+		return tr("Подтверждение")
 	}
-	return uiTabTitles[m.tab]
+	return uiTabTitles()[m.tab]
 }
 
 func (m *uiModel) tabBar() string {
@@ -716,21 +729,21 @@ func (m *uiModel) tabBar() string {
 		case i == m.tab && m.screen() == scrList:
 			// Выбранная и мы в ней: залитый блок. Номер внутри блока не глушим —
 			// на залитом фоне приглушение выглядит грязью, а не подсказкой.
-			left += uiTabOn.Render(fmt.Sprintf(" %d %s ", i+1, uiTabTitles[i]))
+			left += uiTabOn.Render(fmt.Sprintf(" %d %s ", i+1, uiTabTitles()[i]))
 		case i == m.tab:
 			// Выбранная, но человек ушёл вглубь — в карточку, форму, справку.
 			// Рамка вместо заливки: место помнится, но сейчас оно не здесь.
-			left += uiAccent.Render(fmt.Sprintf("[%d %s]", i+1, uiTabTitles[i]))
+			left += uiAccent.Render(fmt.Sprintf("[%d %s]", i+1, uiTabTitles()[i]))
 		default:
 			left += uiTabNum.Render(fmt.Sprintf(" %d ", i+1)) +
-				uiTabOff.Render(uiTabTitles[i]) + " "
+				uiTabOff.Render(uiTabTitles()[i]) + " "
 		}
 		left += " "
 	}
 	// Стрелки названы прямо в шапке: это первое, что человек нажимает, и
 	// искать их в справке он не пойдёт. На узком окне подсказка укорачивается,
 	// но не пропадает — пропадать ей нельзя, она тут главная.
-	for _, hint := range []string{"← → разделы · ? клавиши ", "← → разделы ", "← → "} {
+	for _, hint := range []string{tr("← → разделы · ? клавиши "), tr("← → разделы "), "← → "} {
 		gap := m.w - ansi.StringWidth(left) - ansi.StringWidth(hint)
 		if gap >= 1 {
 			return left + strings.Repeat(" ", gap) + uiDim.Render(hint)
@@ -742,7 +755,7 @@ func (m *uiModel) tabBar() string {
 func (m *uiModel) counters() string {
 	switch m.tab {
 	case tabMeetings:
-		return fmt.Sprintf("созвонов %d", len(m.meetings))
+		return fmt.Sprintf(tr("созвонов %d"), len(m.meetings))
 	case tabTasks:
 		open := 0
 		for _, it := range m.items {
@@ -750,14 +763,14 @@ func (m *uiModel) counters() string {
 				open++
 			}
 		}
-		return fmt.Sprintf("открыто %d", open)
+		return fmt.Sprintf(tr("открыто %d"), open)
 	case tabProjects:
-		return fmt.Sprintf("проектов %d", len(m.projects))
+		return fmt.Sprintf(tr("проектов %d"), len(m.projects))
 	case tabSearch:
 		if strings.TrimSpace(m.query.String()) == "" {
 			return ""
 		}
-		return fmt.Sprintf("найдено %d", len(m.hits))
+		return fmt.Sprintf(tr("найдено %d"), len(m.hits))
 	case tabChannels:
 		on := 0
 		for _, c := range m.channels {
@@ -765,7 +778,7 @@ func (m *uiModel) counters() string {
 				on++
 			}
 		}
-		return fmt.Sprintf("включено %d из %d", on, len(m.channels))
+		return fmt.Sprintf(tr("включено %d из %d"), on, len(m.channels))
 	}
 	return ""
 }
@@ -781,13 +794,13 @@ func (m *uiModel) contextLine() string {
 	case scrForm:
 		if m.form != nil && m.form.old != "" {
 			return pad + uiBold.Render("«"+m.form.old+"»") +
-				uiDim.Render("   ctrl+s сохранит, esc отменит")
+				uiDim.Render(tr("   ctrl+s сохранит, esc отменит"))
 		}
-		return pad + uiDim.Render("ctrl+s сохранит, esc отменит")
+		return pad + uiDim.Render(tr("ctrl+s сохранит, esc отменит"))
 	case scrChannel:
 		if m.chanForm != nil {
 			return pad + uiBold.Render("«"+m.chanForm.name+"»") +
-				uiDim.Render("   ctrl+s сохранит, esc отменит")
+				uiDim.Render(tr("   ctrl+s сохранит, esc отменит"))
 		}
 		return ""
 	case scrPicker:
@@ -800,10 +813,10 @@ func (m *uiModel) contextLine() string {
 	}
 
 	if m.tab == tabSearch {
-		return pad + uiDim.Render("запрос: ") + m.query.view(min(m.w-12, 60), m.searchFocus)
+		return pad + uiDim.Render(tr("запрос: ")) + m.query.view(min(m.w-12, 60), m.searchFocus)
 	}
 	if m.filtering || !m.filter[m.tab].empty() {
-		return pad + uiDim.Render("фильтр: ") + m.filter[m.tab].view(min(m.w-12, 60), m.filtering)
+		return pad + uiDim.Render(tr("фильтр: ")) + m.filter[m.tab].view(min(m.w-12, 60), m.filtering)
 	}
 	// Заголовки колонок над пустым списком объясняют пустоту хуже, чем ничего:
 	// человек читает «что · кто · срок» и ищет строки, которых нет.
@@ -823,12 +836,12 @@ func (m *uiModel) cardContext() string {
 	case scrProject:
 		title = m.projectName
 	case scrHelp:
-		title = "что нажимать"
+		title = tr("что нажимать")
 	}
 	left := strings.Repeat(" ", uiGutter) + uiBold.Render(uiTrunc(title, max(m.w-24, 10)))
 	right := ""
 	if n := len(m.body); n > m.listHeight() {
-		right = uiDim.Render(fmt.Sprintf("%d–%d из %d", m.bodyOff+1,
+		right = uiDim.Render(fmt.Sprintf(tr("%d–%d из %d"), m.bodyOff+1,
 			min(m.bodyOff+m.listHeight(), n), n))
 	}
 	gap := m.w - ansi.StringWidth(left) - ansi.StringWidth(right)
@@ -887,7 +900,7 @@ func (m *uiModel) colsMeetings() (name, when, status, tasks int) {
 		vals = append(vals, uiMeetingTitle(r))
 	}
 	avail := uiFlex(m.tableWidth(), when, status, tasks)
-	return uiNatural("название", vals, avail), when, status, tasks
+	return uiNatural(tr("название"), vals, avail), when, status, tasks
 }
 
 func (m *uiModel) colsTasks() (what, owner, due, project, id int) {
@@ -902,7 +915,7 @@ func (m *uiModel) colsTasks() (what, owner, due, project, id int) {
 		vals = append(vals, it.Text)
 	}
 	avail := uiFlex(m.tableWidth(), owner, due, project, id)
-	return uiNatural("что", vals, avail), owner, due, project, id
+	return uiNatural(tr("что"), vals, avail), owner, due, project, id
 }
 
 func (m *uiModel) colsProjects() (name, tasks, questions, decisions, sources int) {
@@ -913,7 +926,7 @@ func (m *uiModel) colsProjects() (name, tasks, questions, decisions, sources int
 		vals = append(vals, p.Name)
 	}
 	avail := uiFlex(m.tableWidth(), tasks, questions, decisions, sources, 14)
-	return uiNatural("проект", vals, avail), tasks, questions, decisions, sources
+	return uiNatural(tr("проект"), vals, avail), tasks, questions, decisions, sources
 }
 
 func (m *uiModel) colsChannels() (name, state, what int) {
@@ -924,7 +937,7 @@ func (m *uiModel) colsChannels() (name, state, what int) {
 		vals = append(vals, c.Name)
 	}
 	avail := uiFlex(m.tableWidth(), state, what, 16)
-	return uiNatural("канал", vals, avail), state, what
+	return uiNatural(tr("канал"), vals, avail), state, what
 }
 
 func (m *uiModel) columns() string {
@@ -934,21 +947,21 @@ func (m *uiModel) columns() string {
 	switch m.tab {
 	case tabMeetings:
 		name, when, status, tasks := m.colsMeetings()
-		return pad + uiCell("название", name) + uiCell("когда", when) +
-			uiCell("статус", status) + uiCell("зад.", tasks)
+		return pad + uiCell(tr("название"), name) + uiCell(tr("когда"), when) +
+			uiCell(tr("статус"), status) + uiCell(tr("зад."), tasks)
 	case tabTasks:
 		what, owner, due, project, id := m.colsTasks()
-		return pad + uiCell("что", what) + uiCell("кто", owner) +
-			uiCell("срок", due) + uiCell("проект", project) + uiCell("id", id)
+		return pad + uiCell(tr("что"), what) + uiCell(tr("кто"), owner) +
+			uiCell(tr("срок"), due) + uiCell(tr("проект"), project) + uiCell("id", id)
 	case tabProjects:
 		name, tasks, questions, decisions, sources := m.colsProjects()
-		return pad + uiCell("проект", name) + uiCell("задач", tasks) +
-			uiCell("вопр.", questions) + uiCell("реш.", decisions) +
-			uiCell("источн.", sources) + "справка"
+		return pad + uiCell(tr("проект"), name) + uiCell(tr("задач"), tasks) +
+			uiCell(tr("вопр."), questions) + uiCell(tr("реш."), decisions) +
+			uiCell(tr("источн."), sources) + tr("справка")
 	case tabChannels:
 		name, state, what := m.colsChannels()
-		return pad + uiCell("канал", name) + uiCell("состояние", state) +
-			uiCell("что делает", what) + "настроено"
+		return pad + uiCell(tr("канал"), name) + uiCell(tr("состояние"), state) +
+			uiCell(tr("что делает"), what) + tr("настроено")
 	}
 	return ""
 }
@@ -1069,12 +1082,12 @@ func (m *uiModel) meetingsView() []string {
 	rows := m.visibleMeetings()
 	if len(rows) == 0 {
 		if !m.filter[tabMeetings].empty() {
-			return uiEmpty(m.w, "Ничего не подошло под фильтр",
-				"esc снимет фильтр, / наберёт другой.")
+			return uiEmpty(m.w, tr("Ничего не подошло под фильтр"),
+				tr("esc снимет фильтр, / наберёт другой."))
 		}
-		return uiEmpty(m.w, "Созвонов пока нет",
-			"Бот запишет созвон и разберёт его сам:  steno join <ссылка>",
-			"Чтобы он ходил на встречи из календаря без напоминаний:  steno serve")
+		return uiEmpty(m.w, tr("Созвонов пока нет"),
+			tr("Бот запишет созвон и разберёт его сам:  steno join <ссылка>"),
+			tr("Чтобы он ходил на встречи из календаря без напоминаний:  steno serve"))
 	}
 	from, to := m.window(len(rows))
 	out := make([]string, 0, to-from)
@@ -1102,15 +1115,15 @@ func (m *uiModel) tasksView() []string {
 	if len(rows) == 0 {
 		switch {
 		case len(m.items) == 0:
-			return uiEmpty(m.w, "Задач пока нет",
-				"Они появляются сами: бот разбирает созвон и раскладывает, кто что взял.",
-				"Записать созвон:  steno join <ссылка>")
+			return uiEmpty(m.w, tr("Задач пока нет"),
+				tr("Они появляются сами: бот разбирает созвон и раскладывает, кто что взял."),
+				tr("Записать созвон:  steno join <ссылка>"))
 		case !m.itemFilter.empty() || !m.filter[tabTasks].empty():
-			return uiEmpty(m.w, "Под фильтр ничего не подошло",
-				"c снимет все фильтры, a покажет и закрытое.")
+			return uiEmpty(m.w, tr("Под фильтр ничего не подошло"),
+				tr("c снимет все фильтры, a покажет и закрытое."))
 		default:
-			return uiEmpty(m.w, "Всё закрыто",
-				"Ни одной открытой задачи. a покажет закрытые.")
+			return uiEmpty(m.w, tr("Всё закрыто"),
+				tr("Ни одной открытой задачи. a покажет закрытые."))
 		}
 	}
 	from, to := m.window(len(rows))
@@ -1152,12 +1165,12 @@ func (m *uiModel) projectsView() []string {
 	rows := m.visibleProjects()
 	if len(rows) == 0 {
 		if !m.filter[tabProjects].empty() {
-			return uiEmpty(m.w, "Ничего не подошло под фильтр",
-				"esc снимет фильтр.")
+			return uiEmpty(m.w, tr("Ничего не подошло под фильтр"),
+				tr("esc снимет фильтр."))
 		}
-		return uiEmpty(m.w, "Проектов нет",
-			"n заведёт первый: название, одна строка о том, что это, и репозиторий или каталог с кодом.",
-			"По ним бот понимает, к чему относится сказанное на созвоне.")
+		return uiEmpty(m.w, tr("Проектов нет"),
+			tr("n заведёт первый: название, одна строка о том, что это, и репозиторий или каталог с кодом."),
+			tr("По ним бот понимает, к чему относится сказанное на созвоне."))
 	}
 	from, to := m.window(len(rows))
 	out := make([]string, 0, to-from)
@@ -1171,18 +1184,18 @@ func (m *uiModel) projectsView() []string {
 		line += uiDim.Render(uiFit(fmt.Sprintf("%d", len(p.Sources)), sourcesW))
 		switch {
 		case m.building[p.Name]:
-			line += "собирается…"
+			line += tr("собирается…")
 		case !p.Registered:
 			// Значка вроде звёздочки у названия человек не расшифрует, а место
 			// в этой колонке всё равно пустое: у незаведённого проекта нет ни
 			// источников, ни справки.
-			line += uiWarn.Render("не заведён")
+			line += uiWarn.Render(tr("не заведён"))
 		case !p.ContextAt.IsZero():
 			line += p.ContextAt.Format("02.01.2006")
 		case len(p.Sources) == 0:
-			line += uiDim.Render("нет источников")
+			line += uiDim.Render(tr("нет источников"))
 		default:
-			line += uiDim.Render("не собрана")
+			line += uiDim.Render(tr("не собрана"))
 		}
 		out = append(out, m.rowStyle(i)(line))
 	}
@@ -1191,13 +1204,13 @@ func (m *uiModel) projectsView() []string {
 
 func (m *uiModel) searchView() []string {
 	if strings.TrimSpace(m.query.String()) == "" {
-		return uiEmpty(m.w, "Поиск по всему, что накоплено",
-			"Наберите слово — ищется и в расшифровках, и в follow-up.",
-			"Ищется по началу слова: «релиз» найдёт и «релиза», и «релизом».")
+		return uiEmpty(m.w, tr("Поиск по всему, что накоплено"),
+			tr("Наберите слово — ищется и в расшифровках, и в follow-up."),
+			tr("Ищется по началу слова: «релиз» найдёт и «релиза», и «релизом»."))
 	}
 	if len(m.hits) == 0 {
-		return uiEmpty(m.w, "Ничего не нашлось",
-			"Слова короче двух букв не ищутся. Попробуйте другое слово или его начало.")
+		return uiEmpty(m.w, tr("Ничего не нашлось"),
+			tr("Слова короче двух букв не ищутся. Попробуйте другое слово или его начало."))
 	}
 	from, to := m.window(len(m.hits))
 	out := make([]string, 0, (to-from)*2)
@@ -1226,7 +1239,7 @@ func (m *uiModel) searchView() []string {
 func (m *uiModel) channelsView() []string {
 	rows := m.visibleChannels()
 	if len(rows) == 0 {
-		return uiEmpty(m.w, "Ничего не подошло под фильтр", "esc снимет фильтр.")
+		return uiEmpty(m.w, tr("Ничего не подошло под фильтр"), tr("esc снимет фильтр."))
 	}
 	from, to := m.window(len(rows))
 	out := make([]string, 0, to-from)
@@ -1235,15 +1248,15 @@ func (m *uiModel) channelsView() []string {
 		nameW, stateW, whatW := m.colsChannels()
 		line := " " + uiCell(c.Name, nameW)
 		if c.Enabled {
-			line += uiOKStyle.Render(uiCell("включён", stateW))
+			line += uiOKStyle.Render(uiCell(tr("включён"), stateW))
 		} else {
-			line += uiDim.Render(uiCell("выключен", stateW))
+			line += uiDim.Render(uiCell(tr("выключен"), stateW))
 		}
 		line += uiDim.Render(uiCell(uiChannelWhat(c), whatW))
 		if s := strings.TrimSpace(c.Summary); s != "" {
 			line += s
 		} else {
-			line += uiDim.Render("не настроено")
+			line += uiDim.Render(tr("не настроено"))
 		}
 		out = append(out, m.rowStyle(i)(line))
 	}
@@ -1261,7 +1274,7 @@ func (m *uiModel) channelFormView() ([]string, int) {
 	// Колонка подписей — по самой длинной подписи этого канала, а не наугад:
 	// «Писать в личку тем, на ком задача» — тридцать три колонки, и на
 	// фиксированных двадцати она наезжала на значение справа.
-	lw := ansi.StringWidth("канал включён")
+	lw := ansi.StringWidth(tr("канал включён"))
 	for _, fs := range f.fields {
 		if n := ansi.StringWidth(fs.def.Label); n > lw {
 			lw = n
@@ -1274,9 +1287,9 @@ func (m *uiModel) channelFormView() ([]string, int) {
 	}
 	check := func(on bool) string {
 		if on {
-			return uiOKStyle.Render("[×] да")
+			return uiOKStyle.Render(tr("[×] да"))
 		}
-		return uiDim.Render("[ ] нет")
+		return uiDim.Render(tr("[ ] нет"))
 	}
 
 	var out []string
@@ -1302,9 +1315,9 @@ func (m *uiModel) channelFormView() ([]string, int) {
 		here := i == f.cursor
 		switch {
 		case r.field < 0:
-			row(here, "канал включён", check(f.enabled))
+			row(here, tr("канал включён"), check(f.enabled))
 			if !f.live {
-				note(uiDim.Render("сервис подхватит это после перезапуска serve"))
+				note(uiDim.Render(tr("сервис подхватит это после перезапуска serve")))
 			}
 			// Поля вида «google» правке не подлежат: подключение делается
 			// браузером. Место им — рядом с каналом, а не отдельным разделом.
@@ -1316,9 +1329,9 @@ func (m *uiModel) channelFormView() ([]string, int) {
 			out = append(out, "")
 		case r.item == uiRowAdd:
 			fs := f.fields[r.field]
-			name, text := "", "добавить значение"
+			name, text := "", tr("добавить значение")
 			if len(fs.items) == 0 {
-				name, text = fs.def.Label, "пока ни одного — enter добавит"
+				name, text = fs.def.Label, tr("пока ни одного — enter добавит")
 			}
 			row(here, name, uiAccent.Render("+ ")+uiDim.Render(text))
 			if fs.def.Hint != "" {
@@ -1346,7 +1359,7 @@ func (m *uiModel) channelFormView() ([]string, int) {
 	}
 	out = append(out, "")
 	out = append(out, uiWrapLines("  ", uiDim.Render(
-		"Токенов и паролей здесь нет и не будет: их задаёт steno setup, и лежат они в .env."), m.w-2)...)
+		tr("Токенов и паролей здесь нет и не будет: их задаёт steno setup, и лежат они в .env.")), m.w-2)...)
 	return out, active
 }
 
@@ -1358,11 +1371,11 @@ func (m *uiModel) googleLines(def ChannelField, lw int) []string {
 	head := "  " + uiDim.Render(uiFit(def.Label, lw))
 	switch {
 	case g.Connected && g.Account != "":
-		out = append(out, head+uiOKStyle.Render("подключено")+uiDim.Render(" · "+g.Account))
+		out = append(out, head+uiOKStyle.Render(tr("подключено"))+uiDim.Render(" · "+g.Account))
 	case g.Connected:
-		out = append(out, head+uiOKStyle.Render("подключено"))
+		out = append(out, head+uiOKStyle.Render(tr("подключено")))
 	default:
-		out = append(out, head+uiWarn.Render("не подключено"))
+		out = append(out, head+uiWarn.Render(tr("не подключено")))
 	}
 	if g.Why != "" {
 		style := uiDim
@@ -1373,8 +1386,8 @@ func (m *uiModel) googleLines(def ChannelField, lw int) []string {
 	}
 	if !g.Connected {
 		out = append(out, uiWrapLines("  "+uiPad("", lw), uiDim.Render(
-			"Подключение идёт через браузер, из терминала его не нажать: запусти steno serve "+
-				"и подключись в панели, в разделе «Настройки»."), m.w-2)...)
+			tr("Подключение идёт через браузер, из терминала его не нажать: запусти steno serve ")+
+				tr("и подключись в панели, в разделе «Настройки».")), m.w-2)...)
 	}
 	return out
 }
@@ -1414,19 +1427,26 @@ func (m *uiModel) formView() ([]string, int) {
 		}
 		out = append(out, "  "+uiDim.Render(uiPad(name, 14))+value)
 	}
-	row(0, "название", f.name.view(w, f.field == 0))
-	row(1, "о чём проект", f.about.view(w, f.field == 1))
-	row(2, "зовут также", f.aliases.view(w, f.field == 2))
-	out = append(out, "", "  "+uiSection.Render("Источники")+uiDim.Render("  ctrl+n добавить · ctrl+t сменить вид · ctrl+k убрать"))
+	row(uiFieldName, tr("название"), f.name.view(w, f.field == uiFieldName))
+	row(uiFieldAbout, tr("о чём проект"), f.about.view(w, f.field == uiFieldAbout))
+	row(uiFieldAliases, tr("зовут также"), f.aliases.view(w, f.field == uiFieldAliases))
+	out = append(out, "", "  "+uiSection.Render(tr("Что звучит вслух"))+
+		uiDim.Render(tr("  через запятую")))
+	row(uiFieldPeople, tr("кто участвует"), f.people.view(w, f.field == uiFieldPeople))
+	row(uiFieldWords, tr("сервисы, слова"), f.words.view(w, f.field == uiFieldWords))
+	out = append(out, "", "  "+uiSection.Render(tr("Источники"))+uiDim.Render(tr("  ctrl+n добавить · ctrl+t сменить вид · ctrl+k убрать")))
 	if len(f.sources) == 0 {
-		out = append(out, uiWrapLines("  ", uiDim.Render("Пока ни одного. Без них справку по коду собрать не из чего, но проект всё равно заведётся."), m.w-2)...)
+		out = append(out, uiWrapLines("  ", uiDim.Render(tr("Пока ни одного. Без них справку по коду собрать не из чего, но проект всё равно заведётся.")), m.w-2)...)
 	}
 	for i, s := range f.sources {
-		row(3+i, uiSourceKindTitle(s.kind), s.value.view(w, f.field == 3+i))
+		row(uiFormFixed+i, uiSourceKindTitle(s.kind), s.value.view(w, f.field == uiFormFixed+i))
 	}
 	out = append(out, "")
 	out = append(out, uiWrapLines("  ", uiDim.Render(
-		"Псевдонимы — через запятую: как проект называют вслух. По ним бот понимает, что «биллинг» и «платежи» — одно и то же."), m.w-2)...)
+		tr("Псевдонимы — через запятую: как проект называют вслух. По ним бот понимает, что «биллинг» и «платежи» — одно и то же.")), m.w-2)...)
+	out = append(out, "")
+	out = append(out, uiWrapLines("  ", uiDim.Render(
+		tr("Имена людей — теми, которыми их зовут на созвоне, а не подписью в git. Их не угадать по коду, а без них задача уезжает не тому. Сервисы и сокращения — рядом, отдельной строкой: по ней бот знает, что «Сапар» это не человек.")), m.w-2)...)
 	return out, active
 }
 
@@ -1455,8 +1475,14 @@ func (m *uiModel) confirmView() []string {
 		return nil
 	}
 	out := []string{""}
-	out = append(out, uiWrapLines("  ", m.confirm.text, m.w-2)...)
-	out = append(out, "", "  "+uiWarn.Render("y")+uiDim.Render(" — удалить, любая другая клавиша — отмена"))
+	// По ширине текста, а не окна. Раньше здесь стояло m.w-2, и вопрос длиннее
+	// экрана box обрезал многоточием — ровно посередине, где стоит цена.
+	// uiProseWidth — та же мера, что у карточек: строка в сто с лишним колонок
+	// читается хуже, а на узком окне ещё и не влезает в рамку (внутрь неё
+	// помещается m.w-4, не больше).
+	out = append(out, uiWrapLines("  ", m.confirm.text,
+		min(uiProseWidth(m.w)+uiGutter, m.w-4))...)
+	out = append(out, "", "  "+uiWarn.Render("y")+uiDim.Render(tr(" — удалить, любая другая клавиша — отмена")))
 	return out
 }
 
@@ -1481,7 +1507,7 @@ func (m *uiModel) statusLine() string {
 		for n := range m.building {
 			names = append(names, n)
 		}
-		return uiDim.Render(" собираю справку: " + strings.Join(names, ", "))
+		return uiDim.Render(tr(" собираю справку: ") + strings.Join(names, ", "))
 	}
 	return ""
 }
@@ -1489,21 +1515,21 @@ func (m *uiModel) statusLine() string {
 func (m *uiModel) filterSummary() string {
 	var parts []string
 	if m.itemFilter.Project != "" {
-		parts = append(parts, "проект: "+m.itemFilter.Project)
+		parts = append(parts, tr("проект: ")+m.itemFilter.Project)
 	}
 	if m.itemFilter.Owner != "" {
-		parts = append(parts, "исполнитель: "+m.itemFilter.Owner)
+		parts = append(parts, tr("исполнитель: ")+m.itemFilter.Owner)
 	}
 	if m.itemFilter.Kind != "" {
-		parts = append(parts, "вид: "+uiKindWord(m.itemFilter.Kind))
+		parts = append(parts, tr("вид: ")+uiKindWord(m.itemFilter.Kind))
 	}
 	if m.itemFilter.Closed {
-		parts = append(parts, "с закрытыми")
+		parts = append(parts, tr("с закрытыми"))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, " · ") + "   (c — снять)"
+	return strings.Join(parts, " · ") + tr("   (c — снять)")
 }
 
 // hintLine — подсказка по клавишам того экрана, который сейчас открыт. Она
@@ -1522,48 +1548,48 @@ func (m *uiModel) hints() string {
 
 	switch m.screen() {
 	case scrHelp:
-		return join(key("↑↓", "листать"), key("←", "назад"))
+		return join(key("↑↓", tr("листать")), key("←", tr("назад")))
 	case scrForm:
-		return join(key("tab", "поле"), key("ctrl+s", "сохранить"), key("ctrl+n", "источник"),
-			key("ctrl+k", "убрать"), key("esc", "отмена"))
+		return join(key("tab", tr("поле")), key("ctrl+s", tr("сохранить")), key("ctrl+n", tr("источник")),
+			key("ctrl+k", tr("убрать")), key("esc", tr("отмена")))
 	case scrChannel:
-		return join(key("tab", "поле"), key("space", "переключить"), key("enter", "добавить"),
-			key("ctrl+k", "убрать"), key("ctrl+s", "сохранить"), key("esc", "отмена"))
+		return join(key("tab", tr("поле")), key("space", tr("переключить")), key("enter", tr("добавить")),
+			key("ctrl+k", tr("убрать")), key("ctrl+s", tr("сохранить")), key("esc", tr("отмена")))
 	case scrPicker:
-		return join(key("↑↓", "выбрать"), key("→ enter", "принять"), key("← esc", "отмена"))
+		return join(key("↑↓", tr("выбрать")), key("→ enter", tr("принять")), key("← esc", tr("отмена")))
 	case scrConfirm:
-		return join(key("y", "да"), key("esc", "нет"))
+		return join(key("y", tr("да")), key("esc", tr("нет")))
 	case scrMeeting:
-		return join(key("↑↓", "листать"), key("t", "расшифровка"), key("←", "назад"),
-			key("?", "клавиши"), key("q", "выход"))
+		return join(key("↑↓", tr("листать")), key("t", tr("расшифровка")), key("D", tr("удалить")),
+			key("←", tr("назад")), key("?", tr("клавиши")), key("q", tr("выход")))
 	case scrTranscript:
-		return join(key("↑↓", "листать"), key("g/G", "начало/конец"), key("←", "назад"),
-			key("q", "выход"))
+		return join(key("↑↓", tr("листать")), key("g/G", tr("начало/конец")),
+			key("D", tr("удалить")), key("←", tr("назад")), key("q", tr("выход")))
 	case scrProject:
-		return join(key("↑↓", "листать"), key("e", "правка"), key("s", "справка"),
-			key("D", "удалить"), key("←", "назад"))
+		return join(key("↑↓", tr("листать")), key("e", tr("правка")), key("s", tr("справка")),
+			key("D", tr("удалить")), key("←", tr("назад")))
 	}
 
 	if m.editing() {
-		return join(key("enter", "принять"), key("esc", "снять"), key("↑↓", "выбрать"),
-			key("← →", "раздел"), key("?", "клавиши"))
+		return join(key("enter", tr("принять")), key("esc", tr("снять")), key("↑↓", tr("выбрать")),
+			key("← →", tr("раздел")), key("?", tr("клавиши")))
 	}
 	switch m.tab {
 	case tabMeetings:
-		return join(key("↑↓", "выбрать"), key("enter", "follow-up"), key("t", "расшифровка"),
-			key("/", "фильтр"), key("q", "выход"))
+		return join(key("↑↓", tr("выбрать")), key("enter", "follow-up"), key("t", tr("расшифровка")),
+			key("D", tr("удалить")), key("/", tr("фильтр")), key("q", tr("выход")))
 	case tabTasks:
-		return join(key("enter", "созвон"), key("d", "сделана"), key("x", "снять"),
-			key("p", "проект"), key("o", "кто"), key("v", "вид"), key("a", "закрытые"))
+		return join(key("enter", tr("созвон")), key("d", tr("сделана")), key("x", tr("снять")),
+			key("p", tr("проект")), key("o", tr("кто")), key("v", tr("вид")), key("a", tr("закрытые")))
 	case tabProjects:
-		return join(key("enter", "открыть"), key("n", "новый"), key("e", "правка"),
-			key("D", "удалить"), key("s", "справка"))
+		return join(key("enter", tr("открыть")), key("n", tr("новый")), key("e", tr("правка")),
+			key("D", tr("удалить")), key("s", tr("справка")))
 	case tabSearch:
-		return join(key("i", "ввод"), key("↑↓", "выбрать"), key("enter", "открыть"),
-			key("esc", "очистить"))
+		return join(key("i", tr("ввод")), key("↑↓", tr("выбрать")), key("enter", tr("открыть")),
+			key("esc", tr("очистить")))
 	case tabChannels:
-		return join(key("enter", "настроить"), key("space", "вкл/выкл"),
-			key("/", "фильтр"), key("q", "выход"))
+		return join(key("enter", tr("настроить")), key("space", tr("вкл/выкл")),
+			key("/", tr("фильтр")), key("q", tr("выход")))
 	}
 	return ""
 }
@@ -1574,65 +1600,68 @@ func uiHelpBody(w int) []string {
 		title string
 		rows  []row
 	}{
-		{"Везде", []row{
-			{"1…5", "созвоны, задачи, проекты, поиск, каналы"},
-			{"← →", "предыдущий и следующий раздел; ← в карточке — назад"},
-			{"tab / shift+tab", "то же самое"},
-			{"↑ ↓ или k j", "движение по списку и по тексту карточки"},
-			{"pgup pgdn", "страница вверх и вниз"},
-			{"g / G", "в начало и в конец"},
-			{"/", "фильтр по подстроке в текущем списке"},
-			{"esc", "назад; в списке — снять фильтр"},
-			{"r", "перечитать из базы"},
-			{"?", "эта справка"},
-			{"q или ctrl+c", "выход"},
+		{tr("Везде"), []row{
+			{"1…5", tr("созвоны, задачи, проекты, поиск, каналы")},
+			{"← →", tr("предыдущий и следующий раздел; ← в карточке — назад")},
+			{"tab / shift+tab", tr("то же самое")},
+			{tr("↑ ↓ или k j"), tr("движение по списку и по тексту карточки")},
+			{"pgup pgdn", tr("страница вверх и вниз")},
+			{"g / G", tr("в начало и в конец")},
+			{"/", tr("фильтр по подстроке в текущем списке")},
+			{"esc", tr("назад; в списке — снять фильтр")},
+			{"r", tr("перечитать из базы")},
+			{"?", tr("эта справка")},
+			{tr("q или ctrl+c"), tr("выход")},
 		}},
-		{"Созвоны", []row{
-			{"enter", "follow-up: задачи, решения, вопросы, риски, ход разговора"},
-			{"t", "расшифровка целиком"},
+		{tr("Созвоны"), []row{
+			{"enter", tr("follow-up: задачи, решения, вопросы, риски, ход разговора")},
+			{"t", tr("расшифровка целиком")},
+			{"D", tr("удалить созвон целиком: запись, расшифровку, follow-up ") +
+				tr("и задачи, которые из него вышли. Чужие пункты, закрытые на нём, ") +
+				tr("вернутся в работу")},
 		}},
-		{"Задачи", []row{
-			{"enter", "созвон, на котором пункт появился"},
-			{"d", "отметить сделанной"},
-			{"x", "снять — решили не делать"},
-			{"u", "вернуть в работу закрытый пункт"},
-			{"p", "фильтр по проекту"},
-			{"o", "фильтр по исполнителю"},
-			{"v", "фильтр по виду: задачи, вопросы, решения"},
-			{"a", "показывать и закрытые"},
-			{"c", "снять все фильтры"},
+		{tr("Задачи"), []row{
+			{"enter", tr("созвон, на котором пункт появился")},
+			{"d", tr("отметить сделанной")},
+			{"x", tr("снять — решили не делать")},
+			{"u", tr("вернуть в работу закрытый пункт")},
+			{"p", tr("фильтр по проекту")},
+			{"o", tr("фильтр по исполнителю")},
+			{"v", tr("фильтр по виду: задачи, вопросы, решения")},
+			{"a", tr("показывать и закрытые")},
+			{"c", tr("снять все фильтры")},
 		}},
-		{"Проекты", []row{
-			{"enter", "карточка: описание, источники, справка, что открыто"},
-			{"n", "завести новый"},
-			{"e", "править: название, описание, псевдонимы, источники"},
-			{"D", "удалить из реестра; задачи и решения останутся"},
-			{"s", "собрать справку по коду (поход в Claude)"},
+		{tr("Проекты"), []row{
+			{"enter", tr("карточка: описание, источники, справка, что открыто")},
+			{"n", tr("завести новый")},
+			{"e", tr("править: название, описание, псевдонимы, источники")},
+			{"D", tr("удалить из реестра; задачи и решения останутся")},
+			{"s", tr("собрать справку по коду (поход в Claude)")},
 		}},
-		{"Форма проекта", []row{
-			{"tab / shift+tab", "следующее и предыдущее поле"},
-			{"ctrl+s", "сохранить"},
-			{"ctrl+n", "добавить источник"},
-			{"ctrl+t", "сменить вид источника"},
-			{"ctrl+k", "убрать источник под курсором"},
-			{"ctrl+w", "стереть слово, ctrl+u — всё поле"},
-			{"esc", "отменить правку"},
+		{tr("Форма проекта"), []row{
+			{"tab / shift+tab", tr("следующее и предыдущее поле")},
+			{"ctrl+s", tr("сохранить")},
+			{"ctrl+n", tr("добавить источник")},
+			{"ctrl+t", tr("сменить вид источника")},
+			{"ctrl+k", tr("убрать источник под курсором")},
+			{"ctrl+w", tr("стереть слово, ctrl+u — всё поле")},
+			{"esc", tr("отменить правку")},
 		}},
-		{"Каналы", []row{
-			{"enter", "настроить: поля рисуются по описанию канала"},
-			{"space", "включить или выключить прямо в списке"},
-			{"space в форме", "переключатель под курсором"},
-			{"enter в форме", "на строке «+» — добавить значение в список"},
-			{"ctrl+k", "убрать значение списка под курсором"},
-			{"ctrl+s", "сохранить"},
-			{"", "Доступ в Google подключается только в веб-панели: за согласием " +
-				"ходят браузером. Токенов и паролей в интерфейсе нет — их задаёт steno setup."},
+		{tr("Каналы"), []row{
+			{"enter", tr("настроить: поля рисуются по описанию канала")},
+			{"space", tr("включить или выключить прямо в списке")},
+			{tr("space в форме"), tr("переключатель под курсором")},
+			{tr("enter в форме"), tr("на строке «+» — добавить значение в список")},
+			{"ctrl+k", tr("убрать значение списка под курсором")},
+			{"ctrl+s", tr("сохранить")},
+			{"", tr("Доступ в Google подключается только в веб-панели: за согласием ") +
+				tr("ходят браузером. Токенов и паролей в интерфейсе нет — их задаёт steno setup.")},
 		}},
-		{"Поиск", []row{
-			{"i или /", "вернуться к вводу запроса"},
-			{"enter в вводе", "перейти к найденному"},
-			{"enter в списке", "открыть созвон на этом месте"},
-			{"esc", "очистить запрос"},
+		{tr("Поиск"), []row{
+			{tr("i или /"), tr("вернуться к вводу запроса")},
+			{tr("enter в вводе"), tr("перейти к найденному")},
+			{tr("enter в списке"), tr("открыть созвон на этом месте")},
+			{"esc", tr("очистить запрос")},
 		}},
 	}
 
@@ -1645,7 +1674,7 @@ func uiHelpBody(w int) []string {
 	}
 	out = append(out, "")
 	out = append(out, uiWrapLines("  ", uiDim.Render(
-		"Всё это работает без запущенного serve: интерфейс читает ту же базу, что и панель."), w)...)
+		tr("Всё это работает без запущенного serve: интерфейс читает ту же базу, что и панель.")), w)...)
 	return out
 }
 
@@ -1660,15 +1689,15 @@ func uiHelpBody(w int) []string {
 func (m *uiModel) previewTitle() string {
 	switch m.tab {
 	case tabMeetings:
-		return "Созвон"
+		return tr("Созвон")
 	case tabTasks:
-		return "Пункт"
+		return tr("Пункт")
 	case tabProjects:
-		return "Проект"
+		return tr("Проект")
 	case tabSearch:
-		return "Найдено"
+		return tr("Найдено")
 	case tabChannels:
-		return "Канал"
+		return tr("Канал")
 	}
 	return ""
 }
@@ -1708,15 +1737,15 @@ func (m *uiModel) previewMeeting(w int) []string {
 	}
 	add(uiDim.Render(when + " · " + uiStatusWord(r.Status)))
 	if len(r.Participants) > 0 {
-		out = append(out, uiWrapLines(uiDim.Render("участники: "),
+		out = append(out, uiWrapLines(uiDim.Render(tr("участники: ")),
 			strings.Join(r.Participants, ", "), w)...)
 	}
 
 	f := m.peek
 	if f == nil {
 		add("")
-		out = append(out, uiWrapLines("", "Follow-up ещё нет: созвон записан, но не разобран. "+
-			"Разобрать:  steno process "+r.ID, w)...)
+		out = append(out, uiWrapLines("", tr("Follow-up ещё нет: созвон записан, но не разобран. ")+
+			tr("Разобрать:  steno process ")+r.ID, w)...)
 		return out
 	}
 	if t := strings.TrimSpace(f.Title); t != "" {
@@ -1746,25 +1775,25 @@ func (m *uiModel) previewMeeting(w int) []string {
 			meta = append(meta, a.Owner)
 		}
 		if a.Due != "" {
-			meta = append(meta, "срок "+a.Due)
+			meta = append(meta, tr("срок ")+a.Due)
 		}
 		if len(meta) > 0 {
 			t += uiDim.Render("  (" + strings.Join(meta, " · ") + ")")
 		}
 		tasks = append(tasks, t)
 	}
-	sect("Задачи", tasks)
+	sect(tr("Задачи"), tasks)
 	var decisions []string
 	for _, d := range f.Decisions {
 		decisions = append(decisions, d.What)
 	}
-	sect("Решения", decisions)
+	sect(tr("Решения"), decisions)
 	var questions []string
 	for _, q := range f.OpenQuestions {
 		questions = append(questions, q.Question)
 	}
-	sect("Открытые вопросы", questions)
-	sect("Риски", f.Risks)
+	sect(tr("Открытые вопросы"), questions)
+	sect(tr("Риски"), f.Risks)
 	return out
 }
 
@@ -1784,10 +1813,10 @@ func (m *uiModel) loadPeek(id string) {
 			m.peekTags = append(m.peekTags, plural(n, one, few, many))
 		}
 	}
-	count(len(m.peek.ActionItems), "задача", "задачи", "задач")
-	count(len(m.peek.Decisions), "решение", "решения", "решений")
-	count(len(m.peek.OpenQuestions), "вопрос", "вопроса", "вопросов")
-	count(len(m.peek.Risks), "риск", "риска", "рисков")
+	count(len(m.peek.ActionItems), tr("задача"), tr("задачи"), tr("задач"))
+	count(len(m.peek.Decisions), tr("решение"), tr("решения"), tr("решений"))
+	count(len(m.peek.OpenQuestions), tr("вопрос"), tr("вопроса"), tr("вопросов"))
+	count(len(m.peek.Risks), tr("риск"), tr("риска"), tr("рисков"))
 }
 
 func (m *uiModel) previewItem(w int) []string {
@@ -1804,14 +1833,14 @@ func (m *uiModel) previewItem(w int) []string {
 		meta += " · " + it.Owner
 	}
 	if it.Due != "" {
-		meta += " · срок " + it.Due
+		meta += tr(" · срок ") + it.Due
 	}
 	if it.Project != "" {
 		meta += " · " + it.Project
 	}
 	out = append(out, uiDim.Render("  "+meta))
 	if it.Status != "open" {
-		tail := "закрыт: " + it.Status
+		tail := tr("закрыт: ") + it.Status
 		if it.Note != "" {
 			tail += " — " + it.Note
 		}
@@ -1819,9 +1848,9 @@ func (m *uiModel) previewItem(w int) []string {
 	}
 	if it.Quote != "" {
 		out = append(out, "")
-		out = append(out, uiWrapLines(uiDim.Render("  из разговора: "), "«"+it.Quote+"»", w)...)
+		out = append(out, uiWrapLines(uiDim.Render(tr("  из разговора: ")), "«"+it.Quote+"»", w)...)
 	}
-	out = append(out, "", uiDim.Render("  enter — созвон, на котором это появилось"))
+	out = append(out, "", uiDim.Render(tr("  enter — созвон, на котором это появилось")))
 	return out
 }
 
@@ -1834,14 +1863,17 @@ func (m *uiModel) previewProject(w int) []string {
 	if p.About != "" {
 		out = append(out, uiWrapLines("", p.About, w)...)
 	} else {
-		out = append(out, uiDim.Render("описания нет — e добавит"))
+		out = append(out, uiDim.Render(tr("описания нет — e добавит")))
 	}
 	out = append(out, "")
 	if len(p.Aliases) > 0 {
-		out = append(out, uiWrapLines(uiDim.Render("  зовут ещё: "), strings.Join(p.Aliases, ", "), w)...)
+		out = append(out, uiWrapLines(uiDim.Render(tr("  зовут ещё: ")), strings.Join(p.Aliases, ", "), w)...)
+	}
+	if len(p.People) > 0 {
+		out = append(out, uiWrapLines(uiDim.Render(tr("  люди: ")), strings.Join(p.People, ", "), w)...)
 	}
 	if len(p.Sources) == 0 {
-		out = append(out, uiDim.Render("  источников нет — без них справку по коду собрать не из чего"))
+		out = append(out, uiDim.Render(tr("  источников нет — без них справку по коду собрать не из чего")))
 	} else {
 		for _, src := range p.Sources {
 			out = append(out, uiWrapLines(uiDim.Render("  "+uiFit(uiSourceKindTitle(src.Kind), 14)),
@@ -1850,9 +1882,9 @@ func (m *uiModel) previewProject(w int) []string {
 	}
 	out = append(out, "")
 	if p.ContextAt.IsZero() {
-		out = append(out, uiDim.Render("  справка не собрана — s соберёт"))
+		out = append(out, uiDim.Render(tr("  справка не собрана — s соберёт")))
 	} else {
-		out = append(out, uiDim.Render("  справка собрана "+p.ContextAt.Format("02.01.2006")))
+		out = append(out, uiDim.Render(tr("  справка собрана ")+p.ContextAt.Format("02.01.2006")))
 	}
 	return out
 }
@@ -1873,7 +1905,7 @@ func (m *uiModel) previewHit(w int) []string {
 		where = h.Speaker + " · " + where
 	}
 	out = append(out, uiDim.Render("  "+where))
-	out = append(out, "", uiDim.Render("  enter — открыть на этом месте"))
+	out = append(out, "", uiDim.Render(tr("  enter — открыть на этом месте")))
 	return out
 }
 
@@ -1885,16 +1917,16 @@ func (m *uiModel) previewChannel(w int) []string {
 	var out []string
 	out = append(out, uiWrapLines("", c.About, w)...)
 	out = append(out, "")
-	state := uiDim.Render("  выключен")
+	state := uiDim.Render(tr("  выключен"))
 	if c.Enabled {
-		state = uiOKStyle.Render("  включён")
+		state = uiOKStyle.Render(tr("  включён"))
 	}
 	out = append(out, state+uiDim.Render(" · "+uiChannelWhat(c)))
 	if s := strings.TrimSpace(c.Summary); s != "" {
-		out = append(out, uiDim.Render("  настроено: "+s))
+		out = append(out, uiDim.Render(tr("  настроено: ")+s))
 	} else {
-		out = append(out, uiDim.Render("  ещё не настроено"))
+		out = append(out, uiDim.Render(tr("  ещё не настроено")))
 	}
-	out = append(out, "", uiDim.Render("  enter — настроить, space — включить или выключить"))
+	out = append(out, "", uiDim.Render(tr("  enter — настроить, space — включить или выключить")))
 	return out
 }

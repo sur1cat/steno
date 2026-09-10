@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -78,10 +79,10 @@ func loadGoogleToken(cfg *Config) (*googleToken, error) {
 	}
 	var t googleToken
 	if err := json.Unmarshal(b, &t); err != nil {
-		return nil, fmt.Errorf("разбор %s: %w", googleTokenPath(cfg), err)
+		return nil, fmt.Errorf(tr("разбор %s: %w"), googleTokenPath(cfg), err)
 	}
 	if t.Token == nil {
-		return nil, fmt.Errorf("в %s нет токена", googleTokenPath(cfg))
+		return nil, fmt.Errorf(tr("в %s нет токена"), googleTokenPath(cfg))
 	}
 	return &t, nil
 }
@@ -101,11 +102,11 @@ func forgetGoogleToken(cfg *Config) error {
 func oauthConfig(cfg *Config, redirect string) (*oauth2.Config, error) {
 	id := strings.TrimSpace(cfg.Google.ClientID)
 	if id == "" {
-		return nil, fmt.Errorf("не задан google.client_id — заводится один раз через `steno setup`")
+		return nil, errors.New(tr("не задан google.client_id — заводится один раз через `steno setup`"))
 	}
 	sec, err := secret(cfg.Google.ClientSecretEnv, "")
 	if err != nil {
-		return nil, fmt.Errorf("не задан %s", cfg.Google.ClientSecretEnv)
+		return nil, fmt.Errorf(tr("не задан %s"), cfg.Google.ClientSecretEnv)
 	}
 	return &oauth2.Config{
 		ClientID:     id,
@@ -132,7 +133,7 @@ func googleAccountEmail(ctx context.Context, oc *oauth2.Config, tok *oauth2.Toke
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Google ответил %s", resp.Status)
+		return "", fmt.Errorf(tr("Google ответил %s"), resp.Status)
 	}
 	var body struct {
 		Email string `json:"email"`
@@ -141,7 +142,7 @@ func googleAccountEmail(ctx context.Context, oc *oauth2.Config, tok *oauth2.Toke
 		return "", err
 	}
 	if body.Email == "" {
-		return "", fmt.Errorf("Google не сказал, чей это ящик")
+		return "", errors.New(tr("Google не сказал, чей это ящик"))
 	}
 	return body.Email, nil
 }
@@ -164,8 +165,8 @@ func googleOAuthClient(ctx context.Context, cfg *Config, scopes []string) (optio
 	}
 	if missing := missingScopes(t.Scopes, scopes); len(missing) > 0 {
 		return nil, fmt.Errorf(
-			"Google подключён, но без доступа к %s — нажми «Подключить Google» ещё раз",
-			strings.Join(humanScopes(missing), " и "))
+			tr("Google подключён, но без доступа к %s — нажми «Подключить Google» ещё раз"),
+			strings.Join(humanScopes(missing), tr(" и ")))
 	}
 	oc, err := oauthConfig(cfg, "")
 	if err != nil {
@@ -226,11 +227,11 @@ func missingScopes(have, want []string) []string {
 // calendar.readonly» человеку не говорит ничего.
 func humanScopes(scopes []string) []string {
 	names := map[string]string{
-		"https://www.googleapis.com/auth/calendar.readonly": "календарю",
-		"https://www.googleapis.com/auth/gmail.readonly":    "почте",
-		"https://www.googleapis.com/auth/drive":             "документам",
-		"https://www.googleapis.com/auth/drive.file":        "документам",
-		"https://www.googleapis.com/auth/userinfo.email":    "адресу почты",
+		"https://www.googleapis.com/auth/calendar.readonly": tr("календарю"),
+		"https://www.googleapis.com/auth/gmail.readonly":    tr("почте"),
+		"https://www.googleapis.com/auth/drive":             tr("документам"),
+		"https://www.googleapis.com/auth/drive.file":        tr("документам"),
+		"https://www.googleapis.com/auth/userinfo.email":    tr("адресу почты"),
 	}
 	var out []string
 	for _, s := range scopes {

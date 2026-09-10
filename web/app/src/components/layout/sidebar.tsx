@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Upload, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS, activeItem } from "./nav-items";
+import { t } from "@/lib/i18n";
 
 // Навигация стоит колонкой слева, а не строкой вкладок в шапке.
 //
@@ -78,7 +79,7 @@ export function NavActions({
         className="flex items-center gap-3 rounded-xl bg-primary/15 px-3 py-2.5 text-sm text-[var(--sidebar-active-text)] transition-colors hover:bg-primary/25"
       >
         <Video className="h-[18px] w-[18px] shrink-0" />
-        Позвать бота
+        {t("Позвать бота")}
       </button>
       <button
         type="button"
@@ -87,9 +88,9 @@ export function NavActions({
       >
         <Upload className="h-[18px] w-[18px] shrink-0" />
         <span className="min-w-0 flex-1 text-left">
-          <span className="block">Загрузить запись</span>
+          <span className="block">{t("Загрузить запись")}</span>
           <span className="block truncate text-[11px] text-[var(--sidebar-text-muted)]">
-            Zoom, телефон, что угодно
+            {t("Zoom, телефон, что угодно")}
           </span>
         </span>
       </button>

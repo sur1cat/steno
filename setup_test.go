@@ -23,6 +23,12 @@ func withStdin(t *testing.T, input string, fn func()) {
 	os.Stdin = r
 	t.Cleanup(func() { os.Stdin = old })
 
+	// Мастер спрашивает язык и переключает его на весь процесс. Тесты идут в
+	// одном бинарнике, и без возврата выбор одного теста менял бы язык всем
+	// остальным.
+	lang := uiLang
+	t.Cleanup(func() { uiLang = lang })
+
 	go func() {
 		_, _ = io.WriteString(w, input)
 		w.Close()
@@ -38,10 +44,12 @@ func TestSetupWritesConfigAndSecrets(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	out := filepath.Join(dir, "steno.json")
 
-	// Небольшая команда · данные по умолчанию · Groq · ключ · Claude по ключу ·
-	// ключ · opus · без календаря · без почты · Telegram да · токен · чат ·
-	// follow-up в Telegram · без Docs · без Slack · панель · пароль.
+	// Русский · небольшая команда · данные по умолчанию · Groq · ключ ·
+	// Claude по ключу · ключ · opus · без календаря · без почты · Telegram да ·
+	// токен · чат · follow-up в Telegram · без Docs · без Slack · панель ·
+	// пароль.
 	input := strings.Join([]string{
+		"2",
 		"2", "", "1", "groq-ключ", "2", "sk-ant-ключ", "1",
 		"n", "n", "y", "телеграм-токен", "-100500",
 		"y", "n", "n",
@@ -63,6 +71,9 @@ func TestSetupWritesConfigAndSecrets(t *testing.T) {
 		t.Fatalf("мастер записал невалидный JSON: %v", err)
 	}
 
+	if cfg.Lang != langRU {
+		t.Errorf("язык не записан в конфиг: %q", cfg.Lang)
+	}
 	// Профиль «небольшая команда» должен был проставить пределы.
 	if cfg.Calendar.MaxConcurrent != 2 || cfg.Transcribe.MaxConcurrent != 1 {
 		t.Errorf("профиль не применился: созвонов %d, расшифровок %d",
@@ -126,9 +137,10 @@ func TestSetupPersonalProfile(t *testing.T) {
 	// без подмены тест затирал бы указатель того, кто гоняет тесты.
 	t.Setenv("HOME", t.TempDir())
 	out := filepath.Join(dir, "steno.json")
-	// Личный профиль · данные по умолчанию · субтитры · подписка Claude ·
-	// sonnet · дальше всё «нет».
+	// English · личный профиль · данные по умолчанию · субтитры ·
+	// подписка Claude · sonnet · дальше всё «нет».
 	input := strings.Join([]string{
+		"1",
 		"1", "", "3", "1", "2",
 		"n", "n", "n",
 		"n", "n", "n",
@@ -144,6 +156,23 @@ func TestSetupPersonalProfile(t *testing.T) {
 	var cfg Config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
+	}
+	// Английская установка: язык записан, и вместе с ним переехали умолчания,
+	// которые от него зависят. «ru» в языке субтитров означал бы, что Meet
+	// слушает английский созвон по-русски.
+	if cfg.Lang != langEN {
+		t.Errorf("язык не записан в конфиг: %q", cfg.Lang)
+	}
+	if cfg.Bot.CaptionLanguage != langEN {
+		t.Errorf("язык субтитров остался %q", cfg.Bot.CaptionLanguage)
+	}
+	if cfg.Claude.OutputLanguage != "English" {
+		t.Errorf("язык follow-up: %q", cfg.Claude.OutputLanguage)
+	}
+	for _, m := range cfg.Calendar.SkipMarkers {
+		if strings.ContainsAny(m, "абвгдеёжзийклмнопрстуфхцчшщъыьэюя") {
+			t.Errorf("русский маркер календаря в английской установке: %q", m)
+		}
 	}
 	if cfg.Transcribe.Source != "captions" {
 		t.Errorf("субтитры не выбрались: %q", cfg.Transcribe.Source)

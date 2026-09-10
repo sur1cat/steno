@@ -72,10 +72,10 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func (p *Panel) Name() string { return "панель" }
+func (p *Panel) Name() string { return tr("панель") }
 
 func newPanel(cfg *Config, st *Store, lg *log.Logger) (*Panel, error) {
-	pass, err := secret(cfg.Panel.PasswordEnv, "панель")
+	pass, err := secret(cfg.Panel.PasswordEnv, tr("панель"))
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (p *Panel) Run(ctx context.Context) error {
 		defer cancel()
 		_ = srv.Shutdown(shut)
 	}()
-	p.log.Printf("панель: слушаю %s", addr)
+	p.log.Printf(tr("панель: слушаю %s"), addr)
 	err := srv.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -121,7 +121,7 @@ func (p *Panel) handler() http.Handler {
 	dist, err := fs.Sub(distFS, "web/dist")
 	if err != nil {
 		// Сюда не попасть: путь зашит в go:embed выше и проверен компилятором.
-		p.log.Printf("панель: бандл не читается: %v", err)
+		p.log.Printf(tr("панель: бандл не читается: %v"), err)
 		dist = distFS
 	}
 	mux.Handle("/", spaHandler(dist))
@@ -160,7 +160,7 @@ func (p *Panel) valid(v string) bool {
 // под общим замком, а не просто time.Sleep: параллельные попытки иначе
 // укладываются в ту же секунду, и ограничение перестаёт ограничивать.
 func (p *Panel) passwordOK(given string) bool {
-	pass, err := secret(p.cfg.Panel.PasswordEnv, "панель")
+	pass, err := secret(p.cfg.Panel.PasswordEnv, tr("панель"))
 	if err != nil {
 		return false
 	}

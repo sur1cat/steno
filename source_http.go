@@ -50,24 +50,24 @@ func (s *httpSource) Run(ctx context.Context) error {
 	// channel_id в них ничем не подтверждено.
 	s.slackSecret = os.Getenv(s.cfg.Slack.SigningSecretEnv)
 	if s.slackSecret == "" {
-		s.log.Printf("http: %s не задан — слэш-команды Slack приниматься не будут",
+		s.log.Printf(tr("http: %s не задан — слэш-команды Slack приниматься не будут"),
 			s.cfg.Slack.SigningSecretEnv)
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/join", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "нужен POST", http.StatusMethodNotAllowed)
+			http.Error(w, tr("нужен POST"), http.StatusMethodNotAllowed)
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 		if err != nil {
-			http.Error(w, "не смог прочитать тело", http.StatusBadRequest)
+			http.Error(w, tr("не смог прочитать тело"), http.StatusBadRequest)
 			return
 		}
 		via := authenticate(r, body, token, s.slackSecret)
 		if via == "" {
-			http.Error(w, "неверный токен", http.StatusUnauthorized)
+			http.Error(w, tr("неверный токен"), http.StatusUnauthorized)
 			return
 		}
 		meetURL, title, reply := parseJoinRequest(r, body, via)
@@ -84,7 +84,7 @@ func (s *httpSource) Run(ctx context.Context) error {
 		}
 		m := &Meeting{
 			ID:        newID(time.Now()),
-			Title:     firstNonEmpty(title, "Созвон по ссылке"),
+			Title:     firstNonEmpty(title, tr("Созвон по ссылке")),
 			MeetURL:   meetURL,
 			StartedAt: time.Now(),
 			Status:    "recording",
@@ -96,14 +96,14 @@ func (s *httpSource) Run(ctx context.Context) error {
 		code := http.StatusOK
 		switch s.d.Start(ctx, adHocKey(meetURL, time.Now()), m, "HTTP ("+via+")") {
 		case Started:
-			msg = "Иду на " + meetURL + " — follow-up придёт, когда созвон закончится."
+			msg = tr("Иду на ") + meetURL + tr(" — follow-up придёт, когда созвон закончится.")
 		case Duplicate:
-			msg = "Я уже иду на этот созвон."
+			msg = tr("Я уже иду на этот созвон.")
 		case NoCapacity:
-			msg = "Сейчас пишу максимум созвонов сразу — на этот не пойду."
+			msg = tr("Сейчас пишу максимум созвонов сразу — на этот не пойду.")
 			code = http.StatusServiceUnavailable
 		default:
-			msg = "Не смог записать заявку, посмотри лог сервиса."
+			msg = tr("Не смог записать заявку, посмотри лог сервиса.")
 			code = http.StatusInternalServerError
 		}
 		// Slack показывает response_type/text; всем остальным этот JSON тоже
@@ -136,7 +136,7 @@ func (s *httpSource) Run(ctx context.Context) error {
 		_ = srv.Shutdown(shut)
 	}()
 
-	s.log.Printf("http: слушаю %s (POST /join)", addr)
+	s.log.Printf(tr("http: слушаю %s (POST /join)"), addr)
 	err = srv.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -155,7 +155,7 @@ func authenticate(r *http.Request, body []byte, token, slackSecret string) strin
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		got := strings.TrimPrefix(h, "Bearer ")
 		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1 {
-			return "токен"
+			return tr("токен")
 		}
 	}
 	if verifySlackSignature(r, body, slackSecret) {

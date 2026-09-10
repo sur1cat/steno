@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -100,9 +100,9 @@ func meetingArg(st *Store, rest []string) (string, error) {
 		return "", err
 	}
 	if id == "" {
-		return "", fmt.Errorf("созвонов пока нет")
+		return "", errors.New(tr("созвонов пока нет"))
 	}
-	log.Printf("последний созвон: %s%s", id, orEmpty(title, " — "+title))
+	log.Printf(tr("последний созвон: %s%s"), id, orEmpty(title, " — "+title))
 	return id, nil
 }
 
@@ -139,7 +139,7 @@ func adapterPath(p string) string {
 	}
 	if found := findAdapter(name); found != p {
 		if _, err := os.Stat(found); err == nil {
-			log.Printf("адаптер переехал: беру %s", found)
+			log.Printf(tr("адаптер переехал: беру %s"), found)
 			return found
 		}
 	}
