@@ -244,7 +244,7 @@ final class Loader: ObservableObject {
     // --- действия ------------------------------------------------------------
 
     /// Позвать бота. Ссылку не разбираем сами: её разбор живёт в сервисе
-    /// (findMeetURL) и умеет объяснять словами, что не так, — а две проверки в
+    /// (FindMeetURL) и умеет объяснять словами, что не так, — а две проверки в
     /// двух местах однажды разойдутся, и приложение забракует живую ссылку.
     func invite(url: String, title: String) async -> (ok: Bool, text: String) {
         guard let s = setup, let base = s.base, let password = s.password else {

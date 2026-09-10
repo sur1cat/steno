@@ -1,0 +1,195 @@
+package publish
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"html"
+	"log"
+	"strings"
+	"time"
+
+	"github.com/sur1cat/steno/internal/core"
+	"github.com/sur1cat/steno/internal/google"
+	"github.com/sur1cat/steno/internal/i18n"
+	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
+)
+
+// Документ проекта: одна ссылка, которая всегда показывает текущее состояние.
+// Заводить новый документ на каждый созвон — значит через месяц иметь тридцать
+// документов и ни одного актуального; поэтому содержимое переписывается на
+// месте, а идентификатор запоминается.
+
+func renderProjectHTML(name string, items []core.ProjectItem) string {
+	var b strings.Builder
+	e := html.EscapeString
+
+	var tasks, questions, decisions, closed []core.ProjectItem
+	for _, it := range items {
+		if it.Status != "open" {
+			closed = append(closed, it)
+			continue
+		}
+		switch it.Kind {
+		case core.KindTask:
+			tasks = append(tasks, it)
+		case core.KindQuestion:
+			questions = append(questions, it)
+		case core.KindDecision:
+			decisions = append(decisions, it)
+		}
+	}
+
+	fmt.Fprintf(&b, "<h1>%s</h1>\n", e(name))
+	fmt.Fprintf(&b, i18n.Tr("<p><i>Обновлено %s. Документ ведётся автоматически по итогам созвонов — ")+
+		i18n.Tr("правки в нём перезапишутся.</i></p>\n"), e(time.Now().Format("2 January 2006, 15:04")))
+
+	section := func(title string, list []core.ProjectItem, row func(core.ProjectItem) string) {
+		if len(list) == 0 {
+			return
+		}
+		fmt.Fprintf(&b, "<h2>%s</h2>\n<ul>\n", e(title))
+		for _, it := range list {
+			fmt.Fprintf(&b, "<li>%s</li>\n", row(it))
+		}
+		b.WriteString("</ul>\n")
+	}
+
+	section(i18n.Tr("Задачи"), tasks, func(it core.ProjectItem) string {
+		s := ""
+		if it.Owner != "" {
+			s += "<b>" + e(it.Owner) + "</b> — "
+		}
+		s += e(it.Text)
+		s += fmt.Sprintf(i18n.Tr(" <i>(срок: %s, с %s, %s)</i>"),
+			e(dueOrText(it.Due)), e(it.OpenedAt.Format("02.01.2006")), e(it.ID))
+		if it.Quote != "" {
+			s += "<br/><span>«" + e(it.Quote) + "»</span>"
+		}
+		return s
+	})
+	section(i18n.Tr("Открытые вопросы"), questions, func(it core.ProjectItem) string {
+		s := e(it.Text)
+		if it.Owner != "" {
+			s += i18n.Tr(" <i>(ждём: ") + e(it.Owner) + ")</i>"
+		}
+		return s + fmt.Sprintf(i18n.Tr(" <i>(с %s, %s)</i>"), e(it.OpenedAt.Format("02.01.2006")), e(it.ID))
+	})
+	section(i18n.Tr("Решения"), decisions, func(it core.ProjectItem) string {
+		s := "<b>" + e(it.Text) + "</b>"
+		if it.Quote != "" {
+			s += " — " + e(it.Quote)
+		}
+		return s + fmt.Sprintf(" <i>(%s)</i>", e(it.OpenedAt.Format("02.01.2006")))
+	})
+	section(i18n.Tr("Закрыто"), closed, func(it core.ProjectItem) string {
+		what := i18n.Tr("снято")
+		if it.Status == "done" {
+			what = i18n.Tr("сделано")
+		}
+		s := e(it.Text) + " <i>(" + what + ", " + e(it.UpdatedAt.Format("02.01.2006")) + ")</i>"
+		if it.Note != "" {
+			s += "<br/><span>" + e(it.Note) + "</span>"
+		}
+		return s
+	})
+
+	if len(items) == 0 {
+		b.WriteString(i18n.Tr("<p>Пока пусто.</p>\n"))
+	}
+	return b.String()
+}
+
+func dueOrText(due string) string {
+	if strings.TrimSpace(due) == "" {
+		return i18n.Tr("не назван")
+	}
+	return due
+}
+
+// PublishProjectDocs переписывает документы всех проектов, которых коснулся
+// созвон. Ошибка по одному проекту не отменяет остальные.
+func PublishProjectDocs(ctx context.Context, cfg *core.Config, st *core.Store, f *core.Followup, meetingID string, lg *log.Logger) {
+	if cfg.NoPublish {
+		return
+	}
+	cfg = core.ActiveChannels(st, cfg)
+	if !cfg.GoogleDocs.Enabled || !cfg.GoogleDocs.ProjectDocs {
+		return
+	}
+	for _, name := range core.TouchedProjects(f, st, meetingID) {
+		if name == core.UnassignedProject {
+			continue // отдельный документ для «не определён» никому не нужен
+		}
+		url, err := publishProjectDoc(ctx, cfg, st, name)
+		if err != nil {
+			lg.Printf(i18n.Tr("документ проекта «%s»: %v"), name, err)
+			continue
+		}
+		lg.Printf(i18n.Tr("документ проекта «%s»: %s"), name, url)
+	}
+}
+
+func publishProjectDoc(ctx context.Context, cfg *core.Config, st *core.Store, name string) (string, error) {
+	items, err := st.ProjectItems(name)
+	if err != nil {
+		return "", err
+	}
+	scopes := cfg.GoogleDocs.Scopes
+	if len(scopes) == 0 {
+		scopes = []string{drive.DriveScope}
+	}
+	opt, err := google.GoogleClient(ctx, cfg, cfg.GoogleDocs.CredentialsFile, cfg.GoogleDocs.Subject, scopes...)
+	if err != nil {
+		return "", err
+	}
+	srv, err := drive.NewService(ctx, opt)
+	if err != nil {
+		return "", err
+	}
+
+	body := renderProjectHTML(name, items)
+	docID, url, _ := st.ProjectDoc(name)
+
+	if docID != "" {
+		// Обновляем на месте: ссылка на документ проекта разошлась по людям и
+		// меняться не должна.
+		res, err := srv.Files.Update(docID, nil).
+			Media(strings.NewReader(body), googleapi.ContentType("text/html")).
+			SupportsAllDrives(true).Fields("id, webViewLink").Context(ctx).Do()
+		if err == nil {
+			_ = st.SaveProjectDoc(name, res.Id, res.WebViewLink)
+			return res.WebViewLink, nil
+		}
+		// Документ могли удалить руками — тогда заводим заново.
+		if !isNotFound(err) {
+			return "", err
+		}
+	}
+
+	file := &drive.File{
+		Name:     i18n.Tr("Проект: ") + name,
+		MimeType: "application/vnd.google-apps.document",
+	}
+	if cfg.GoogleDocs.FolderID != "" {
+		file.Parents = []string{cfg.GoogleDocs.FolderID}
+	}
+	res, err := srv.Files.Create(file).
+		Media(strings.NewReader(body), googleapi.ContentType("text/html")).
+		SupportsAllDrives(true).Fields("id, webViewLink").Context(ctx).Do()
+	if err != nil {
+		return "", err
+	}
+	_ = st.SaveProjectDoc(name, res.Id, res.WebViewLink)
+	_ = url
+	return res.WebViewLink, nil
+}
+
+func isNotFound(err error) bool {
+	var ae *googleapi.Error
+	if errors.As(err, &ae) {
+		return ae.Code == 404
+	}
+	return false
+}

@@ -147,7 +147,7 @@ enum Conf {
             return .failure(.unreadable(path: configPath, why: L.t("это не JSON")))
         }
         let panel = root["panel"] as? [String: Any] ?? [:]
-        // Умолчания — те же, что в defaultConfig(): адрес :8080, пароль из
+        // Умолчания — те же, что в DefaultConfig(): адрес :8080, пароль из
         // STENO_PANEL_PASSWORD, панель выключена, пока её не включили,
         // data_dir — ./data рядом с настройкой.
         let addr = (panel["addr"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? ":8080"
@@ -172,7 +172,7 @@ enum Conf {
     }
 
     /// Пути в настройке считаются от неё самой, а не от текущего каталога —
-    /// то же правило, что в loadConfig: у приложения в строке меню текущий
+    /// то же правило, что в LoadConfig: у приложения в строке меню текущий
     /// каталог вообще «/», и относительный data_dir иначе указал бы в корень.
     private static func absolute(_ path: String, base: String) -> String {
         let p = path.isEmpty ? "./data" : path

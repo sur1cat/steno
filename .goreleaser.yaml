@@ -7,16 +7,16 @@ project_name: steno
 before:
   hooks:
     - go mod tidy
-    - sh -c 'cd web/app && npm ci --no-audit --no-fund && npx vite build'
+    - sh -c 'cd internal/panel/web/app && npm ci --no-audit --no-fund && npx vite build'
 
 builds:
   - id: steno
-    main: .
+    main: ./cmd/steno
     binary: steno
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X github.com/sur1cat/steno/internal/core.version={{.Version}}
     # Windows нет намеренно: бот запускается в контейнере Linux, а адаптеры
     # расшифровки — sh-скрипты. Обещать сборку, которой нечем пользоваться,
     # хуже, чем её не давать.

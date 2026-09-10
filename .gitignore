@@ -5,12 +5,12 @@
 steno.json
 *.ogg
 *.jsonl
-web/app/node_modules/
-# Бандл панели собирается из web/app и вшивается в бинарник. Сам каталог
+internal/panel/web/app/node_modules/
+# Бандл панели собирается из internal/panel/web/app и вшивается в бинарник. Каталог
 # нужен всегда: без него go:embed не собирается даже на чистом клоне.
-web/dist/*
-!web/dist/.gitkeep
-web/app/tsconfig.tsbuildinfo
+internal/panel/web/dist/*
+!internal/panel/web/dist/.gitkeep
+internal/panel/web/app/tsconfig.tsbuildinfo
 /bin/
 /steno-demo
 /dist/

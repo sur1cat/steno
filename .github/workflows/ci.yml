@@ -10,12 +10,12 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: 'stable' }
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: 'npm', cache-dependency-path: web/app/package-lock.json }
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: internal/panel/web/app/package-lock.json }
 
       # Панель собирается первой: без бандла go:embed не находит файлов, и
       # сборка падает раньше тестов — с ошибкой, по которой не догадаться.
-      - run: cd web/app && npm ci --no-audit --no-fund
-      - run: cd web/app && npx tsc -b && npx vite build
+      - run: cd internal/panel/web/app && npm ci --no-audit --no-fund
+      - run: cd internal/panel/web/app && npx tsc -b && npx vite build
 
       - run: gofmt -l . | tee /dev/stderr | (! read)
       - run: go vet ./...
