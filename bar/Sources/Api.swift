@@ -45,10 +45,10 @@ enum ApiError: Error, Equatable {
     var message: String {
         switch self {
         case .down(let why): return why
-        case .badPassword: return "панель не приняла пароль"
-        case .notPanel: return "отвечает не панель steno"
-        case .http(let code, let text): return text.isEmpty ? "ответ \(code)" : text
-        case .malformed(let what): return "непонятный ответ: \(what)"
+        case .badPassword: return L.t("панель не приняла пароль")
+        case .notPanel: return L.t("отвечает не панель steno")
+        case .http(let code, let text): return text.isEmpty ? L.t("ответ %@", "\(code)") : text
+        case .malformed(let what): return L.t("непонятный ответ: %@", what)
         }
     }
 }
@@ -155,15 +155,15 @@ actor Api {
     nonisolated static func why(_ e: URLError) -> String {
         switch e.code {
         case .cannotConnectToHost, .cannotFindHost:
-            return "соединение отклонено"
+            return L.t("соединение отклонено")
         case .timedOut:
-            return "ответа не дождался"
+            return L.t("ответа не дождался")
         case .networkConnectionLost:
-            return "соединение оборвалось"
+            return L.t("соединение оборвалось")
         case .notConnectedToInternet:
-            return "сети нет"
+            return L.t("сети нет")
         case .appTransportSecurityRequiresSecureConnection:
-            return "macOS не пустила по http — панель не на петле, включи TLS"
+            return L.t("macOS не пустила по http — панель не на петле, включи TLS")
         default:
             return e.localizedDescription
         }

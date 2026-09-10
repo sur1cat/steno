@@ -24,9 +24,9 @@ enum Tab: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .calls: return "созвоны"
-        case .tasks: return "задачи"
-        case .projects: return "проекты"
+        case .calls: return L.t("созвоны")
+        case .tasks: return L.t("задачи")
+        case .projects: return L.t("проекты")
         }
     }
 }
@@ -94,7 +94,7 @@ struct PanelView: View {
                 Text(Format.stopwatch(loader.now.timeIntervalSince(call.started)))
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.red)
-                Text(call.isNote ? "заметка" : (call.title.isEmpty ? "созвон без названия" : call.title))
+                Text(call.isNote ? L.t("заметка") : (call.title.isEmpty ? L.t("созвон без названия") : call.title))
                     .font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 if loader.snapshot.live.count > 1 {
                     Text("+\(loader.snapshot.live.count - 1)")
@@ -105,27 +105,27 @@ struct PanelView: View {
             }
             Spacer(minLength: 6)
             noteButton
-            IconButton(icon: "arrow.clockwise", help: "обновить") {
+            IconButton(icon: "arrow.clockwise", help: L.t("обновить")) {
                 Task { await loader.refresh() }
             }
             Menu {
-                Toggle("Запускать при входе в систему", isOn: Binding(
+                Toggle(L.t("Запускать при входе в систему"), isOn: Binding(
                     get: { loader.autostartOn },
                     set: { on in Task { await loader.setAutostart(on) } }))
                     .disabled(loader.setup == nil || loader.busyWithService)
-                Button("Открыть панель в браузере") { open("/") }
+                Button(L.t("Открыть панель в браузере")) { open("/") }
                     .disabled(!loader.panelReachable)
-                Button("Показать лог сервиса") { revealLog() }
+                Button(L.t("Показать лог сервиса")) { revealLog() }
                     .disabled(loader.setup == nil)
                 Divider()
                 if let path = loader.setup?.configPath ?? loader.trouble?.configPath {
                     Text(Conf.pretty(path))
                 }
-                Button("Выбрать другой steno.json…") {
+                Button(L.t("Выбрать другой steno.json…")) {
                     if chooseConfig() { Task { await loader.refresh() } }
                 }
                 Divider()
-                Button("Выйти") { NSApplication.shared.terminate(nil) }
+                Button(L.t("Выйти")) { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q")
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 11))
@@ -176,7 +176,7 @@ struct PanelView: View {
     @ViewBuilder private var body_: some View {
         switch loader.health {
         case .starting:
-            Hint(text: "смотрю, что происходит…")
+            Hint(text: L.t("смотрю, что происходит…"))
         case .broken(let title, let detail):
             TroubleView(title: title, detail: detail, loader: loader)
         case .ok:
@@ -199,14 +199,14 @@ struct PanelView: View {
     @ViewBuilder private var callsTab: some View {
         let snap = loader.snapshot
         if snap.meetings.isEmpty && snap.live.isEmpty && snap.stuck.isEmpty {
-            Empty(title: "Созвонов ещё не было",
-                  detail: "Вставь ссылку на встречу — бот придёт, запишет разговор "
-                        + "и разберёт его сам: выжимка, задачи, решения.",
-                  action: ("Позвать бота на созвон", { openInvite() }))
+            Empty(title: L.t("Созвонов ещё не было"),
+                  detail: L.t("Вставь ссылку на встречу — бот придёт, запишет разговор ")
+                        + L.t("и разберёт его сам: выжимка, задачи, решения."),
+                  action: (L.t("Позвать бота на созвон"), { openInvite() }))
         } else {
             List_ {
                 if !snap.today.isEmpty || snap.todaySpend > 0 {
-                    SummaryLine(left: "сегодня " + Format.calls(snap.today.count + snap.live.count),
+                    SummaryLine(left: L.t("сегодня ") + Format.calls(snap.today.count + snap.live.count),
                                 right: snap.todaySpend > 0 ? Format.money(snap.todaySpend) : "")
                 }
                 ForEach(Array(snap.stuck.enumerated()), id: \.element.id) { _, call in
@@ -219,7 +219,7 @@ struct PanelView: View {
                                 .font(.system(size: 11).monospacedDigit())
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 42, alignment: .leading)
-                            Text(m.title.isEmpty ? "без названия" : m.title)
+                            Text(m.title.isEmpty ? L.t("без названия") : m.title)
                                 .font(.system(size: 12.5)).lineLimit(1)
                             Spacer(minLength: 4)
                             if m.troubled {
@@ -257,8 +257,8 @@ struct PanelView: View {
     @ViewBuilder private func followupView(_ call: Meeting) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                IconButton(icon: "chevron.left", help: "назад") { openedCall = nil }
-                Text(call.title.isEmpty ? "без названия" : call.title)
+                IconButton(icon: "chevron.left", help: L.t("назад")) { openedCall = nil }
+                Text(call.title.isEmpty ? L.t("без названия") : call.title)
                     .font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 4)
                 Text(Format.short(call.started))
@@ -267,44 +267,44 @@ struct PanelView: View {
             .padding(.horizontal, 12).padding(.vertical, 7)
             Rule()
             if loadingFollowup {
-                Hint(text: "читаю follow-up…")
+                Hint(text: L.t("читаю follow-up…"))
             } else if let f = followup, !f.isEmpty {
                 List_ {
                     if !f.tldr.isEmpty {
-                        Caption("о чём договорились")
+                        Caption(L.t("о чём договорились"))
                         ForEach(Array(f.tldr.enumerated()), id: \.offset) { _, line in
                             Bullet(text: line)
                         }
                     }
                     if !f.tasks.isEmpty {
-                        Caption("задачи")
+                        Caption(L.t("задачи"))
                         ForEach(Array(f.tasks.enumerated()), id: \.offset) { _, t in
                             Bullet(text: t.what,
                                    meta: Format.blank(t.owner) ? nil : t.owner)
                         }
                     }
                     if !f.decisions.isEmpty {
-                        Caption("решения")
+                        Caption(L.t("решения"))
                         ForEach(Array(f.decisions.enumerated()), id: \.offset) { _, d in
                             Bullet(text: d)
                         }
                     }
                     if !f.questions.isEmpty {
-                        Caption("открытые вопросы")
+                        Caption(L.t("открытые вопросы"))
                         ForEach(Array(f.questions.enumerated()), id: \.offset) { _, q in
                             Bullet(text: q)
                         }
                     }
                     if loader.panelReachable {
-                        Button("весь follow-up в панели ↗") { open("/m/\(call.id)") }
+                        Button(L.t("весь follow-up в панели ↗")) { open("/m/\(call.id)") }
                             .buttonStyle(LinkLike())
                             .padding(.horizontal, 12).padding(.top, 4)
                     }
                 }
             } else {
-                Empty(title: "Follow-up пустой",
-                      detail: "Разговор записан, но выжимка не собралась — так бывает, "
-                            + "когда созвон оборвался в самом начале.")
+                Empty(title: L.t("Follow-up пустой"),
+                      detail: L.t("Разговор записан, но выжимка не собралась — так бывает, ")
+                            + L.t("когда созвон оборвался в самом начале."))
             }
         }
     }
@@ -314,12 +314,12 @@ struct PanelView: View {
     @ViewBuilder private var tasksTab: some View {
         let snap = loader.snapshot
         if snap.tasks.isEmpty && snap.questions.isEmpty {
-            Empty(title: "Задач нет",
+            Empty(title: L.t("Задач нет"),
                   detail: loader.snapshot.meetings.isEmpty
-                        ? "Они появляются сами: сходи с ботом на созвон, и он разберёт, "
-                          + "кто что обещал сделать."
-                        : "Всё разобрано и закрыто. Новые появятся сами — после "
-                          + "следующего созвона.")
+                        ? L.t("Они появляются сами: сходи с ботом на созвон, и он разберёт, ")
+                          + L.t("кто что обещал сделать.")
+                        : L.t("Всё разобрано и закрыто. Новые появятся сами — после ")
+                          + L.t("следующего созвона."))
         } else {
             List_ {
                 ForEach(Array(snap.tasks.enumerated()), id: \.element.id) { i, item in
@@ -335,7 +335,7 @@ struct PanelView: View {
                                     .foregroundStyle(.tertiary)
                             }
                             .buttonStyle(.plain)
-                            .help("отметить сделанной")
+                            .help(L.t("отметить сделанной"))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.text).font(.system(size: 12.5)).lineLimit(2)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -347,7 +347,7 @@ struct PanelView: View {
                     }
                 }
                 if !snap.questions.isEmpty {
-                    Caption("открытые вопросы")
+                    Caption(L.t("открытые вопросы"))
                     ForEach(snap.questions) { q in
                         Bullet(text: q.text,
                                meta: Format.blank(q.project) ? nil : q.project)
@@ -359,8 +359,8 @@ struct PanelView: View {
 
     /// Исполнитель, срок и проект — то, чего не хватает в самой формулировке.
     private func meta(_ item: Item) -> String {
-        var parts = [Format.blank(item.owner) ? "без исполнителя" : item.owner]
-        if let due = Format.due(item.due) { parts.append("до \(due)") }
+        var parts = [Format.blank(item.owner) ? L.t("без исполнителя") : item.owner]
+        if let due = Format.due(item.due) { parts.append(L.t("до %@", due)) }
         // Проект тоже бывает записан словами «не определён».
         if !Format.blank(item.project) { parts.append(item.project) }
         return parts.joined(separator: " · ")
@@ -371,11 +371,11 @@ struct PanelView: View {
     @ViewBuilder private var projectsTab: some View {
         let projects = loader.snapshot.projects
         if projects.isEmpty {
-            Empty(title: "Проектов пока нет",
-                  detail: "Проект собирает задачи и решения по всем созвонам сразу, "
-                        + "а не по одному. Завести его можно в панели.",
+            Empty(title: L.t("Проектов пока нет"),
+                  detail: L.t("Проект собирает задачи и решения по всем созвонам сразу, ")
+                        + L.t("а не по одному. Завести его можно в панели."),
                   action: loader.panelReachable
-                        ? ("Открыть панель", { open("/projects") }) : nil)
+                        ? (L.t("Открыть панель"), { open("/projects") }) : nil)
         } else {
             List_ {
                 ForEach(Array(projects.enumerated()), id: \.element.id) { i, p in
@@ -401,10 +401,10 @@ struct PanelView: View {
 
     private func numbers(_ p: ProjectRow) -> String {
         var parts: [String] = []
-        if p.tasks > 0 { parts.append("\(p.tasks) задач") }
-        if p.questions > 0 { parts.append("\(p.questions) вопр.") }
-        if p.done > 0 { parts.append("\(p.done) закрыто") }
-        return parts.isEmpty ? "пусто" : parts.joined(separator: " · ")
+        if p.tasks > 0 { parts.append(L.t("%@ задач", "\(p.tasks)")) }
+        if p.questions > 0 { parts.append(L.t("%@ вопр.", "\(p.questions)")) }
+        if p.done > 0 { parts.append(L.t("%@ закрыто", "\(p.done)")) }
+        return parts.isEmpty ? L.t("пусто") : parts.joined(separator: " · ")
     }
 
     // --- приглашение ---------------------------------------------------------
@@ -414,8 +414,8 @@ struct PanelView: View {
     private var inviteForm: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                IconButton(icon: "chevron.left", help: "назад") { closeInvite() }
-                Text("Позвать бота на созвон").font(.system(size: 12, weight: .semibold))
+                IconButton(icon: "chevron.left", help: L.t("назад")) { closeInvite() }
+                Text(L.t("Позвать бота на созвон")).font(.system(size: 12, weight: .semibold))
                 Spacer()
             }
             .padding(.bottom, 2)
@@ -430,16 +430,16 @@ struct PanelView: View {
                 .onSubmit { send() }
             if linkFromClipboard {
                 HStack(spacing: 6) {
-                    Text("ссылка из буфера обмена").font(.system(size: 10.5))
+                    Text(L.t("ссылка из буфера обмена")).font(.system(size: 10.5))
                         .foregroundStyle(.tertiary)
-                    Button("очистить") {
+                    Button(L.t("очистить")) {
                         link = ""
                         linkFromClipboard = false
                     }
                     .buttonStyle(LinkLike())
                 }
             }
-            TextField("название, если нужно", text: $titleText)
+            TextField(L.t("название, если нужно"), text: $titleText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .padding(.horizontal, 8).padding(.vertical, 6)
@@ -454,9 +454,9 @@ struct PanelView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else if !loader.service.isRunning {
                 HStack(spacing: 8) {
-                    Text("нужен запущенный сервис").font(.system(size: 10.5))
+                    Text(L.t("нужен запущенный сервис")).font(.system(size: 10.5))
                         .foregroundStyle(.orange)
-                    Button(loader.busyWithService ? "запускаю…" : "запустить") {
+                    Button(loader.busyWithService ? L.t("запускаю…") : L.t("запустить")) {
                         Task { await loader.startService() }
                     }
                     .buttonStyle(Flat())
@@ -464,12 +464,12 @@ struct PanelView: View {
                 }
             }
             HStack(spacing: 8) {
-                Button(sending ? "зову…" : "Позвать") { send() }
+                Button(sending ? L.t("зову…") : L.t("Позвать")) { send() }
                     .buttonStyle(Flat(prominent: true))
                     .keyboardShortcut(.defaultAction)
                     .disabled(sending || !canInvite
                               || link.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button("Отмена") { closeInvite() }
+                Button(L.t("Отмена")) { closeInvite() }
                     .buttonStyle(Flat())
                 Spacer()
             }
@@ -496,18 +496,18 @@ struct PanelView: View {
                 Text(m.text).font(.system(size: 10.5)).lineLimit(2)
                     .foregroundStyle(m.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
                 Spacer(minLength: 4)
-                IconButton(icon: "xmark", help: "скрыть") { loader.forgetNoteMessage() }
+                IconButton(icon: "xmark", help: L.t("скрыть")) { loader.forgetNoteMessage() }
             } else if let closed = loader.justClosed {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 10)).foregroundStyle(.green)
                 Text(closed.text).font(.system(size: 10.5)).lineLimit(1)
                     .foregroundStyle(.secondary)
-                Button("вернуть") { Task { await loader.undoClose() } }
+                Button(L.t("вернуть")) { Task { await loader.undoClose() } }
                     .buttonStyle(LinkLike())
                 Spacer(minLength: 4)
-                IconButton(icon: "xmark", help: "скрыть") { loader.forgetClosed() }
+                IconButton(icon: "xmark", help: L.t("скрыть")) { loader.forgetClosed() }
             } else if let why = loader.writeError {
-                Text("не записалось: \(why)").font(.system(size: 10.5))
+                Text(L.t("не записалось: %@", why)).font(.system(size: 10.5))
                     .foregroundStyle(.orange).lineLimit(1)
                 Spacer(minLength: 4)
             } else {
@@ -519,14 +519,14 @@ struct PanelView: View {
                                                               : AnyShapeStyle(Color.orange))
                     .lineLimit(1)
                 if !loader.service.isRunning && loader.setup != nil {
-                    Button(loader.busyWithService ? "запускаю…" : "запустить") {
+                    Button(loader.busyWithService ? L.t("запускаю…") : L.t("запустить")) {
                         Task { await loader.startService() }
                     }
                     .buttonStyle(Flat())
                     .disabled(loader.busyWithService)
                 }
                 Spacer(minLength: 4)
-                Button("+ позвать бота") { openInvite() }
+                Button(L.t("+ позвать бота")) { openInvite() }
                     .buttonStyle(Flat())
                     .disabled(inviting)
             }
@@ -544,17 +544,17 @@ struct PanelView: View {
     /// есть на самом деле, а не то, что помнит.
     @ViewBuilder private var noteButton: some View {
         if loader.liveNote != nil {
-            Button("отмена") { Task { await loader.cancelNote() } }
+            Button(L.t("отмена")) { Task { await loader.cancelNote() } }
                 .buttonStyle(LinkLike())
                 .disabled(loader.noteBusy)
-                .help("выбросить запись, не разбирая")
+                .help(L.t("выбросить запись, не разбирая"))
             // Без секундомера на самой кнопке: он уже бежит слева, красным и
             // крупно. Вторые те же цифры не добавляют ничего, зато переносят
             // подпись на две строки — панель шириной 360 этого не прощает.
             Button {
                 Task { await loader.stopNote() }
             } label: {
-                Label("стоп", systemImage: "stop.fill")
+                Label(L.t("стоп"), systemImage: "stop.fill")
                     .labelStyle(.titleAndIcon)
                     .lineLimit(1)
                     .fixedSize()
@@ -562,12 +562,12 @@ struct PanelView: View {
             .buttonStyle(Flat())
             .disabled(loader.noteBusy)
             .keyboardShortcut("n", modifiers: .command)
-            .help("остановить и разобрать (⌘N)")
+            .help(L.t("остановить и разобрать (⌘N)"))
         } else {
             Button {
                 Task { await loader.startNote() }
             } label: {
-                Label(loader.noteBusy ? "включаю…" : "заметка", systemImage: "mic.fill")
+                Label(loader.noteBusy ? L.t("включаю…") : L.t("заметка"), systemImage: "mic.fill")
                     .labelStyle(.titleAndIcon)
                     .lineLimit(1)
                     .fixedSize()
@@ -576,20 +576,20 @@ struct PanelView: View {
             .disabled(loader.noteBusy || !loader.service.isRunning)
             .keyboardShortcut("n", modifiers: .command)
             .help(loader.service.isRunning
-                  ? "наговорить заметку — запись начнётся сразу (⌘N)"
-                  : "заметку пишет сервис, а он не запущен")
+                  ? L.t("наговорить заметку — запись начнётся сразу (⌘N)")
+                  : L.t("заметку пишет сервис, а он не запущен"))
         }
     }
 
     private var serviceLine: String {
         switch loader.service {
         case .running(_, let since):
-            return "сервис с " + (Calendar.current.isDateInToday(since)
+            return L.t("сервис с ") + (Calendar.current.isDateInToday(since)
                                   ? Format.time(since) : Format.when(since))
         // Оставшийся pid-файл — обычное дело после steno stop: steno не удаляет
         // его нарочно (release в daemon.go), так что это не авария.
         case .stale, .stopped:
-            return "сервис не запущен"
+            return L.t("сервис не запущен")
         }
     }
 
@@ -659,8 +659,8 @@ func chooseConfig() -> Bool {
     // диалог выглядит как зависший компьютер.
     NSApplication.shared.activate(ignoringOtherApps: true)
     let p = NSOpenPanel()
-    p.title = "Где лежит настройка steno"
-    p.message = "Выбери steno.json — рядом с ним лежат data/ с базой и .env"
+    p.title = L.t("Где лежит настройка steno")
+    p.message = L.t("Выбери steno.json — рядом с ним лежат data/ с базой и .env")
     p.allowedContentTypes = [.json]
     p.canChooseDirectories = false
     p.allowsMultipleSelection = false
@@ -807,9 +807,9 @@ struct StuckLine: View {
         HStack(alignment: .top, spacing: 7) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 9)).foregroundStyle(.orange)
-            Text("«\(call.title.isEmpty ? "созвон без названия" : call.title)» от "
-                 + "\(Format.when(call.started)) осталась незакрытой — сервис остановили "
-                 + "посреди созвона")
+            Text(L.t("«%@» от %@ осталась незакрытой — сервис остановили посреди созвона",
+                     call.title.isEmpty ? L.t("созвон без названия") : call.title,
+                     Format.when(call.started)))
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -931,13 +931,13 @@ struct TroubleView: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 if canStart {
-                    Button(loader.busyWithService ? "запускаю…" : "Запустить сервис") {
+                    Button(loader.busyWithService ? L.t("запускаю…") : L.t("Запустить сервис")) {
                         Task { await loader.startService() }
                     }
                     .buttonStyle(Flat(prominent: true))
                     .disabled(loader.busyWithService)
                 }
-                Button("Выбрать steno.json…") {
+                Button(L.t("Выбрать steno.json…")) {
                     if chooseConfig() { Task { await loader.refresh() } }
                 }
                 .buttonStyle(Flat())

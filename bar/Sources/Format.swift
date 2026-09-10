@@ -8,6 +8,10 @@ import Foundation
 // «2 созвон» — это разница между интерфейсом и машинным переводом.
 
 enum Format {
+    /// Локаль для дат: та же, что язык интерфейса. Зашитая ru_RU выдавала
+    /// «8 сентября» посреди английского экрана.
+    static var locale: Locale { Locale(identifier: L.lang == L.ru ? "ru_RU" : "en_US") }
+
     /// Секундомер идущей записи. До часа — минуты и секунды: тикающие секунды
     /// в строке меню и есть доказательство, что запись живая.
     static func stopwatch(_ seconds: TimeInterval) -> String {
@@ -21,7 +25,7 @@ enum Format {
     static func duration(_ seconds: Int) -> String {
         if seconds <= 0 { return "" }
         let h = seconds / 3600, m = (seconds % 3600) / 60
-        return h > 0 ? "\(h) ч \(m) мин" : "\(m) мин"
+        return h > 0 ? L.t("%@ ч %@ мин", "\(h)", "\(m)") : L.t("%@ мин", "\(m)")
     }
 
     static func money(_ usd: Double) -> String {
@@ -30,7 +34,7 @@ enum Format {
 
     static func time(_ d: Date) -> String {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ru_RU")
+        f.locale = locale
         f.dateFormat = "HH:mm"
         return f.string(from: d)
     }
@@ -41,10 +45,10 @@ enum Format {
     /// читается как «сегодня в 16:54».
     static func when(_ d: Date) -> String {
         let cal = Calendar.current
-        if cal.isDateInToday(d) { return "сегодня, " + time(d) }
-        if cal.isDateInYesterday(d) { return "вчера, " + time(d) }
+        if cal.isDateInToday(d) { return L.t("сегодня, ") + time(d) }
+        if cal.isDateInYesterday(d) { return L.t("вчера, ") + time(d) }
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ru_RU")
+        f.locale = locale
         f.dateFormat = cal.component(.year, from: d) == cal.component(.year, from: Date())
             ? "d MMMM, HH:mm" : "d MMMM y, HH:mm"
         return f.string(from: d)
@@ -56,11 +60,11 @@ enum Format {
     static func blank(_ raw: String) -> Bool {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if s.isEmpty { return true }
-        let stubs: Set<String> = ["-", "—", "–", "нет", "никто", "tbd", "n/a", "na", "none",
-                                  "unassigned", "не назначен", "не назначено", "не назначена",
-                                  "не определён", "не определен", "не определено",
-                                  "не указан", "не указано", "не задан", "не задано",
-                                  "без срока", "без исполнителя"]
+        let stubs: Set<String> = ["-", "—", "–", L.t("нет"), L.t("никто"), "tbd", "n/a", "na", "none",
+                                  "unassigned", L.t("не назначен"), L.t("не назначено"), L.t("не назначена"),
+                                  L.t("не определён"), L.t("не определен"), L.t("не определено"),
+                                  L.t("не указан"), L.t("не указано"), L.t("не задан"), L.t("не задано"),
+                                  L.t("без срока"), L.t("без исполнителя")]
         return stubs.contains(s)
     }
 
@@ -74,8 +78,8 @@ enum Format {
         iso.dateFormat = "yyyy-MM-dd"
         guard let d = iso.date(from: s) else { return s }
         let cal = Calendar.current
-        if cal.isDateInToday(d) { return "сегодня" }
-        if cal.isDateInTomorrow(d) { return "завтра" }
+        if cal.isDateInToday(d) { return L.t("сегодня") }
+        if cal.isDateInTomorrow(d) { return L.t("завтра") }
         let out = DateFormatter()
         out.locale = Locale(identifier: "ru_RU")
         out.dateFormat = cal.component(.year, from: d) == cal.component(.year, from: Date())
@@ -88,9 +92,10 @@ enum Format {
     static func short(_ d: Date) -> String {
         let cal = Calendar.current
         if cal.isDateInToday(d) { return time(d) }
-        if cal.isDateInYesterday(d) { return "вчера" }
+        // Дата, а не «вчера»: слово шире колонки по-английски и рвалось
+        // посреди себя. В узкой колонке дата и однозначнее.
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ru_RU")
+        f.locale = locale
         f.dateFormat = cal.component(.year, from: d) == cal.component(.year, from: Date())
             ? "dd.MM" : "MM.yy"
         return f.string(from: d)
@@ -127,5 +132,5 @@ enum Format {
         "\(n) \(word(n, one, few, many))"
     }
 
-    static func calls(_ n: Int) -> String { plural(n, "созвон", "созвона", "созвонов") }
+    static func calls(_ n: Int) -> String { plural(n, L.t("созвон"), L.t("созвона"), L.t("созвонов")) }
 }

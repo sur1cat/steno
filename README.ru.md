@@ -16,7 +16,16 @@
 
 [English](README.md) · **Русский**
 
-<img src="assets/panel-ru-meetings.png" width="860" alt="Панель steno — архив созвонов команды">
+[![Установка](https://img.shields.io/badge/⬇%20%20Установка-6BCB9B?style=for-the-badge&labelColor=0b0f0d)](#установка)
+[![Команды](https://img.shields.io/badge/⌘%20%20Команды-24382E?style=for-the-badge&labelColor=0b0f0d)](#команды)
+[![Экраны](https://img.shields.io/badge/▦%20%20Экраны-24382E?style=for-the-badge&labelColor=0b0f0d)](#панель)
+[![Сколько стоит](https://img.shields.io/badge/$%20%20Сколько%20стоит-24382E?style=for-the-badge&labelColor=0b0f0d)](#сколько-это-ест)
+[![Релизы](https://img.shields.io/badge/⤓%20%20Релизы-24382E?style=for-the-badge&labelColor=0b0f0d)](https://github.com/sur1cat/steno/releases/latest)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-flow-dark.svg">
+  <img src="assets/pipeline-flow-light.svg" width="900" alt="Созвон приходит из календаря, почты, Telegram или панели; бот в контейнере пишет его; whisper и субтитры площадки складываются в одну расшифровку; Claude собирает follow-up; тот уходит в Google Docs, Slack, Telegram и панель">
+</picture>
 
 </div>
 
@@ -25,23 +34,13 @@
 одной встречи. Один бинарник на Go — панель вшита в него, ставить на сервер
 нечего, кроме файла. Записи и расшифровки остаются у тебя.
 
-```console
-$ steno start
-12:04:11 telegram: слушаю ссылки на созвоны (1 разрешённых чатов)
-12:04:11 панель: слушаю 127.0.0.1:8422
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/term-start-ru-dark.svg">
+  <img src="assets/term-start-ru-light.svg" width="835" alt="steno start: слушает источники, заходит в созвон, пишет, расшифровывает, собирает follow-up и рассылает">
+</picture>
+</div>
 
-12:59:03 иду на «Планёрка по релизу 2.4» (meet.google.com/abc-defg-hij, повод: календарь)
-12:59:14 в звонке
-12:59:14 пишу звук в data/recordings/2026-09-09-1300-a1b2/audio.ogg
-13:46:26 запись окончена: остался один, 47m12s, участников 4
-13:46:26 субтитры: 412 реплик, 39812 букв за 47m12s (843 букв в минуту)
-13:46:27 расшифровываю data/recordings/2026-09-09-1300-a1b2/audio.ogg
-13:52:40 имена: 397 от субтитров, 12 от подсветки говорящего, 3 без имени
-13:52:41 делаю follow-up (claude-opus-5, доступ: подписка через claude -p)
-13:53:22 задач: 4, решений: 2, открытых вопросов: 2
-13:53:22 расход: вход 2.1k, выход 3.7k, кеш 12k/10k — $0.12
-13:53:23 telegram: отправлено
-```
 
 Всё это происходит без тебя. Или руками, по одному созвону:
 
@@ -133,11 +132,18 @@ http      ┘           whisper ───────────────┤
 Нужен запущенный Docker — бот заходит в созвон внутри контейнера. Остальное
 steno делает сам.
 
-```
+```console
 brew install sur1cat/tap/steno
-steno setup          # спросит по одному и проверит каждый ответ
+steno setup          # девять вопросов, каждый ответ проверяется
 steno start          # работает фоном; остановить — steno stop
 ```
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/term-install-dark.svg">
+  <img src="assets/term-install-light.svg" width="611" alt="brew install, затем steno setup с девятью вопросами, затем steno start">
+</picture>
+</div>
 
 `setup` сам заводит каталог (по умолчанию `~/steno`) и кладёт настройку туда —
 готовить заранее ничего не нужно. Первым делом спрашивает язык: дальше мастер
@@ -520,6 +526,8 @@ docker kill $(docker ps -q -f label=steno)
 `panel.enabled` поднимает веб-панель: список созвонов, полнотекстовый поиск по
 всем расшифровкам и follow-up сразу, расписание на неделю вперёд, страница «кто
 что должен», живое состояние проектов и плеер с кликабельными таймкодами.
+
+<img src="assets/panel-ru-meetings.png" width="880" alt="Панель steno — архив созвонов команды">
 
 Поиск понимает начало слова — «миграц» находит и «миграции», и «миграцией».
 Каждая находка ведёт не просто в созвон, а в тот момент записи, где это

@@ -23,6 +23,7 @@ struct Setup: Equatable {
     var passwordEnv: String
     var envPath: String
     var panelEnabled: Bool
+    var lang: String         // «lang» из настройки: приложение говорит на том же языке
 
     var dbPath: String { dataDir + "/steno.db" }
     var dir: String { (configPath as NSString).deletingLastPathComponent }
@@ -31,18 +32,19 @@ struct Setup: Equatable {
     /// сервис не сможет обойти сам.
     var inviteTrouble: String? {
         if !panelEnabled {
-            return "В \(Conf.pretty(configPath)) стоит panel.enabled = false — "
-                 + "пока он там стоит, сервис не поднимет панель, а звать бота "
-                 + "приложению больше некуда."
+            return L.t("В %@ стоит panel.enabled = false — пока он там стоит, "
+                     + "сервис не поднимет панель, а звать бота приложению больше некуда.",
+                       Conf.pretty(configPath))
         }
         if base == nil {
-            return "В \(Conf.pretty(configPath)) написано panel.addr = «\(addr)» — "
-                 + "из этого не собрать адрес."
+            return L.t("В %@ написано panel.addr = «%@» — из этого не собрать адрес.",
+                       Conf.pretty(configPath), addr)
         }
         if password == nil {
-            return "Пароль панели лежит в переменной \(passwordEnv), а её нет ни в "
-                 + "окружении, ни в \(Conf.pretty(envPath)). Допиши в этот файл строку "
-                 + "«\(passwordEnv)=…» — тот же пароль, которым панель открывается в браузере."
+            return L.t("Пароль панели лежит в переменной %@, а её нет ни в окружении, "
+                     + "ни в %@. Допиши в этот файл строку «%@=…» — тот же пароль, "
+                     + "которым панель открывается в браузере.",
+                       passwordEnv, Conf.pretty(envPath), passwordEnv)
         }
         return nil
     }
@@ -56,17 +58,17 @@ enum SetupTrouble: Error, Equatable {
 
     var title: String {
         switch self {
-        case .noConfig: return "Не нашёл настройку steno"
-        case .unreadable: return "Настройка не читается"
+        case .noConfig: return L.t("Не нашёл настройку steno")
+        case .unreadable: return L.t("Настройка не читается")
         }
     }
 
     var detail: String {
         switch self {
         case .noConfig(let searched):
-            return "Искал: " + searched.map { Conf.pretty($0) }.joined(separator: ", ")
-                + ". Если steno ещё не настроен — запусти в терминале «steno setup»."
-                + " Если настройка лежит в другом месте — выбери файл вручную."
+            return L.t("Искал: ") + searched.map { Conf.pretty($0) }.joined(separator: ", ")
+                + L.t(". Если steno ещё не настроен — запусти в терминале «steno setup».")
+                + L.t(" Если настройка лежит в другом месте — выбери файл вручную.")
         case .unreadable(let path, let why):
             return "\(Conf.pretty(path)): \(why)"
         }
@@ -142,7 +144,7 @@ enum Conf {
             return .failure(.unreadable(path: configPath, why: error.localizedDescription))
         }
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return .failure(.unreadable(path: configPath, why: "это не JSON"))
+            return .failure(.unreadable(path: configPath, why: L.t("это не JSON")))
         }
         let panel = root["panel"] as? [String: Any] ?? [:]
         // Умолчания — те же, что в defaultConfig(): адрес :8080, пароль из
@@ -165,7 +167,8 @@ enum Conf {
             password: pass,
             passwordEnv: env,
             envPath: envPath,
-            panelEnabled: panel["enabled"] as? Bool ?? false))
+            panelEnabled: panel["enabled"] as? Bool ?? false,
+            lang: root["lang"] as? String ?? ""))
     }
 
     /// Пути в настройке считаются от неё самой, а не от текущего каталога —

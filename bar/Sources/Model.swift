@@ -136,6 +136,9 @@ final class Loader: ObservableObject {
             health = .broken(title: t.title, detail: t.detail)
             return
         case .success(let s):
+            // Язык — до всего, что рисуется дальше: настройка steno главнее
+            // окружения, из которого приложение запустили.
+            L.use(s.lang)
             trouble = nil
             setup = s
             service = Daemon.state(configPath: s.configPath)
@@ -171,11 +174,12 @@ final class Loader: ObservableObject {
             let why = (e as? DbError)?.message ?? e.localizedDescription
             if case .missing = e as? DbError {
                 health = .broken(
-                    title: "Базы steno ещё нет",
-                    detail: "Жду \(Conf.pretty(path)) — этот файл сервис заводит при первом "
-                          + "запуске. Похоже, steno на этой машине ещё ни разу не работал.")
+                    title: L.t("Базы steno ещё нет"),
+                    detail: L.t("Жду %@ — этот файл сервис заводит при первом запуске. "
+                              + "Похоже, steno на этой машине ещё ни разу не работал.",
+                                Conf.pretty(path)))
             } else {
-                health = .broken(title: "База не читается", detail: why)
+                health = .broken(title: L.t("База не читается"), detail: why)
             }
         }
     }
@@ -244,7 +248,7 @@ final class Loader: ObservableObject {
     /// двух местах однажды разойдутся, и приложение забракует живую ссылку.
     func invite(url: String, title: String) async -> (ok: Bool, text: String) {
         guard let s = setup, let base = s.base, let password = s.password else {
-            return (false, "некуда звать: не собрался адрес панели или нет пароля")
+            return (false, L.t("некуда звать: не собрался адрес панели или нет пароля"))
         }
         let api = Api(base: base, password: password)
         var body: [String: Any] = ["url": url]
@@ -253,7 +257,7 @@ final class Loader: ObservableObject {
         do {
             let r = try await api.post("/api/invite", body: body, as: InviteReply.self)
             await refresh()
-            return (r.status == "started", r.message ?? r.error ?? "готово")
+            return (r.status == "started", r.message ?? r.error ?? L.t("готово"))
         } catch let e as ApiError {
             return (false, e.message)
         } catch {
@@ -266,22 +270,22 @@ final class Loader: ObservableObject {
     /// Начать и остановить — одна дорога: ffmpeg держит сервис, а не мы.
     /// Приложение, убитое посреди заметки, не должно уносить запись с собой,
     /// поэтому запускать микрофон подпроцессом здесь нельзя.
-    func startNote() async { await note("/api/note/start", "пишу — говори") }
+    func startNote() async { await note("/api/note/start", L.t("пишу — говори")) }
 
-    func stopNote() async { await note("/api/note/stop", "расшифровываю и разбираю") }
+    func stopNote() async { await note("/api/note/stop", L.t("расшифровываю и разбираю")) }
 
     /// Промах по кнопке. Отдельным действием, потому что иначе он стоит
     /// расшифровки и запроса к Claude, а в списке навсегда остаётся строка.
-    func cancelNote() async { await note("/api/note/cancel", "заметка выброшена") }
+    func cancelNote() async { await note("/api/note/cancel", L.t("заметка выброшена")) }
 
     private func note(_ path: String, _ done: String) async {
         guard !noteBusy else { return }
         guard let s = setup, let base = s.base, let password = s.password else {
-            noteMessage = (false, "некому писать: не собрался адрес панели или нет пароля")
+            noteMessage = (false, L.t("некому писать: не собрался адрес панели или нет пароля"))
             return
         }
         guard service.isRunning else {
-            noteMessage = (false, "заметку пишет сервис, а он не запущен")
+            noteMessage = (false, L.t("заметку пишет сервис, а он не запущен"))
             return
         }
         noteBusy = true
@@ -322,7 +326,7 @@ final class Loader: ObservableObject {
         }
         await refresh()
         if !service.isRunning {
-            serviceLog = Daemon.logTail(configPath: path) ?? "сервис не поднялся"
+            serviceLog = Daemon.logTail(configPath: path) ?? L.t("сервис не поднялся")
         }
     }
 

@@ -109,21 +109,29 @@ struct Meeting: Identifiable {
     /// У заметки в этом поле стоит не беда, а происхождение: «надиктовано в
     /// микрофон». Без оговорки каждая заметка загоралась бы тревожной, а
     /// «ушёл раньше» звучало бы про человека, который просто договорил.
+    /// Обычный конец созвона: все разошлись, бот ушёл следом. store.go, где
+    /// эта строка и пишется, прямо оговаривает, что «остался один» — норма, а
+    /// повод посмотреть — «бота вывели» и «страница закрылась». Знаем оба
+    /// написания: строку записала та установка, у которой был свой язык.
+    private static let normalEndings: Set<String> = ["остался один", "left alone"]
+
+    private var endedNormally: Bool { Meeting.normalEndings.contains(leftReason) }
+
     var troubled: Bool {
         if status == "failed" || status == "publish_failed" { return true }
-        return !isNote && !leftReason.isEmpty
+        return !isNote && !leftReason.isEmpty && !endedNormally
     }
 
     var statusWord: String {
         switch status {
-        case "failed": return "не получилось"
-        case "publish_failed": return "не отправилось"
-        case "recording": return isNote ? "наговаривается" : "пишется"
-        case "transcribed": return "расшифровано"
-        case "summarized": return "без отправки"
+        case "failed": return L.t("не получилось")
+        case "publish_failed": return L.t("не отправилось")
+        case "recording": return isNote ? L.t("наговаривается") : L.t("пишется")
+        case "transcribed": return L.t("расшифровано")
+        case "summarized": return L.t("без отправки")
         default:
             if isNote { return "" }
-            return leftReason.isEmpty ? "" : "ушёл раньше"
+            return leftReason.isEmpty || endedNormally ? "" : L.t("ушёл раньше")
         }
     }
 }
@@ -146,7 +154,7 @@ enum DbError: Error {
 
     var message: String {
         switch self {
-        case .missing(let p): return "базы нет: \(Conf.pretty(p))"
+        case .missing(let p): return L.t("базы нет: %@", Conf.pretty(p))
         case .cannotOpen(let why): return why
         case .query(let why): return why
         }
@@ -176,7 +184,7 @@ final class Db {
         } else if let handle = Db.open(path, SQLITE_OPEN_READWRITE) {
             h = handle
         } else {
-            throw DbError.cannotOpen("база не открывается: \(Conf.pretty(path))")
+            throw DbError.cannotOpen(L.t("база не открывается: %@", Conf.pretty(path)))
         }
     }
 
@@ -372,7 +380,7 @@ final class Db {
         var h: OpaquePointer?
         guard sqlite3_open_v2(path, &h, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let h else {
             sqlite3_close_v2(h)
-            throw DbError.cannotOpen("база не открылась на запись")
+            throw DbError.cannotOpen(L.t("база не открылась на запись"))
         }
         defer { sqlite3_close_v2(h) }
         sqlite3_busy_timeout(h, 5000)

@@ -109,9 +109,9 @@ enum Daemon {
 
     private static func run(_ args: [String]) -> String? {
         guard let exe = binary() else {
-            return "не нашёл steno — ни в /opt/homebrew/bin, ни в /usr/local/bin, "
-                 + "ни в ~/go/bin. Если он лежит иначе, укажи путь: "
-                 + "defaults write dev.sur1cat.steno.bar stenoBinary /путь/к/steno"
+            return L.t("не нашёл steno — ни в /opt/homebrew/bin, ни в /usr/local/bin, ")
+                 + L.t("ни в ~/go/bin. Если он лежит иначе, укажи путь: ")
+                 + L.t("defaults write dev.sur1cat.steno.bar stenoBinary /путь/к/steno")
         }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: exe)
@@ -132,7 +132,7 @@ enum Daemon {
         if p.terminationStatus == 0 { return nil }
         let text = String(data: out, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return text.isEmpty ? "steno вышел с кодом \(p.terminationStatus)" : text
+        return text.isEmpty ? L.t("steno вышел с кодом %@", "\(p.terminationStatus)") : text
     }
 
     static func binary() -> String? {
