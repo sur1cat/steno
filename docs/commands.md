@@ -26,7 +26,7 @@ needs the service running. `-c <path>` points at another `steno.json`.
 |---|---|
 | `steno join <meet-url>` | join, record, transcribe, send the follow-up |
 | &nbsp;&nbsp;`--record-only` | record only |
-| &nbsp;&nbsp;`--no-followup` | record and transcribe, no Claude |
+| &nbsp;&nbsp;`--no-followup` | record and transcribe, no model, no follow-up |
 | &nbsp;&nbsp;`--captions` | text from the platform's captions instead of whisper |
 | `steno note` | dictate into the microphone — Enter stops it, then the same pipeline |
 | &nbsp;&nbsp;`--devices` · `--device N` | list the microphones · pick one |

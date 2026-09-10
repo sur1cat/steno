@@ -25,6 +25,10 @@ Default `claude-opus-5` at `effort: low` — about **$0.40** for an hour-long
 meeting, $0.12 for a short one. `setup` also offers `claude-sonnet-5`: two and a
 half times cheaper, usually enough for a standup.
 
+A model on your own machine — Ollama, LM Studio, llama.cpp — costs nothing at
+all; `steno setup` offers it in the same question. See
+[Who writes the follow-up](install.md#who-writes-the-follow-up).
+
 <img src="../assets/cli-cost.svg" width="880" alt="steno cost — measured spend over 30 days">
 
 **Why effort stays low — measured, not guessed.** One marked-up meeting, ten

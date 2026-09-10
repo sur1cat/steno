@@ -8,7 +8,7 @@
 3. ✍️ Two sources become one transcript. Text from whisper because it is
    accurate; names from the platform because they are authoritative. Stitched by
    time.
-4. 🧩 Claude writes the follow-up, each item carrying the quote and the second it
+4. 🧩 The model you picked writes the follow-up, each item carrying the quote and the second it
    came from.
 5. 📬 It lands in Telegram, Slack, Google Docs, the panel — and stays, per
    project, until it is closed.

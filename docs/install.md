@@ -48,26 +48,27 @@ The choice carries further than the labels — it sets the follow-up language
 (`bot.caption_language`), the name the bot appears under in the participant
 list, and the calendar's skip markers.
 
-## Two ways to pay for Claude
+## Who writes the follow-up
 
-**A subscription you already have.** steno calls `claude -p`, the
-non-interactive mode of Claude Code. No API key, no second bill.
+`steno setup` asks; `brain.provider` pins it in the config. All four return the
+same JSON — nothing downstream knows who answered.
 
-```console
-claude auth login
-steno setup       # pick "A Claude subscription"
-```
+| | | |
+|---|---|---|
+| **Claude subscription** | `claude -p`, the non-interactive mode of Claude Code | no key, no second bill |
+| **Anthropic key** | needed on a server: works without a human logging in | `ANTHROPIC_API_KEY` |
+| **OpenAI-compatible** | OpenAI, Groq, OpenRouter, Together, DeepSeek — or Ollama, LM Studio, llama.cpp on this machine | one preset, or an address of your own |
+| **ChatGPT subscription** | `codex exec` — the schema goes in as a file, so it is kept exactly | |
 
-**An API key.** Needed on a server — not for billing, but because `claude -p`
-requires a login performed by a human, and nobody logs into a server.
+A model on your own machine costs nothing and sends nothing anywhere: together
+with local whisper it is the setup where no data leaves at all.
 
-```console
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+If none of them fits — an internal endpoint, your own wrapper, someone else's
+protocol — `brain.provider = "command"` runs a script: one JSON object in on
+stdin, one JSON object out on stdout. The contract is written out in
+`adapters/ollama.sh`.
 
-`steno doctor` says which one it found; `claude.via` pins it (`cli`, `api`,
-`auto`). The subscription path costs a few more tokens — Claude Code sends its
-own system prompt every call — but it comes out of a plan rather than a card.
+`steno doctor` says which one it found and which model came out of it.
 
 ## Try it without setting anything up
 
