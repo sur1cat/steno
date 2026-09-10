@@ -18,7 +18,7 @@ needs the service running. `-c <path>` points at another `steno.json`.
 | `steno doctor` | check every piece and print the fix under each problem |
 | `steno version` | the version, and the bot image that matches it |
 
-<img src="../assets/cli-doctor.png" width="880" alt="steno doctor — every piece checked, with a fix printed under each problem">
+<img src="../assets/cli-doctor.svg" width="880" alt="steno doctor — every piece checked, with a fix printed under each problem">
 
 ## Record a meeting
 
@@ -45,20 +45,20 @@ needs the service running. `-c <path>` points at another `steno.json`.
 | `steno projects [name]` | what is open per project |
 | `steno cost [days]` | measured tokens and what they cost |
 
-<img src="../assets/cli-show.png" width="880" alt="steno show — the follow-up as text, with timecodes and publication links">
+<img src="../assets/cli-show.svg" width="880" alt="steno show — the follow-up as text, with timecodes and publication links">
 
 Summary, tasks with owners and dates, decisions with reasons, questions with who
 they wait on, risks. Each carries the second it was said; the footer says where
 it went.
 
-<img src="../assets/cli-list.png" width="880" alt="steno list — recent meetings with their status">
+<img src="../assets/cli-list.svg" width="880" alt="steno list — recent meetings with their status">
 
-<img src="../assets/cli-projects.png" width="880" alt="steno projects — open tasks, questions and decisions per project">
+<img src="../assets/cli-projects.svg" width="880" alt="steno projects — open tasks, questions and decisions per project">
 
 The state that outlives the meeting. Short ids, so the CLI and the panel talk
 about the same thing.
 
-<img src="../assets/cli-cost.png" width="880" alt="steno cost — measured spend over 30 days">
+<img src="../assets/cli-cost.svg" width="880" alt="steno cost — measured spend over 30 days">
 
 ## Projects — how it learns your vocabulary
 

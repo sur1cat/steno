@@ -25,7 +25,7 @@ Default `claude-opus-5` at `effort: low` — about **$0.40** for an hour-long
 meeting, $0.12 for a short one. `setup` also offers `claude-sonnet-5`: two and a
 half times cheaper, usually enough for a standup.
 
-<img src="../assets/cli-cost.png" width="880" alt="steno cost — measured spend over 30 days">
+<img src="../assets/cli-cost.svg" width="880" alt="steno cost — measured spend over 30 days">
 
 **Why effort stays low — measured, not guessed.** One marked-up meeting, ten
 combinations of model and effort: all ten pulled the same five assignments with
