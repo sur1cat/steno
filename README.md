@@ -35,7 +35,9 @@
 
 A bot joins the call, records it, transcribes it and writes the follow-up —
 decisions, tasks and open questions, filed under your projects and outliving the
-meeting. One Go binary; recordings stay on your machine.
+meeting. A task can go on to a coding agent — as a spec written from your
+repository, in a worktree of its own — and come back as a branch. One Go
+binary; recordings stay on your machine.
 
 <div align="center">
 <picture>
@@ -47,8 +49,8 @@ meeting. One Go binary; recordings stay on your machine.
 ## Why this and not Otter, Fireflies or Fathom
 
 Those are good. If a transcript with a summary is all you need, they do it
-today with no server and no setup. steno is for two things they don't do, and
-one they can't promise.
+today with no server and no setup. steno is for three things they don't do,
+and one they can't promise.
 
 🧠 **It learns your vocabulary from your code.** Attach a repository and steno
 reads its README, manifests, layout and the subjects of recent commits — that
@@ -60,9 +62,15 @@ what is still open, so the same task is not created again every week. Once a
 day new commits are matched against open tasks: work done quietly, never
 mentioned on a call, still gets closed — with the commit as evidence.
 
-🔒 **The recording stays with you.** A visible bot, not a hidden recorder:
-anyone on the call can remove it. Audio and transcripts live in one directory
-on your machine; with local whisper and a local model, nothing leaves at all.
+🛠 **A task can become a branch.** Pick one off the follow-up: steno writes the
+spec from the repository — where the code lives, how to check it, what is still
+missing — and, on your say-so, hands it to Claude Code or Codex in a worktree
+of its own. What comes back is a branch to review. Never a push.
+
+🔒 **The recording stays with you.** When the bot joins, it is a visible
+participant with "recording" in its name, and anyone on the call can remove it.
+Audio and transcripts live in one directory on your machine; with local whisper
+and a local model, nothing leaves at all.
 
 ## Install
 
@@ -147,7 +155,7 @@ what was captured.
 | ✅ **Google Meet** | checked on real calls: joining, recording, captions for the speaker names |
 | ✅ **A recording you already have** | Zoom, a phone call, a voice note — upload it, the rest is the same |
 | 🚧 **Jitsi Meet** | built on Jitsi's own end-to-end tests; no bot has joined a live call yet |
-| 🚫 **Teams · Zoom** | deliberately not: a CAPTCHA or a disabled setting you only discover on the call — [why](docs/how-it-works.md#what-works-and-what-does-not-yet) |
+| 🧭 **Teams · Zoom** | no bot — a CAPTCHA or a disabled setting you only discover on the call ([why](docs/how-it-works.md#what-works-and-what-does-not-yet)). Next instead: recording from your own laptop, microphone plus system audio, no bot at all |
 
 ## Bring your own
 
@@ -235,6 +243,49 @@ Cursor, Claude Desktop, Zed and the rest take the same thing as JSON —
 model works too: Ollama serves the model, and a client in front of it — Goose,
 LM Studio, oterm — talks to steno. Seven tools, one of which writes:
 [docs/commands.md](docs/commands.md#ask-a-model).
+
+## Where it goes
+
+The follow-up is sent; the tasks in it are kept.
+
+| | |
+|---|---|
+| 📄 **Google Docs** | a document per meeting — and one per project, rewritten in place, so one link always shows the current state |
+| 💬 **Slack** | the follow-up in the channel, plus a DM to whoever owns a task, matched by name |
+| ✈️ **Telegram** | the team chat — and a reply in the chat the bot was asked from |
+| 📜 **Your adapter** | Discord, Mattermost, Notion, Jira, a webhook, an email — [a short script each](#bring-your-own) |
+
+Tasks, decisions and open questions stay per project — in the panel, `steno ui`
+and the menu bar — until something closes them: the next call, a button, or a
+commit. Once a day new commits are matched against open tasks, so work done
+quietly is closed with the commit as evidence.
+
+## A task becomes a branch
+
+A task off a call is one sentence; the other nine tenths live in the code.
+`steno spec` reads the repository behind the project and writes the spec: what
+is known, where it lives in the code, what to do, how to check it — and, in a
+section it refuses to leave out, what is still missing. A task that is not
+code — *"ask Vika about the mockup"* — is declined with a reason, not padded
+out into a document nobody asked for.
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/term-spec-dark.svg">
+  <img src="assets/term-spec-light.svg" width="869" alt="steno spec turns a task into a spec with the places in the code, the steps, the checks and what is still missing; steno spec run gives it to the agent in its own worktree, which comes back as a branch">
+</picture>
+</div>
+
+`steno spec run` hands it to Claude Code or Codex — the one behind your
+follow-ups, or `agent.provider` to choose — in a git worktree of its own, on a
+branch of its own. What comes back is a branch to look at. Never a push, never
+a commit on main.
+
+Off by default: `"agent": {"enabled": true}` in `steno.json` is the moment you
+give steno the right to write files and run commands on this machine. And it
+runs only on a human action — never from Telegram, mail or the HTTP endpoint:
+anyone on a call can say *"delete the repository"*, and it would arrive as a
+task.
 
 ## Tour
 
