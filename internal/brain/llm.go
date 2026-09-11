@@ -2,7 +2,6 @@ package brain
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,29 +10,86 @@ import (
 	"github.com/sur1cat/steno/internal/i18n"
 )
 
-// Одна точка, через которую steno спрашивает Claude.
+// Одна точка, через которую steno спрашивает модель.
 //
-// Путей два, и оба настоящие:
+// Ниже по течению никто не знает, кто отвечал: там ждут JSON по схеме, и всё.
+// Поэтому провайдеров можно добавлять, ничего больше не трогая, — и их четыре
+// вида, различающихся не вендором, а тем, чем человек платит:
 //
-//   - через ключ API — для сервера. Работает без человека, отдаёт точную
-//     разметку ответа схемой и считает расход по токенам.
-//   - через CLI `claude -p` — для своего ноутбука. Использует подписку, которая
-//     у человека уже есть; заводить ради собственных созвонов отдельный биллинг
-//     незачем. Схему приходится просить словами, а не задавать параметром, —
-//     это единственная плата.
+//   - ключ Anthropic — для сервера. Работает без человека, размечает ответ
+//     схемой и считает расход по токенам.
+//   - `claude -p` — подписка Claude Code, которая у человека уже есть. Схему
+//     приходится просить словами: параметра формата у CLI нет.
+//   - совместимый с OpenAI адрес — OpenAI, Groq, OpenRouter, Together,
+//     DeepSeek, а из местных Ollama, LM Studio, llama.cpp. Один формат на всех,
+//     схема параметром.
+//   - `codex exec` — подписка ChatGPT. Схема задаётся файлом и соблюдается.
+//   - внешний скрипт — то же, чем подключается распознавание. Договор описан
+//     в llm_cmd.go и словами в adapters/ollama.sh.
 //
-// "auto" выбирает сам: есть ключ — берёт API, нет — смотрит, есть ли CLI со
-// сделанным входом. Так на сервере ничего не меняется, а на ноутбуке ничего не
-// требуется.
+// Внутри claude "auto" по-прежнему выбирает сам: есть ключ — берёт API, нет —
+// смотрит, есть ли CLI со сделанным входом, — а нет и его, берёт ключ
+// OpenAI, Groq или OpenRouter из окружения, см. AutoOpenAI.
 
 type llmVia string
 
 const (
-	viaAPI llmVia = "api"
-	viaCLI llmVia = "cli"
+	viaAPI    llmVia = "api"
+	viaCLI    llmVia = "cli"
+	viaOpenAI llmVia = "openai"
+	viaCodex  llmVia = "codex"
+	viaCmd    llmVia = "command"
 )
 
+// ProviderTitle — как называть выбранного провайдера человеку. Одно слово,
+// которое видно в doctor и в журнале сервиса: «делаю follow-up» с именем
+// Claude при работе через Groq — это ровно то враньё, из-за которого потом
+// полдня ищут не там.
+func ProviderTitle(cfg *core.Config) string {
+	if eff, _, ok := AutoOpenAI(cfg); ok {
+		cfg = eff
+	}
+	switch cfg.BrainProvider() {
+	case core.ProviderOpenAI:
+		if p, ok := core.OpenAIPresetByKey(cfg.Brain.OpenAI.Preset); ok && p.Key != core.PresetCustom {
+			return p.Name
+		}
+		return "OpenAI API"
+	case core.ProviderCodex:
+		return "Codex"
+	case core.ProviderCommand:
+		return i18n.Tr("скрипт")
+	}
+	return "Claude"
+}
+
 func ResolveVia(cfg *core.Config) (llmVia, string, error) {
+	switch cfg.BrainProvider() {
+	case core.ProviderOpenAI:
+		ok, note := OpenAIReady(cfg)
+		if !ok {
+			return "", "", fmt.Errorf(i18n.Tr("провайдер openai выбран, но не готов: %s"), note)
+		}
+		return viaOpenAI, note, nil
+	case core.ProviderCodex:
+		ok, note := CodexCLIAvailable()
+		if !ok {
+			return "", "", fmt.Errorf(
+				i18n.Tr("провайдер codex выбран, но не готов: %s\n")+
+					i18n.Tr("  → подписка: запусти `codex` и войди\n")+
+					i18n.Tr("  → или ключ: export CODEX_API_KEY=…"), note)
+		}
+		return viaCodex, i18n.Tr("подписка через codex exec (") + note + ")", nil
+	case core.ProviderCommand:
+		ok, note := LLMCmdAvailable(cfg)
+		if !ok {
+			return "", "", fmt.Errorf(
+				i18n.Tr("провайдер command выбран, но скрипт не готов: %s\n")+
+					i18n.Tr("  → договор описан в adapters/ollama.sh — с него же удобно списать свой"), note)
+		}
+		return viaCmd, note, nil
+	}
+
 	switch cfg.Claude.Via {
 	case "api":
 		if _, _, err := ClaudeClient(cfg); err != nil {
@@ -54,11 +110,87 @@ func ResolveVia(cfg *core.Config) (llmVia, string, error) {
 	if ok, note := ClaudeCLIAvailable(); ok {
 		return viaCLI, i18n.Tr("подписка через claude -p (") + note + ")", nil
 	}
+	if _, note, ok := AutoOpenAI(cfg); ok {
+		return viaOpenAI, note, nil
+	}
 	return "", "", fmt.Errorf(
 		i18n.Tr("нет доступа к Claude. Годится любое из двух:\n")+
 			i18n.Tr("  → ключ API: console.anthropic.com → API keys, потом export %s=sk-ant-…\n")+
-			i18n.Tr("  → или подписка: поставь Claude Code и войди — steno возьмёт её через `claude -p`"),
+			i18n.Tr("  → или подписка: поставь Claude Code и войди — steno возьмёт её через `claude -p`\n")+
+			i18n.Tr("  → а можно вовсе не Claude: brain.provider = openai или codex"),
 		cfg.Claude.APIKeyEnv)
+}
+
+// autoKeys — какие ключи из окружения подхватывает auto, кроме ключа Anthropic,
+// и в каком порядке. Порядок — это приоритет: у кого лежит и ключ OpenAI, и
+// ключ Groq, тот получает OpenAI.
+//
+// Модель у заготовки OpenRouter не названа намеренно — там их сотни, — а auto
+// без модели не работает; поэтому у него она стоит здесь. Та же, что у Groq:
+// открытая, дешёвая и умеющая схему параметром.
+var autoKeys = []struct {
+	preset string
+	model  string
+}{
+	{preset: "openai"},
+	{preset: "groq"},
+	{preset: "openrouter", model: "openai/gpt-oss-120b"},
+}
+
+// AutoOpenAI — что auto выбрал бы вместо Claude, если Claude нет.
+//
+// Возвращает копию конфига с проставленным провайдером и заготовкой, строку
+// «откуда взялось» для doctor и журнала, и ok=false, если менять нечего: в
+// конфиге назван провайдер, или у Claude есть ключ либо вход, или ни одной из
+// переменных нет.
+//
+// Копия, а не правка на месте: сюда ходит ResolveVia перед каждым запросом, и
+// менять конфиг оттуда значило бы, что doctor и запрос видят разное. Кому нужен
+// сам конфиг с ответом — open() в cmd/steno, — тот зовёт ApplyAutoOpenAI.
+//
+// Порядок проверок не совпадает с порядком приоритета, и это нарочно: проверка
+// входа в Claude Code — это запуск процесса, четверть секунды, и делать её
+// стоит только когда ответ от неё зависит, то есть когда ключ провайдера в
+// окружении вообще есть. Приоритет при этом прежний: ключ Anthropic, потом
+// вход в Claude Code, потом ключи остальных.
+func AutoOpenAI(cfg *core.Config) (*core.Config, string, bool) {
+	if cfg.BrainProvider() != core.ProviderClaude || cfg.Claude.Via != "auto" {
+		return nil, "", false
+	}
+	for _, k := range autoKeys {
+		p, ok := core.OpenAIPresetByKey(k.preset)
+		if !ok {
+			continue
+		}
+		if _, err := core.Secret(p.KeyEnv, ""); err != nil {
+			continue
+		}
+		if _, _, err := ClaudeClient(cfg); err == nil {
+			return nil, "", false
+		}
+		if ok, _ := ClaudeCLIAvailable(); ok {
+			return nil, "", false
+		}
+		eff := *cfg
+		eff.Brain.Provider = core.ProviderOpenAI
+		eff.Brain.OpenAI.Preset = p.Key
+		eff.Brain.OpenAI.Model = core.FirstNonEmpty(k.model, p.Model)
+		return &eff, i18n.Tr("ключ ") + p.KeyEnv + i18n.Tr(" из окружения — без Claude беру ") + p.Name, true
+	}
+	return nil, "", false
+}
+
+// ApplyAutoOpenAI — то же, но в сам конфиг. Зовётся один раз при загрузке:
+// дальше имя модели уходит в базу рядом с follow-up и в `steno cost`, и
+// брать его из конфига, в котором написан Claude, когда отвечал Groq, значит
+// показать в расходах модель, которой запрос никогда не видел.
+func ApplyAutoOpenAI(cfg *core.Config) (string, bool) {
+	eff, note, ok := AutoOpenAI(cfg)
+	if !ok {
+		return "", false
+	}
+	*cfg = *eff
+	return note, true
 }
 
 // AskLLM отправляет запрос тем путём, который доступен, и возвращает текст.
@@ -70,8 +202,20 @@ func AskLLM(ctx context.Context, cfg *core.Config, system, user string,
 	if err != nil {
 		return "", core.Spend{}, err
 	}
-	if via == viaCLI {
+	switch via {
+	case viaCLI:
 		return askViaCLI(ctx, cfg, system, user, schema)
+	case viaOpenAI:
+		// Сюда с провайдером claude приводит только auto — тогда адрес и
+		// модель берутся из той же копии, по которой auto решал.
+		if eff, _, ok := AutoOpenAI(cfg); ok {
+			cfg = eff
+		}
+		return askViaOpenAI(ctx, cfg, system, user, schema, maxTokens)
+	case viaCodex:
+		return askViaCodex(ctx, cfg, system, user, schema)
+	case viaCmd:
+		return askViaCmd(ctx, cfg, system, user, schema, maxTokens)
 	}
 	return askViaAPI(ctx, cfg, system, user, schema, maxTokens)
 }
@@ -148,11 +292,12 @@ func askViaCLI(ctx context.Context, cfg *core.Config, system, user string,
 	// У `claude -p` нет параметра формата, поэтому схему просим словами. Ответ
 	// всё равно проверяется разбором — выдумать структуру мимо схемы не выйдет
 	// незамеченным.
-	if schema != nil {
-		raw, _ := json.MarshalIndent(schema, "", "  ")
-		system += i18n.Tr("\n\nОтветь одним объектом JSON строго по этой схеме, без пояснений ") +
-			i18n.Tr("и без обрамления в блок кода:\n\n") + string(raw)
-	}
+	//
+	// Через i18n.Tr эта просьба больше не идёт: её читает модель, а не человек.
+	// Переведённая половина промпта уже однажды разошлась с непереведёнными
+	// правилами, и повторять это незачем. Тот же текст берёт нижняя ступенька
+	// совместимого с OpenAI пути — отсюда общая функция.
+	system = schemaInWords(system, schema)
 	res, err := runClaudeCLI(ctx, cfg, system, user, cfg.Claude.MaxUSDPerCall)
 	if err != nil {
 		return "", core.Spend{}, err

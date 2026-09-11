@@ -49,15 +49,32 @@ type Spend struct {
 }
 
 func ComputeSpend(cfg *Config, model string, in, out, cacheRead, cacheWrite int64) Spend {
-	s := Spend{Model: model, Input: in, Output: out,
-		CacheRead: cacheRead, CacheWrite: cacheWrite}
 	prices := cfg.Claude.Prices
 	if prices == nil {
 		prices = defaultPrices()
 	}
+	return SpendWith(prices, false, model, in, out, cacheRead, cacheWrite)
+}
+
+// SpendWith — расход по своей таблице цен, для всех, кто не Claude.
+//
+// Встроенная таблица сюда не подставляется никогда, и это главное. Провайдеров
+// стало много, цены у них разные, а у модели на своей машине их нет вовсе —
+// показать чужую цену значит соврать в деньгах, а это то, ради чего `steno
+// cost` вообще существует. Не знаем — так и говорим: Spend.String() напечатает
+// «цена для … неизвестна».
+//
+// free — единственное исключение: модель крутится на этой же машине, и ноль
+// у неё не незнание, а правда.
+func SpendWith(prices map[string]Price, free bool, model string, in, out, cacheRead, cacheWrite int64) Spend {
+	s := Spend{Model: model, Input: in, Output: out,
+		CacheRead: cacheRead, CacheWrite: cacheWrite}
 	p, ok := prices[model]
 	if !ok {
-		return s // цену не знаем — токены всё равно сохраним
+		// Цена, заданная руками, главнее «оно же местное»: человек, который
+		// вписал стоимость своего электричества, знает про неё больше нас.
+		s.PriceKnown = free
+		return s
 	}
 	s.PriceKnown = true
 	const m = 1_000_000
@@ -82,7 +99,10 @@ func (s Spend) String() string {
 		base += fmt.Sprintf(i18n.Tr(", кеш %d/%d"), s.CacheRead, s.CacheWrite)
 	}
 	if !s.PriceKnown {
-		return base + fmt.Sprintf(i18n.Tr(" (цена для %s неизвестна — добавь в claude.prices)"), s.Model)
+		// Куда именно вписывать цену, зависит от провайдера, а Spend про него
+		// не знает и знать не должен. Раздел называет `steno cost` — там он
+		// известен; здесь довольно сказать, чего мы не знаем.
+		return base + fmt.Sprintf(i18n.Tr(" (цена для %s неизвестна)"), s.Model)
 	}
 	return base + fmt.Sprintf(" — $%.3f", s.USD)
 }

@@ -446,7 +446,7 @@ func ProcessNote(ctx context.Context, cfg *core.Config, st *core.Store, id strin
 		return err
 	}
 	log.Printf(i18n.Tr("расход: %s"), spend)
-	if err := st.SaveFollowup(id, cfg.Claude.Model, f); err != nil {
+	if err := st.SaveFollowup(id, cfg.BrainModel(), f); err != nil {
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
 	}

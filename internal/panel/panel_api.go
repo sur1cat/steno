@@ -60,6 +60,7 @@ func (p *Panel) api() http.Handler {
 	mux.Handle("POST /api/invite", p.apiGuard(p.apiInvite))
 	mux.Handle("POST /api/upload", p.apiGuard(p.apiUpload))
 	p.noteRoutes(mux)
+	p.specRoutes(mux)
 	return mux
 }
 

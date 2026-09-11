@@ -157,6 +157,50 @@ func cmdSetup(ctx context.Context, args []string) error {
 	return s.write(abs)
 }
 
+// quietSetup — та же настройка, что делает мастер, но без единого вопроса и
+// без единой строки на экран. Заводит её `steno note`, когда настройки нет
+// вовсе: заметке не нужны ни бот, ни Telegram, ни календарь, и спрашивать о
+// них человека, который хочет наговорить мысль, значит его потерять.
+//
+// Ответы — умолчания мастера, кроме двух мест, где умолчание рассчитано на
+// того, кто отвечает: профиль «для себя», а не «команда» (пределы на
+// параллельные созвоны заметке ни к чему), и whisper на этой машине, а не
+// Groq (Groq просит ключ, а спросить его некому). Разбор — подписка Claude
+// Code, если вход выполнен, как выбрал бы и мастер; иначе остаётся auto,
+// который подхватит ключ из окружения, а `steno note` спросит, если нет и
+// его (ensureBrain). Панель — тот же адрес и такой же придуманный пароль.
+// Всё остальное — теми же функциями, что у мастера, и лежит там же: ~/steno,
+// указатель в ~/.config/steno/path, секреты в .env с правами 0600.
+func quietSetup() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	s := &setupState{cfg: core.DefaultConfig(), env: map[string]string{}}
+	s.setLang(i18n.UILang)
+	s.setProfile(setupProfiles()[0])
+	if err := s.setDir(filepath.Join(home, "steno")); err != nil {
+		return "", err
+	}
+	s.useWhisper()
+	if ok, _ := brain.ClaudeCLIAvailable(); ok {
+		s.useClaudeCLI()
+	}
+	s.setPanel(defaultPanelAddr, randomPassword())
+	w, err := s.save(filepath.Join(s.dir, core.DefaultConfigPath))
+	if err != nil {
+		return "", err
+	}
+	// База — тут же, с каналами из этой настройки. Иначе первая же команда
+	// рапортовала бы «перенёс 6 каналов из конфига в базу — дальше правь их в
+	// панели» человеку, который ни конфига не писал, ни панели не видел.
+	if st, err := core.OpenStore(s.cfg.DataDir); err == nil {
+		_, _ = core.ImportChannels(st, s.cfg)
+		st.Close()
+	}
+	return w.config, nil
+}
+
 // --- шаги --------------------------------------------------------------------
 
 // askLang — первым вопросом и до всего остального: дальше мастер говорит на
@@ -175,12 +219,23 @@ func (s *setupState) askLang(context.Context) error {
 		"English " + dim("CLI, terminal interface, panel"),
 		"Русский " + dim("CLI, терминальный интерфейс, панель"),
 	}, def)
-	s.cfg.Lang = []string{i18n.LangEN, i18n.LangRU}[i]
+	s.setLang([]string{i18n.LangEN, i18n.LangRU}[i])
+	return nil
+}
+
+// Ниже у каждого шага мастера есть пара «спросить» и «применить»: askLang
+// спрашивает, setLang применяет. Разделены они ради quietSetup — настройки без
+// единого вопроса, которую `steno note` заводит сама. Она собирается из тех
+// же «применить», что и мастер, и потому не может стать третьей формой
+// конфига: другой каталог, другой путь к адаптеру, забытый указатель или
+// .gitignore — всё это здесь общее.
+
+func (s *setupState) setLang(lang string) {
+	s.cfg.Lang = lang
 	i18n.SetLang(s.cfg.Lang)
 	// Часть умолчаний зависит от языка, а конфиг собран до этого вопроса:
 	// имя бота, язык субтитров, язык follow-up и маркер календаря.
 	core.ApplyLangDefaults(s.cfg)
-	return nil
 }
 
 func (s *setupState) askProfile(context.Context) error {
@@ -189,13 +244,15 @@ func (s *setupState) askProfile(context.Context) error {
 	for _, p := range setupProfiles() {
 		opts = append(opts, p.Name+" — "+dim(p.About))
 	}
-	i := s.choose(i18n.Tr("Как будете пользоваться?"), opts, 1)
-	s.profile = setupProfiles()[i]
-
-	s.cfg.Calendar.MaxConcurrent = s.profile.MaxConcurrentMeetings
-	s.cfg.Transcribe.MaxConcurrent = s.profile.MaxConcurrentWhisper
-	s.cfg.Claude.Effort = s.profile.Effort
+	s.setProfile(setupProfiles()[s.choose(i18n.Tr("Как будете пользоваться?"), opts, 1)])
 	return nil
+}
+
+func (s *setupState) setProfile(p setupProfile) {
+	s.profile = p
+	s.cfg.Calendar.MaxConcurrent = p.MaxConcurrentMeetings
+	s.cfg.Transcribe.MaxConcurrent = p.MaxConcurrentWhisper
+	s.cfg.Claude.Effort = p.Effort
 }
 
 // askData выбирает каталог и заводит его сам. Раньше мастер молча писал в
@@ -232,6 +289,15 @@ func (s *setupState) askData(context.Context) error {
 			break
 		}
 	}
+	if err := s.setDir(abs); err != nil {
+		return err
+	}
+	fmt.Println(ok(abs))
+	return nil
+}
+
+// setDir заводит каталог настройки и данных. Конфиг ляжет в него же — см. write.
+func (s *setupState) setDir(abs string) error {
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return fmt.Errorf(i18n.Tr("не создался каталог: %w"), err)
 	}
@@ -240,7 +306,6 @@ func (s *setupState) askData(context.Context) error {
 	if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf(i18n.Tr("не создался каталог: %w"), err)
 	}
-	fmt.Println(ok(abs))
 	return nil
 }
 
@@ -268,14 +333,18 @@ func (s *setupState) askTranscribe(ctx context.Context) error {
 			fmt.Println(ok(i18n.Tr("ключ записан")))
 		}
 	case 1:
-		s.cfg.Transcribe.Source = "command"
-		s.cfg.Transcribe.Cmd = []string{core.FindAdapter("whisper-cpp.sh"), "{{audio}}", "{{language}}"}
+		s.useWhisper()
 		s.checkWhisper()
 	case 2:
 		s.cfg.Transcribe.Source = "captions"
 		fmt.Println(dim(i18n.Tr("  Текст возьмётся из субтитров Meet. Имена говорящих в нём уже есть.")))
 	}
 	return nil
+}
+
+func (s *setupState) useWhisper() {
+	s.cfg.Transcribe.Source = "command"
+	s.cfg.Transcribe.Cmd = []string{core.FindAdapter("whisper-cpp.sh"), "{{audio}}", "{{language}}"}
 }
 
 // checkWhisper смотрит, чего не хватает, и говорит, чем это ставится. Узнать об
@@ -329,47 +398,71 @@ func (s *setupState) checkWhisper() {
 }
 
 func (s *setupState) askClaude(ctx context.Context) error {
-	section(i18n.Tr("Claude — он собирает follow-up"))
+	section(i18n.Tr("Кто собирает follow-up"))
 
-	// Два пути, и выбор между ними не про цену, а про то, кто запускает.
-	// Подписка идёт через `claude -p` — штатный неинтерактивный режим Claude
-	// Code. Отдельно платить не надо, но нужен выполненный вход, который делает
+	// Четыре пути, и выбор между ними не про вендора, а про то, чем человек
+	// платит и что у него уже стоит. Две подписки (Claude Code и ChatGPT) не
+	// требуют отдельного счёта, но требуют выполненного входа, который делает
 	// человек: на сервере, куда никто не заходит, это не работает. Поэтому
-	// подписку предлагаем первой только если CLI уже готов.
+	// подписку предлагаем первой только если её CLI уже готов.
+	//
+	// Порядок первых двух не менялся с тех пор, как их было всего два: у людей
+	// записаны установки «выбери 1» и «выбери 2», и переставлять их значит
+	// молча переключить чью-то установку на другой способ платить.
 	cliOK, cliNote := brain.ClaudeCLIAvailable()
+	codexOK, codexNote := brain.CodexCLIAvailable()
 	opts := []string{
 		i18n.Tr("Подписка Claude ") + dim(i18n.Tr("через claude -p, отдельный ключ не нужен")),
-		i18n.Tr("Ключ API ") + dim(i18n.Tr("нужен для сервера: работает без входа человеком")),
+		i18n.Tr("Ключ Anthropic ") + dim(i18n.Tr("нужен для сервера: работает без входа человеком")),
+		i18n.Tr("Совместимый с OpenAI ") +
+			dim(i18n.Tr("OpenAI, Groq, OpenRouter, DeepSeek — или своя модель на этой машине")),
+		i18n.Tr("Подписка ChatGPT ") + dim(i18n.Tr("через codex exec, схема соблюдается точнее всех")),
+		i18n.Tr("Свой скрипт ") + dim(i18n.Tr("всё остальное: llamafile, своя обёртка, эндпоинт за VPN")),
 	}
 	if cliOK {
 		opts[0] += "\n     " + ok(cliNote)
 	} else {
 		opts[0] += "\n     " + warn(cliNote)
 	}
+	if codexOK {
+		opts[3] += "\n     " + ok(codexNote)
+	} else {
+		opts[3] += "\n     " + warn(codexNote)
+	}
 	def := 1
 	if cliOK {
 		def = 0
 	}
-	if s.choose(i18n.Tr("Чем платить за follow-up"), opts, def) == 0 {
-		s.cfg.Claude.Via = "cli"
+	switch s.choose(i18n.Tr("Чем платить за follow-up"), opts, def) {
+	case 0:
+		s.useClaudeCLI()
 		if !cliOK {
 			fmt.Println(warn(i18n.Tr("CLI пока не готов — steno скажет об этом при первом созвоне")))
 			fmt.Println(dim(i18n.Tr("  поставь Claude Code и войди: claude auth login")))
 		}
-		// Потолок на запрос: у подписки нет счёта, который придёт в конце
-		// месяца, но есть лимит, который можно выбрать одним циклом.
-		if s.cfg.Claude.MaxUSDPerCall == 0 {
-			s.cfg.Claude.MaxUSDPerCall = 2
-		}
 		fmt.Println(dim(i18n.Tr("  Потолок на один follow-up: $") +
 			strconv.FormatFloat(s.cfg.Claude.MaxUSDPerCall, 'f', -1, 64) +
 			i18n.Tr(" — меняется в claude.max_usd_per_call")))
-	} else {
-		s.cfg.Claude.Via = "api"
+	case 1:
+		s.useClaudeKey()
 		key := s.askSecret(i18n.Tr("Ключ Anthropic"), "console.anthropic.com → API keys")
 		if key != "" {
 			s.env["ANTHROPIC_API_KEY"] = key
 		}
+	case 2:
+		s.askOpenAI()
+		return nil
+	case 3:
+		s.cfg.Brain.Provider = core.ProviderCodex
+		if !codexOK {
+			fmt.Println(warn(i18n.Tr("codex пока не готов — steno скажет об этом при первом созвоне")))
+			fmt.Println(dim(i18n.Tr("  поставь его и войди: npm i -g @openai/codex, потом codex")))
+		}
+		s.cfg.Brain.Codex.Model = s.ask(i18n.Tr("Модель (пусто — та, что у codex по умолчанию)"), "")
+		return nil
+	case 4:
+		s.askLLMScript()
+		return nil
 	}
 
 	i := s.choose(i18n.Tr("Модель"), []string{
@@ -380,6 +473,119 @@ func (s *setupState) askClaude(ctx context.Context) error {
 	fmt.Println(dim(i18n.Tr("  Усилие: ") + s.cfg.Claude.Effort + i18n.Tr(". Выше поднимать смысла нет: на замерах")))
 	fmt.Println(dim(i18n.Tr("  усилие не добавило ни одной задачи, только время и расход.")))
 	return nil
+}
+
+func (s *setupState) useClaudeCLI() {
+	s.cfg.Claude.Via = "cli"
+	// Потолок на запрос: у подписки нет счёта, который придёт в конце
+	// месяца, но есть лимит, который можно выбрать одним циклом.
+	if s.cfg.Claude.MaxUSDPerCall == 0 {
+		s.cfg.Claude.MaxUSDPerCall = 2
+	}
+}
+
+func (s *setupState) useClaudeKey() { s.cfg.Claude.Via = "api" }
+
+// useOpenAI — совместимый с OpenAI адрес по заготовке. Свой адрес и имя
+// переменной с ключом askOpenAI дописывает сверху: у заготовок они свои.
+func (s *setupState) useOpenAI(preset, model string) {
+	s.cfg.Brain.Provider = core.ProviderOpenAI
+	s.cfg.Brain.OpenAI.Preset = preset
+	s.cfg.Brain.OpenAI.Model = model
+	// json_mode оставляем на "auto": какие модели за этим адресом умеют строгую
+	// схему, отсюда не видно, а лишний вопрос на установке — это шанс ответить
+	// неверно и получить отказ на первом же созвоне.
+	s.cfg.Brain.OpenAI.JSONMode = "auto"
+}
+
+// askLLMScript — модель через внешний скрипт. Договор описан словами в
+// adapters/ollama.sh; сам скрипт спрашиваем здесь и только здесь: в панели
+// такого поля нет и не будет — она открыта всей команде по общему паролю, а
+// поле, из которого сервис запускает команду, это чужой шелл на этой машине.
+func (s *setupState) askLLMScript() {
+	s.cfg.Brain.Provider = core.ProviderCommand
+	fmt.Println(dim(i18n.Tr("  Скрипт получает запрос объектом JSON в stdin и отвечает объектом JSON")))
+	fmt.Println(dim(i18n.Tr("  в stdout. Договор целиком — в шапке adapters/ollama.sh, с него же")))
+	fmt.Println(dim(i18n.Tr("  удобно списать свой.")))
+	fmt.Println()
+
+	def := "./adapters/ollama.sh"
+	path := brain.ExpandHome(s.ask(i18n.Tr("Скрипт"), def))
+	s.cfg.LLM.Cmd = []string{path}
+	s.cfg.LLM.Model = s.ask(i18n.Tr("Модель (её имя уедет скрипту полем model)"), "llama3.1")
+
+	// `ok` здесь — имя функции вывода, поэтому результат проверки зовём иначе.
+	ready, why := brain.LLMCmdAvailable(s.cfg)
+	if ready {
+		fmt.Println(ok(why))
+	} else {
+		fmt.Println(warn(why))
+		fmt.Println(dim(i18n.Tr("  steno скажет об этом ещё раз при первом созвоне")))
+	}
+}
+
+// customLLMKeyEnv — имя переменной для ключа к своему адресу. Одно на всех:
+// у заготовок имя приходит от провайдера, а тут его брать неоткуда.
+const customLLMKeyEnv = "STENO_LLM_API_KEY"
+
+// askOpenAI — настройка любого сервера, говорящего на диалекте OpenAI.
+//
+// Заготовки здесь — только чтобы не набирать адрес руками. Последним пунктом
+// всегда стоит «свой адрес»: смысл этого пути в том, что провайдера не надо
+// добавлять в steno, — иначе получился бы тот же захардкоженный список, только
+// длиннее.
+func (s *setupState) askOpenAI() {
+	presets := core.OpenAIPresets()
+	opts := make([]string, 0, len(presets))
+	for _, p := range presets {
+		line := p.Name
+		if p.BaseURL != "" {
+			line += " " + dim(p.BaseURL)
+		}
+		if p.Hint != "" {
+			line += "\n     " + dim(p.Hint)
+		}
+		opts = append(opts, line)
+	}
+	p := presets[s.choose(i18n.Tr("Куда ходить"), opts, 0)]
+	if p.Key == core.PresetCustom {
+		s.cfg.Brain.OpenAI.BaseURL = s.ask(i18n.Tr("Адрес (обычно кончается на /v1)"), "")
+	}
+	s.useOpenAI(p.Key, s.ask(i18n.Tr("Модель"), p.Model))
+
+	// Ключ спрашиваем только там, где он нужен. У модели на своей машине его не
+	// бывает, и вопрос про него читается как «а вдруг всё-таки надо».
+	switch {
+	case p.Local:
+		fmt.Println(dim(i18n.Tr("  Ключ не нужен, расход нулевой — модель на этой же машине.")))
+		fmt.Println(dim(i18n.Tr("  Запусти её до первого созвона: steno скажет, если не достучится.")))
+	case p.KeyEnv != "":
+		// Groq уже мог спросить ключ на шаге расшифровки — он там тот же самый.
+		// Спрашивать второй раз значит либо получить его дважды, либо получить
+		// пустую строку и стереть первый.
+		if s.env[p.KeyEnv] != "" {
+			fmt.Println(ok(i18n.Tr("ключ ") + p.KeyEnv + i18n.Tr(" уже задан выше — беру его")))
+			break
+		}
+		if key := s.askSecret(i18n.Tr("Ключ"), p.Hint); key != "" {
+			s.env[p.KeyEnv] = key
+		}
+	default:
+		// Свой адрес: имя переменной выбираем сами. В панели его всё равно не
+		// увидят — там секретов нет ни в каком виде, — а человеку одним именем
+		// меньше держать в голове.
+		s.cfg.Brain.OpenAI.APIKeyEnv = customLLMKeyEnv
+		if key := s.askSecret(i18n.Tr("Ключ (пусто — если сервер его не спрашивает)"), ""); key != "" {
+			s.env[customLLMKeyEnv] = key
+		} else {
+			s.cfg.Brain.OpenAI.APIKeyEnv = ""
+		}
+	}
+
+	if !p.Local {
+		fmt.Println(dim(i18n.Tr("  Цена этой модели steno неизвестна: `steno cost` покажет токены,")))
+		fmt.Println(dim(i18n.Tr("  а деньги — только если впишешь её в brain.openai.prices.")))
+	}
 }
 
 func (s *setupState) askSources(ctx context.Context) error {
@@ -457,16 +663,18 @@ func (s *setupState) askTargets(ctx context.Context) error {
 	return nil
 }
 
+// defaultPanelAddr — адрес панели, который мастер подставляет в скобки.
+const defaultPanelAddr = "127.0.0.1:8422"
+
 func (s *setupState) askPanel(ctx context.Context) error {
 	section(i18n.Tr("Панель"))
-	s.cfg.Panel.Enabled = true
-	s.cfg.Panel.Addr = s.ask(i18n.Tr("Адрес"), "127.0.0.1:8422")
+	addr := s.ask(i18n.Tr("Адрес"), defaultPanelAddr)
 	pass := s.askSecret(i18n.Tr("Пароль (общий на команду)"), "")
 	if pass == "" {
 		pass = randomPassword()
 		fmt.Println(ok(i18n.Tr("сгенерировал: ") + pass))
 	}
-	s.env["STENO_PANEL_PASSWORD"] = pass
+	s.setPanel(addr, pass)
 	if !strings.HasPrefix(s.cfg.Panel.Addr, "127.0.0.1") &&
 		!strings.HasPrefix(s.cfg.Panel.Addr, "localhost") {
 		s.cfg.Panel.Secure = s.confirm(i18n.Tr("Панель за HTTPS?"), true)
@@ -477,49 +685,26 @@ func (s *setupState) askPanel(ctx context.Context) error {
 	return nil
 }
 
+func (s *setupState) setPanel(addr, pass string) {
+	s.cfg.Panel.Enabled = true
+	s.cfg.Panel.Addr = addr
+	s.env["STENO_PANEL_PASSWORD"] = pass
+}
+
 // --- запись ------------------------------------------------------------------
 
 func (s *setupState) write(configPath string) error {
 	section(i18n.Tr("Готово"))
-
-	// Секреты кладём отдельным файлом с правами 0600 и не пускаем в конфиг:
-	// конфиг хочется держать в репозитории, а токены — нет.
-	envPath := filepath.Join(s.dir, ".env")
-	if len(s.env) > 0 {
-		var b strings.Builder
-		b.WriteString(i18n.Tr("# Секреты steno. Файл читается при запуске.\n"))
-		b.WriteString(i18n.Tr("# Не клади его в репозиторий: тут ключи, а не настройки.\n\n"))
-		for _, k := range core.SortedKeys(s.env) {
-			fmt.Fprintf(&b, "%s=%s\n", k, s.env[k])
-		}
-		if err := os.WriteFile(envPath, []byte(b.String()), 0o600); err != nil {
-			return fmt.Errorf(i18n.Tr("не записался %s: %w"), envPath, err)
-		}
-		fmt.Println(ok(envPath + "  " + dim(i18n.Tr("права 0600, ")+strconv.Itoa(len(s.env))+i18n.Tr(" секретов"))))
-	}
-
-	// Каталог мог поменяться на шаге «Где хранить»: конфиг кладём туда же, где
-	// данные, а не туда, откуда запустили мастер.
-	if !s.dirChosen {
-		configPath = filepath.Join(s.dir, filepath.Base(configPath))
-	}
-	raw, err := marshalConfig(s.cfg)
+	w, err := s.save(configPath)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(configPath, raw, 0o644); err != nil {
-		return err
+	if w.env != "" {
+		fmt.Println(ok(w.env + "  " + dim(i18n.Tr("права 0600, ")+strconv.Itoa(w.secrets)+i18n.Tr(" секретов"))))
 	}
-	fmt.Println(ok(configPath))
-	// Запоминаем, где настройка: иначе команды, набранные из другого каталога,
-	// берут умолчания и ведут себя так, будто настройки не было.
-	core.RememberConfigPath(configPath)
-
-	// .gitignore рядом с секретами — чтобы они не уехали в первый же коммит.
-	gi := filepath.Join(s.dir, ".gitignore")
-	if _, err := os.Stat(gi); os.IsNotExist(err) && len(s.env) > 0 {
-		_ = os.WriteFile(gi, []byte(".env\ndata/\n"), 0o644)
-		fmt.Println(ok(gi + "  " + dim(i18n.Tr("чтобы .env не уехал в репозиторий"))))
+	fmt.Println(ok(w.config))
+	if w.gitignore != "" {
+		fmt.Println(ok(w.gitignore + "  " + dim(i18n.Tr("чтобы .env не уехал в репозиторий"))))
 	}
 
 	fmt.Println()
@@ -537,6 +722,66 @@ func (s *setupState) write(configPath string) error {
 	fmt.Printf("  steno join --no-followup --captions %s\n",
 		dim(i18n.Tr("https://meet.google.com/… или https://meet.jit.si/…")))
 	return nil
+}
+
+// written — что save положил на диск; пустая строка — файл не писался.
+type written struct {
+	env       string
+	secrets   int
+	config    string
+	gitignore string
+}
+
+// save записывает всё, что мастер собрал: .env, конфиг, указатель на него и
+// .gitignore. Без единой строки на экран — этим же путём идёт quietSetup.
+func (s *setupState) save(configPath string) (written, error) {
+	var w written
+	// Секреты кладём отдельным файлом с правами 0600 и не пускаем в конфиг:
+	// конфиг хочется держать в репозитории, а токены — нет.
+	// Общий секрет для вызова по ссылке. Заводим всегда, а не по вопросу: канал
+	// включают потом в панели, а секретов в панели нет и не будет — и человек
+	// остался бы с портом, который отказывается подниматься.
+	if s.env["STENO_HTTP_TOKEN"] == "" {
+		s.env["STENO_HTTP_TOKEN"] = randomPassword() + randomPassword()
+	}
+	envPath := filepath.Join(s.dir, ".env")
+	if len(s.env) > 0 {
+		var b strings.Builder
+		b.WriteString(i18n.Tr("# Секреты steno. Файл читается при запуске.\n"))
+		b.WriteString(i18n.Tr("# Не клади его в репозиторий: тут ключи, а не настройки.\n\n"))
+		for _, k := range core.SortedKeys(s.env) {
+			fmt.Fprintf(&b, "%s=%s\n", k, s.env[k])
+		}
+		if err := os.WriteFile(envPath, []byte(b.String()), 0o600); err != nil {
+			return w, fmt.Errorf(i18n.Tr("не записался %s: %w"), envPath, err)
+		}
+		w.env, w.secrets = envPath, len(s.env)
+	}
+
+	// Каталог мог поменяться на шаге «Где хранить»: конфиг кладём туда же, где
+	// данные, а не туда, откуда запустили мастер.
+	if !s.dirChosen {
+		configPath = filepath.Join(s.dir, filepath.Base(configPath))
+	}
+	raw, err := marshalConfig(s.cfg)
+	if err != nil {
+		return w, err
+	}
+	if err := os.WriteFile(configPath, raw, 0o644); err != nil {
+		return w, err
+	}
+	w.config = configPath
+	// Запоминаем, где настройка: иначе команды, набранные из другого каталога,
+	// берут умолчания и ведут себя так, будто настройки не было.
+	core.RememberConfigPath(configPath)
+
+	// .gitignore рядом с секретами — чтобы они не уехали в первый же коммит.
+	gi := filepath.Join(s.dir, ".gitignore")
+	if _, err := os.Stat(gi); os.IsNotExist(err) && len(s.env) > 0 {
+		_ = os.WriteFile(gi, []byte(".env\ndata/\n"), 0o644)
+		w.gitignore = gi
+	}
+	return w, nil
 }
 
 // --- ввод --------------------------------------------------------------------

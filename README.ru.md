@@ -22,11 +22,32 @@
 [![Сколько стоит](https://img.shields.io/badge/$%20%20Сколько%20стоит-24382E?style=for-the-badge&labelColor=0b0f0d)](#сколько-это-ест)
 [![Релизы](https://img.shields.io/badge/⤓%20%20Релизы-24382E?style=for-the-badge&labelColor=0b0f0d)](https://github.com/sur1cat/steno/releases/latest)
 
+<!-- assets/note.gif: настоящий прогон `steno note`, записывается vhs по assets/note.tape.
+     Раскомментировать, когда файл появится:
+<img src="assets/note.gif" width="835" alt="steno note: наговорил, нажал Enter — заметка вернулась задачами, решениями и открытыми вопросами">
+-->
+
+</div>
+
+Попробовать за полминуты — без аккаунта, без Docker, ничего не настраивая:
+
+```console
+brew install sur1cat/tap/steno && steno note
+```
+
+Наговорил, нажал Enter. whisper расшифровывает на этой же машине — при первом
+запуске предложит скачать модель, один Enter. Разбирает то, что у тебя уже
+есть: подписка Claude Code или любой ключ Anthropic, OpenAI, Groq, OpenRouter
+из окружения. Задачи, решения и открытые вопросы печатаются тут же и остаются
+в проектах.
+
+## Бот на созвонах
+
+<div align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/intro-ru-dark.svg">
   <img src="assets/intro-ru-light.svg" width="1000" alt="Шесть шагов и то, чем созвон становится на каждом: строка в календаре, звук и субтитры, два файла на диске, расшифровка с именами, follow-up с исполнителями и сроками, и куда всё это ушло">
 </picture>
-
 </div>
 
 Бот заходит в созвон, пишет разговор, расшифровывает и собирает follow-up:

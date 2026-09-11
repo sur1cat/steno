@@ -239,22 +239,44 @@ export interface SettingsProject {
 // открыл панель посмотреть, куда уходит follow-up, показывать нечего.
 // Лишние поля в ответе сервера здесь просто не описаны и никем не читаются.
 
+export interface ChannelOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
 export interface ChannelField {
   key: string;
   label: string;
   /**
    * «list» — набор значений; по проводу это строка через запятую.
+   * «select» — выбор одного из options.
    * «google» — не поле, а кнопка «Подключить Google»: значения не хранит.
    */
-  kind: "text" | "list" | "number" | "duration" | "switch" | "google";
+  kind: "text" | "list" | "number" | "duration" | "switch" | "select" | "google";
   hint: string;
   placeholder: string;
+  options?: ChannelOption[];
+  /**
+   * Показывать поле, только когда поле showWhen равно showValue. Нужно разделу
+   * «Разбор»: адрес и имя модели имеют смысл лишь у одного из провайдеров, а
+   * спрашивать про адрес OpenAI того, кто выбрал подписку Claude, — значит
+   * заставить его гадать, обязательно это или нет.
+   */
+  showWhen?: string;
+  showValue?: string;
 }
 
 export interface Channel {
   key: string;
   name: string;
   about: string;
+  /**
+   * «io» — канал: приносит созвоны или уносит follow-up, и его можно выключить.
+   * «brain» — раздел «Разбор»: выключателя у него нет, слова «вход» и «выход» к
+   * нему не относятся, а форма та же самая.
+   */
+  kind: "io" | "brain";
   in: boolean;
   out: boolean;
   enabled: boolean;

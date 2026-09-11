@@ -57,9 +57,9 @@ func TestParseJoinRequestJSON(t *testing.T) {
 	body := []byte(`{"url":"https://meet.google.com/abc-defg-hij","title":"Планёрка"}`)
 	r := httptest.NewRequest("POST", "/join", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
-	u, title, reply := parseJoinRequest(r, body, "токен")
-	if u != "https://meet.google.com/abc-defg-hij" || title != "Планёрка" {
-		t.Fatalf("получили %q / %q", u, title)
+	u, title, reply, why := parseJoinRequest(r, body, "токен")
+	if u != "https://meet.google.com/abc-defg-hij" || title != "Планёрка" || why != nil {
+		t.Fatalf("получили %q / %q / %v", u, title, why)
 	}
 	// Обратный адрес из тела не принимается: иначе владелец общего токена
 	// заставил бы бота опубликовать чужой follow-up куда захочет.
@@ -75,7 +75,7 @@ func TestParseJoinRequestSlackForm(t *testing.T) {
 	r := httptest.NewRequest("POST", "/join", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	u, _, reply := parseJoinRequest(r, body, "slack")
+	u, _, reply, _ := parseJoinRequest(r, body, "slack")
 	if u != "https://meet.google.com/abc-defg-hij" {
 		t.Fatalf("получили %q", u)
 	}
@@ -85,7 +85,7 @@ func TestParseJoinRequestSlackForm(t *testing.T) {
 
 	// Тот же запрос, но подтверждённый только общим токеном: channel_id никем
 	// не подписан, значит обратному адресу верить нельзя.
-	if _, _, r2 := parseJoinRequest(r, body, "токен"); !r2.Empty() {
+	if _, _, r2, _ := parseJoinRequest(r, body, "токен"); !r2.Empty() {
 		t.Fatalf("взяли неподтверждённый channel_id: %+v", r2)
 	}
 }

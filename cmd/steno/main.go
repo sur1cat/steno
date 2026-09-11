@@ -83,6 +83,8 @@ const usage = `steno — заметки и follow-up с созвонов.
                              --word а,б     сервисы и сокращения проекта
   steno projects rm <имя>    убрать проект из реестра
   steno context [проект]     собрать справки о проектах по коду и сайтам
+  steno spec                 ТЗ по задачам с созвонов: собрать, показать,
+                             отдать агенту (steno spec help — подробно)
   steno bot --url <u>        сам бот; запускается внутри контейнера
 
 Общие флаги:
@@ -139,7 +141,7 @@ func main() {
 	case "rm":
 		err = cmdMeetingRm(args)
 	case "doctor":
-		err = cmdDoctor(args)
+		err = cmdDoctor(ctx, args)
 	case "demo":
 		err = cmdDemo(ctx, args)
 	case "mcp":
@@ -150,6 +152,8 @@ func main() {
 		err = cmdCost(args)
 	case "projects":
 		err = cmdProjects(args)
+	case "spec":
+		err = cmdSpec(ctx, args)
 	case "context":
 		err = cmdContext(ctx, args)
 	case "prune":
@@ -259,9 +263,28 @@ func open(configPath string) (*core.Config, *core.Store, error) {
 	}
 	// База главнее конфига: канал, выключенный в панели, должен остаться
 	// выключенным и после перезапуска.
+	//
+	// У раздела «Разбор» это же правило больно кусается, и потому о нём надо
+	// говорить вслух. Каналы человек и так правит в панели, а провайдера
+	// описывают в steno.json — так написано и в примере конфига, и в README.
+	// Правка файла после того, как выбор сделан кнопкой, не делает ничего, и
+	// молчать об этом значит отправить человека искать, почему steno ходит не
+	// туда, куда написано.
+	fromFile := cfg.BrainSummary()
 	if err := core.ApplyChannels(st, cfg); err != nil {
 		st.Close()
 		return nil, nil, fmt.Errorf(i18n.Tr("настройки каналов: %w"), err)
+	}
+	if inDB := cfg.BrainSummary(); inDB != fromFile && configPath != "" {
+		log.Printf(i18n.Tr("разбор: взял из базы «%s», а не «%s» из конфига — выбор делается в панели"),
+			inDB, fromFile)
+	}
+	// Провайдера никто не выбирал, Claude нет, а ключ Groq или OpenAI в
+	// окружении есть — берём его, и прямо в конфиг: имя модели отсюда уходит в
+	// базу рядом с follow-up и в `steno cost`. Молча нельзя — иначе человек с
+	// ключом Groq ради расшифровки удивится, кто разобрал его созвон.
+	if note, ok := brain.ApplyAutoOpenAI(cfg); ok {
+		log.Printf(i18n.Tr("разбор: %s"), note)
 	}
 	return cfg, st, nil
 }
@@ -697,7 +720,7 @@ func cmdCost(args []string) error {
 	defer st.Close()
 
 	since := time.Now().AddDate(0, 0, -days)
-	usd, in, out, n, err := st.TotalSpend(since)
+	usd, in, out, n, unpriced, err := st.TotalSpend(since)
 	if err != nil {
 		return err
 	}
@@ -707,7 +730,22 @@ func cmdCost(args []string) error {
 	}
 	fmt.Printf(i18n.Tr("за %d дней: %d follow-up, $%.2f\n"), days, n, usd)
 	fmt.Printf(i18n.Tr("  токенов: вход %d, выход %d\n"), in, out)
-	fmt.Printf(i18n.Tr("  в среднем: $%.3f за созвон\n"), usd/float64(n))
+	if priced := n - unpriced; priced > 0 {
+		fmt.Printf(i18n.Tr("  в среднем: $%.3f за созвон\n"), usd/float64(priced))
+	}
+	// Разбор ценой не считается — и молчать об этом нельзя. Ноль в деньгах
+	// читается как «бесплатно», а провайдер, цены которого steno не знает,
+	// пришлёт счёт независимо от того, что тут напечатано.
+	if unpriced > 0 {
+		fmt.Printf(i18n.Tr("\nИз них %d без цены: steno не знает, сколько стоит эта модель, и в сумму\n"), unpriced)
+		fmt.Printf(i18n.Tr("они не вошли. Цены задаются таблицей — %s.\n"), pricesKnob(cfg))
+	}
+	// Совет про усилие — только там, где усилие есть: у остальных провайдеров
+	// ни effort, ни claude.model нет вовсе, и звать туда человека значит
+	// послать его искать настройку, которой у него не заведено.
+	if cfg.BrainProvider() != core.ProviderClaude {
+		return nil
+	}
 	// Про effort говорим тот, что стоит на самом деле: совет «снизь high» на
 	// установке с medium читается как «инструмент не смотрит на конфиг».
 	eff := cfg.Claude.Effort
@@ -722,6 +760,20 @@ func cmdCost(args []string) error {
 		fmt.Print(i18n.Tr("рассуждение модели, а не сам follow-up. Дорого — сначала claude.effort.\n"))
 	}
 	return nil
+}
+
+// pricesKnob — где у выбранного провайдера лежит таблица цен. Называть все три
+// сразу значит заставить человека выбирать из них наугад.
+func pricesKnob(cfg *core.Config) string {
+	switch cfg.BrainProvider() {
+	case core.ProviderOpenAI:
+		return "brain.openai.prices"
+	case core.ProviderCommand:
+		return i18n.Tr("llm.prices — или пусть скрипт считает сам, полем usd")
+	case core.ProviderCodex:
+		return i18n.Tr("расход по подписке codex не сообщает вовсе")
+	}
+	return "claude.prices"
 }
 
 func cmdTranscript(args []string) error {

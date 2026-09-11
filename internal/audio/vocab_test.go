@@ -72,13 +72,17 @@ func TestVocabularyCollectsPeopleAndServices(t *testing.T) {
 	}}
 	m := &core.Meeting{Participants: []string{"Rustem Turgeldin"}}
 
-	got := MeetingVocabulary(context.Background(), cfg, nil, m)
+	v := MeetingVocabulary(context.Background(), cfg, nil, m)
+	if v == nil {
+		t.Fatal("словарь со словами от человека не собрался")
+	}
+	got := v.Prompt(promptBudget)
 	t.Logf("подсказка при живом бюджете: %s", got)
 
 	// Просторный бюджет — чтобы видеть весь собранный словарь, а не только то,
 	// что влезло. Собирается и режется это в разных местах, и проверять их
 	// вместе значит не понять, что именно сломалось.
-	wide := &Vocab{}
+	wide := &Vocab{Lang: "ru"}
 	wide.source()
 	wide.addPeople(m.Participants...)
 	wide.source()
@@ -132,21 +136,67 @@ func TestVocabularyCollectsPeopleAndServices(t *testing.T) {
 	// отдельного разбора уехало бы в хвост, к тому, что отсекается первым.
 	order("Орынгали", "Oryngali Karimzhan", "имя вслух важнее подписи в git")
 	order("Орынгали", "аквайринг", "имена людей важнее слов")
+	order("аквайринг", "taxi-kolesa", "слово, вписанное из-за ошибки распознавания, важнее названия проекта")
+	order("taxi-kolesa", "такси", "название проекта важнее псевдонима")
 	order("аквайринг", "worker_sapar", "слово от человека важнее добытого из репозитория")
 	order("Oryngali Karimzhan", "worker_sapar", "имена людей важнее названий")
 	order("worker_sapar", "biometric", "сервис важнее каталога модуля")
 
-	// При живом бюджете первым делом обязаны уцелеть люди и название проекта.
-	for _, want := range []string{"Rustem Turgeldin", "Орынгали", "taxi-kolesa"} {
+	// При живом бюджете первым делом обязаны уцелеть люди и слово, которое
+	// человек вписал сам; название проекта во фразу уже не влезает — оно
+	// нужно модели, а не whisper, и уступает.
+	for _, want := range []string{"Rustem Turgeldin", "Орынгали", "аквайринг"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("при живом бюджете потерялось %q:\n%s", want, got)
 		}
 	}
-	// Подсказка — список через запятую, а не фраза: whisper продолжает её как
-	// текст, и с подводкой вроде «В разговоре встречаются…» он сливает
-	// расшифровку в один абзац.
-	if strings.Contains(got, ":") || !strings.HasSuffix(got, ".") {
-		t.Errorf("подсказка перестала быть списком через запятую: %q", got)
+	if strings.Contains(got, "taxi-kolesa") {
+		t.Errorf("название проекта вытеснило бы слово от человека, а влезло вместе с ним:\n%s", got)
+	}
+	// Подсказка — фраза с точками, люди в одном предложении, названия в другом.
+	// Это измерено на записях (twopass_test.go): список через запятую рушит
+	// границы реплик и вставляет лишние слова, перечень через двоеточие внутри
+	// фразы ведёт себя как список. Форма закреплена дословно — правка каркаса
+	// это новый замер.
+	if !strings.HasPrefix(got, "Созвон команды разработки. Участвуют ") ||
+		!strings.Contains(got, ". Обсуждают ") || !strings.HasSuffix(got, ".") || strings.Contains(got, ":") {
+		t.Errorf("подсказка перестала быть фразой из трёх предложений: %q", got)
+	}
+	if at := strings.Index(all, ". Обсуждают "); at < 0 {
+		t.Errorf("в подсказке нет предложения про названия: %q", all)
+	} else if people := all[:at]; !strings.Contains(people, "Орынгали") || strings.Contains(people, "taxi-kolesa") ||
+		strings.Contains(all[at:], "Oryngali Karimzhan") {
+		t.Errorf("люди и названия перемешались между предложениями: %q", all)
+	}
+	// Одно предложение про людей — один человек: «Участвует», а не «Участвуют».
+	one := &Vocab{Lang: "ru"}
+	one.addPeople("Орынгали")
+	if p := one.Prompt(promptBudget); p != "Созвон команды разработки. Участвует Орынгали." {
+		t.Errorf("фраза про одного человека: %q", p)
+	}
+}
+
+// Фраза строится на языке распознавания: whisper продолжает её как текст, и
+// русская подводка перед английским созвоном — это просьба переводить.
+func TestVocabularyPromptFollowsLanguage(t *testing.T) {
+	v := &Vocab{Lang: "en"}
+	v.addPeople("Anuar", "Rustem")
+	v.addTerms("Sapar")
+	if got, want := v.Prompt(promptBudget), "Development team call. Anuar and Rustem take part. They discuss Sapar."; got != want {
+		t.Errorf("английская фраза:\n     %q\nнужно %q", got, want)
+	}
+	// Язык берётся из настройки распознавания, а при автоопределении — из
+	// языка интерфейса (в тестах он русский).
+	cfg := core.DefaultConfig()
+	cfg.Transcribe.Language = "en"
+	if got := promptLang(cfg); got != "en" {
+		t.Errorf("язык подсказки при language=en: %q", got)
+	}
+	for _, auto := range []string{"", "auto"} {
+		cfg.Transcribe.Language = auto
+		if got := promptLang(cfg); got != "ru" {
+			t.Errorf("язык подсказки при language=%q: %q, ожидали язык интерфейса", auto, got)
+		}
 	}
 }
 
@@ -162,30 +212,48 @@ func TestVocabularySharesBudgetBetweenProjects(t *testing.T) {
 	}
 	cfg.Projects = []core.Project{many, {Name: "zzz", Vocabulary: []string{"каспи", "лотереи"}}}
 
-	got := MeetingVocabulary(context.Background(), cfg, nil, &core.Meeting{})
-	for _, want := range []string{"zzz", "каспи"} {
+	v := MeetingVocabulary(context.Background(), cfg, nil, &core.Meeting{})
+	if v == nil {
+		t.Fatal("словарь не собрался")
+	}
+	got := v.Prompt(promptBudget)
+	// Слова второго проекта идут вперемешку со словами первого, а не после
+	// всех сорока: и первое, и второе его слово обязаны влезть.
+	for _, want := range []string{"каспи", "лотереи"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("второй проект не попал в подсказку (%q):\n%s", want, got)
 		}
+	}
+	if strings.Count(got, "перваяслово") >= 4 {
+		t.Errorf("первый проект выбрал бюджет один:\n%s", got)
 	}
 }
 
 // Участники созвона — самые надёжные имена, какие есть: они из аккаунтов
 // Google, а не из распознавания. Поэтому они первые в списке.
-func TestVocabularyPutsMeetingParticipantsFirst(t *testing.T) {
+func TestVocabularyPutsHandWrittenPeopleBeforeParticipants(t *testing.T) {
 	cfg := core.DefaultConfig()
 	cfg.DataDir = t.TempDir()
 	cfg.Projects = []core.Project{{
-		Name: "taxi-kolesa",
-		// Хоть одно слово, вписанное руками, обязательно: без него подсказка
-		// не отправляется вовсе (см. anyHandWritten).
+		Name:       "taxi-kolesa",
+		People:     []string{"Орынгали"},
 		Vocabulary: []string{"Сапар"},
 		Sources:    []core.Source{{Kind: "path", Value: vocabRepo(t)}},
 	}}
-	got := MeetingVocabulary(context.Background(), cfg, nil,
-		&core.Meeting{Participants: []string{"Айгерим Сатпаева"}})
-	if !strings.HasPrefix(got, "Айгерим Сатпаева") {
-		t.Errorf("участник созвона не первый в подсказке: %q", got)
+	v := MeetingVocabulary(context.Background(), cfg, nil,
+		&core.Meeting{Participants: []string{"Rustem Turgeldin"}})
+	if v == nil {
+		t.Fatal("словарь не собрался")
+	}
+	got := v.Prompt(200)
+	// Вписанный руками «Орынгали» обязан стоять раньше участника из Google:
+	// участник латиницей на русскую речь не действует, а слотов во фразе мало.
+	a, b := strings.Index(got, "Орынгали"), strings.Index(got, "Rustem Turgeldin")
+	if a < 0 || b < 0 {
+		t.Fatalf("в подсказке нет одного из имён: %q", got)
+	}
+	if a > b {
+		t.Errorf("участник из Google встал раньше вписанного руками: %q", got)
 	}
 }
 
@@ -201,17 +269,17 @@ func TestVocabularyStaysSilentWithoutHandWrittenWords(t *testing.T) {
 		Sources: []core.Source{{Kind: "path", Value: vocabRepo(t)}},
 	}}
 	m := &core.Meeting{Participants: []string{"Айгерим Сатпаева"}}
-	if got := MeetingVocabulary(context.Background(), cfg, nil, m); got != "" {
-		t.Errorf("подсказка собралась без единого слова от человека: %q", got)
+	if got := MeetingVocabulary(context.Background(), cfg, nil, m); got != nil {
+		t.Errorf("подсказка собралась без единого слова от человека: %q", got.Prompt(promptBudget))
 	}
 	// Одно слово руками — и подсказка появляется целиком, вместе с тем,
 	// что добыто из репозитория.
 	cfg.Projects[0].People = []string{"Орынгали"}
-	got := MeetingVocabulary(context.Background(), cfg, nil, m)
-	if got == "" {
+	v := MeetingVocabulary(context.Background(), cfg, nil, m)
+	if v == nil {
 		t.Fatal("вписали человека — подсказка всё равно пустая")
 	}
-	if !strings.Contains(got, "Орынгали") {
+	if got := v.Prompt(promptBudget); !strings.Contains(got, "Орынгали") {
 		t.Errorf("вписанного человека нет в подсказке: %q", got)
 	}
 }
@@ -224,16 +292,17 @@ func TestVocabularyCanBeTurnedOff(t *testing.T) {
 	cfg.Transcribe.Vocabulary = false
 	cfg.Projects = []core.Project{{Name: "taxi-kolesa", Aliases: []string{"такси"}}}
 	if got := MeetingVocabulary(context.Background(), cfg, nil,
-		&core.Meeting{Participants: []string{"Айгерим"}}); got != "" {
-		t.Errorf("словарь выключен, а подсказка собралась: %q", got)
+		&core.Meeting{Participants: []string{"Айгерим"}}); got != nil {
+		t.Errorf("словарь выключен, а подсказка собралась: %q", got.Prompt(promptBudget))
 	}
 }
 
 // Потолок подсказки у whisper — половина текстового контекста модели, около
 // 224 токенов. Проект с полусотней сервисов туда не влезает, и обрезать надо с
-// конца: имена людей важнее названий.
+// конца: имена людей важнее названий. Меряется фраза целиком, с каркасом: у
+// whisper бюджет один на всё.
 func TestVocabularyPromptFitsBudget(t *testing.T) {
-	v := &Vocab{}
+	v := &Vocab{Lang: "ru"}
 	v.addPeople("Орынгали Каримжан", "Ануар Топатаев", "Рустем Тургельдин")
 	for _, s := range []string{
 		"worker_sapar", "worker_realtime", "worker_drivers_sync", "worker_parser",
@@ -254,23 +323,49 @@ func TestVocabularyPromptFitsBudget(t *testing.T) {
 	if strings.Contains(full, "kaspi") {
 		t.Errorf("влезло всё — бюджет ничего не ограничил, проверять нечего:\n%s", full)
 	}
-
-	// Тесный бюджет: людей три, места хватает ровно на них.
-	tight := v.Prompt(40)
-	for _, want := range []string{"Орынгали Каримжан", "Ануар Топатаев", "Рустем Тургельдин"} {
-		if !strings.Contains(tight, want) {
-			t.Errorf("при тесном бюджете потерялось имя %q:\n%s", want, tight)
+	// Живой бюджет с каркасом фразы вмещает два полных имени из трёх; названия
+	// сервисов уступают людям и отсекаются первыми — ни одного не влезло.
+	for _, want := range []string{"Орынгали Каримжан", "Ануар Топатаев"} {
+		if !strings.Contains(full, want) {
+			t.Errorf("при живом бюджете потерялось имя %q:\n%s", want, full)
 		}
 	}
-	if n := wordTokens(tight); n > 40 {
-		t.Errorf("бюджет в 40 токенов не соблюдён: %d токенов в %q", n, tight)
+	if strings.Contains(full, "worker_sapar") {
+		t.Errorf("при живом бюджете уцелело название, а отсекать надо его раньше имён:\n%s", full)
 	}
-	// Названия сервисов уступают именам людей: их отсекает первыми.
-	if strings.Contains(tight, "worker_sapar") {
-		t.Errorf("при тесном бюджете уцелело название, а отсекать надо его:\n%s", tight)
+	if !strings.HasSuffix(full, "Ануар Топатаев.") {
+		t.Errorf("фраза без названий должна кончаться на людях: %q", full)
 	}
-	if len(tight) >= len(full) {
-		t.Errorf("тесный бюджет ничего не обрезал: %q", tight)
+
+	// Просторнее — влезают третье имя и первые сервисы, но не все.
+	wide := v.Prompt(90)
+	for _, want := range []string{"Рустем Тургельдин", "worker_sapar"} {
+		if !strings.Contains(wide, want) {
+			t.Errorf("при бюджете 90 потерялось %q:\n%s", want, wide)
+		}
+	}
+	if strings.Contains(wide, "kaspi") || wordTokens(wide) > 90 {
+		t.Errorf("бюджет 90 не соблюдён: %d токенов в %q", wordTokens(wide), wide)
+	}
+	// Теснее — одно имя, и режется с конца, а не с начала.
+	if tight := v.Prompt(45); tight != "Созвон команды разработки. Участвует Орынгали Каримжан." {
+		t.Errorf("при тесном бюджете ожидали одно первое имя, получили %q", tight)
+	}
+	// Первое слово не влезло — подсказки нет вовсе, а не голый каркас.
+	if got := v.Prompt(30); got != "" {
+		t.Errorf("в бюджет не влезло ни одного слова, а фраза есть: %q", got)
+	}
+	// Список для движков с отдельным входом бюджету whisper не подчиняется:
+	// в нём всё, что собрано, — но не больше сотни.
+	if terms := v.Terms(); len(terms) != 29 || terms[0] != "Орынгали Каримжан" || terms[28] != "kaspi" {
+		t.Errorf("список слов: %d, %v", len(terms), terms)
+	}
+	many := &Vocab{}
+	for i := 0; i < 300; i++ {
+		many.addTerms("слово" + strings.Repeat("х", i%7+1) + strings.Repeat("у", i/7))
+	}
+	if n := len(many.Terms()); n != termsLimit {
+		t.Errorf("список слов не ограничен сотней: %d", n)
 	}
 }
 
@@ -299,14 +394,18 @@ func TestWordTokensNeverUndercounts(t *testing.T) {
 }
 
 // Подсказка уходит адаптеру окружением, а не четвёртым аргументом: форма
-// команды расшифровки записана в конфигах у людей, и менять её нельзя.
+// команды расшифровки записана в конфигах у людей, и менять её нельзя. И в
+// двух видах сразу: фразой в STENO_PROMPT — для whisper, списком в
+// STENO_TERMS — для движков с отдельным входом для словаря.
 func TestTranscriberPassesVocabularyInEnvironment(t *testing.T) {
+	quiet(t)
 	dir := t.TempDir()
 	script := filepath.Join(dir, "adapter.sh")
 	seen := filepath.Join(dir, "seen")
 	mustWriteFile(t, script, "#!/bin/sh\n"+
-		"printf 'args=%s\\n' \"$*\" > "+seen+"\n"+
-		"printf 'prompt=%s\\n' \"$STENO_PROMPT\" >> "+seen+"\n"+
+		"printf 'args=%s\\n' \"$*\" >> "+seen+"\n"+
+		"printf 'prompt=%s\\n' \"${STENO_PROMPT-нет}\" >> "+seen+"\n"+
+		"printf 'terms=%s\\n' \"${STENO_TERMS-нет}\" >> "+seen+"\n"+
 		"echo '{\"segments\":[{\"start\":0,\"end\":1,\"text\":\"тест\"}]}'\n")
 	if err := os.Chmod(script, 0o755); err != nil {
 		t.Fatal(err)
@@ -315,8 +414,10 @@ func TestTranscriberPassesVocabularyInEnvironment(t *testing.T) {
 	cfg.Transcribe.Cmd = []string{script, "{{audio}}", "{{language}}"}
 	cfg.Transcribe.Nice = false
 
-	if _, _, err := RunTranscriber(context.Background(), cfg, "a.ogg",
-		"Орынгали, worker_sapar."); err != nil {
+	v := &Vocab{Lang: "ru"}
+	v.addPeople("Орынгали")
+	v.addTerms("worker_sapar")
+	if _, _, err := RunTranscriber(context.Background(), cfg, "a.ogg", v); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(seen)
@@ -324,11 +425,15 @@ func TestTranscriberPassesVocabularyInEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(raw)
-	if !strings.Contains(got, "prompt=Орынгали, worker_sapar.") {
-		t.Errorf("словарь не дошёл до адаптера через STENO_PROMPT:\n%s", got)
+	if !strings.Contains(got, "prompt=Созвон команды разработки. Участвует Орынгали. Обсуждают worker_sapar.\n") {
+		t.Errorf("фраза не дошла до адаптера через STENO_PROMPT:\n%s", got)
 	}
-	// Аргументов по-прежнему два: путь к аудио и язык.
-	if !strings.Contains(got, "args=a.ogg \n") && !strings.Contains(got, "args=a.ogg\n") {
+	if !strings.Contains(got, "terms=Орынгали, worker_sapar\n") {
+		t.Errorf("список не дошёл до адаптера через STENO_TERMS:\n%s", got)
+	}
+	// Аргументов по-прежнему два: путь к аудио и язык. Адаптер без признака
+	// vocabulary зовётся дважды, и оба раза с той же командой.
+	if n := strings.Count(got, "args=a.ogg \n") + strings.Count(got, "args=a.ogg\n"); n != 2 {
 		t.Errorf("форма команды расшифровки изменилась — чужие конфиги сломаются:\n%s", got)
 	}
 }
@@ -350,7 +455,10 @@ func TestTranscriberOmitsEmptyVocabulary(t *testing.T) {
 	cfg.Transcribe.Cmd = []string{script, "{{audio}}"}
 	cfg.Transcribe.Nice = false
 
-	if _, _, err := RunTranscriber(context.Background(), cfg, "a.ogg", "  "); err != nil {
+	// Словарь без единого полезного слова — то же, что без словаря.
+	empty := &Vocab{}
+	empty.addTerms("  ", "-", "v")
+	if _, _, err := RunTranscriber(context.Background(), cfg, "a.ogg", empty); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(seen)
@@ -359,26 +467,5 @@ func TestTranscriberOmitsEmptyVocabulary(t *testing.T) {
 	}
 	if strings.TrimSpace(string(raw)) != "set=" {
 		t.Errorf("пустой словарь всё равно выставил STENO_PROMPT: %q", raw)
-	}
-}
-
-// Словарь может прийти и не от Vocab.Prompt — из чужого кода, из теста. Потолок
-// whisper он обязан соблюдать всё равно: подсказку сверх потолка whisper
-// обрежет сам, начиная с первых слов, то есть с имён людей.
-func TestVocabularyHintTrimsOverlongInput(t *testing.T) {
-	var parts []string
-	for i := 0; i < 400; i++ {
-		parts = append(parts, "worker_sapar")
-	}
-	got := vocabularyHint([]string{strings.Join(parts, ", ") + "."})
-	if got == "" {
-		t.Fatal("длинный словарь выброшен целиком")
-	}
-	if n := wordTokens(got); n > promptTokenLimit {
-		t.Errorf("подсказка на %d токенов ушла бы в whisper как есть", n)
-	}
-	// А то, что и так влезает, трогать не надо.
-	if got := vocabularyHint([]string{"Орынгали, worker_sapar."}); got != "Орынгали, worker_sapar." {
-		t.Errorf("короткий словарь изменился: %q", got)
 	}
 }

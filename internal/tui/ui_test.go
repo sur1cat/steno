@@ -1766,7 +1766,16 @@ func TestUIColumnsLineUpWithRows(t *testing.T) {
 		if len(rows) == 0 {
 			t.Fatalf("вкладка %s: строк нет", c.tab)
 		}
+		// Ищем ту строку, где значение есть, а не первую попавшуюся: порядок
+		// строк — дело списка, и привязка к нулевой ломала тест на каждом
+		// новом разделе, ничего при этом не проверяя лучше.
 		row := ansi.Strip(rows[0])
+		for _, r := range rows {
+			if strings.Contains(ansi.Strip(r), c.value) {
+				row = ansi.Strip(r)
+				break
+			}
+		}
 		hi, ri := uiColumnOf(head, c.caption), uiColumnOf(row, c.value)
 		if hi < 0 || ri < 0 {
 			t.Fatalf("вкладка %s: подпись %q на %d, значение %q на %d\n%s\n%s",
@@ -2213,5 +2222,147 @@ func TestUIBarsPaintedToTheEdge(t *testing.T) {
 		if n := ansi.StringWidth(m.hintLine()); n > w {
 			t.Errorf("ширина %d: подсказка не влезает, занимает %d колонок", w, n)
 		}
+	}
+}
+
+// Провайдер выбирается в терминале так же, как в панели, — и это половина
+// смысла всей затеи: чтобы переехать с Claude на свою модель, не нужно
+// открывать JSON.
+//
+// Раскрывающегося списка в терминале нет, поэтому вариант листается стрелками.
+// Проверяем, что листается по кругу и что выбранное доезжает до базы в том
+// виде, в каком его ждёт конфиг.
+func TestUIBrainProviderIsPickedWithArrows(t *testing.T) {
+	m := uiTestModel(t, nil)
+	press(m, "5")
+	m.selectChannel("brain")
+	press(m, "enter")
+	if m.chanForm == nil || m.chanForm.key != "brain" {
+		t.Fatalf("раздел «Разбор» не открылся: %+v", m.chanForm)
+	}
+	// Выключателя у него нет: строка «канал включён» врала бы — выключить
+	// разбор значит писать созвоны в стол.
+	for _, r := range m.chanForm.rows() {
+		if r.field < 0 {
+			t.Fatal("у «Разбора» завёлся выключатель")
+		}
+	}
+
+	f := m.chanForm
+	if f.value(0) != core.ProviderClaude {
+		t.Fatalf("начали не с Claude: %q", f.value(0))
+	}
+	n := len(f.fields[0].def.Options)
+	if n < 3 {
+		t.Fatalf("вариантов всего %d — листать нечего", n)
+	}
+	// Курсор стоит на первой строке формы, то есть на выборе провайдера.
+	press(m, "right")
+	if f.value(0) == core.ProviderClaude {
+		t.Fatal("стрелка не переключила провайдера")
+	}
+	// По кругу: n нажатий возвращают на место. Упереться в край, не поняв, что
+	// список кончился, — обычная история в терминале.
+	for i := 1; i < n; i++ {
+		press(m, "right")
+	}
+	if f.value(0) != core.ProviderClaude {
+		t.Errorf("список не листается по кругу: после %d нажатий %q", n, f.value(0))
+	}
+	// И назад тоже.
+	press(m, "left")
+	back := f.value(0)
+	press(m, "right")
+	if f.value(0) != core.ProviderClaude {
+		t.Errorf("влево и вправо не отменяют друг друга: %q → %q", back, f.value(0))
+	}
+}
+
+// Поля одного провайдера не должны спрашиваться у того, кто выбрал другого:
+// «Свой адрес» у подписки Claude читается как обязательное и незаполненное.
+// Но и стираться при этом они не должны — заглянул в Claude и вернулся.
+func TestUIBrainHidesAndKeepsForeignFields(t *testing.T) {
+	m := uiTestModel(t, nil)
+	press(m, "5")
+	m.selectChannel("brain")
+	press(m, "enter")
+	f := m.chanForm
+
+	visible := func() []string {
+		var out []string
+		for _, r := range f.rows() {
+			if r.field >= 0 && r.item == uiRowSelf {
+				out = append(out, f.fields[r.field].def.Key)
+			}
+		}
+		return out
+	}
+	if got := visible(); len(got) != 1 || got[0] != "provider" {
+		t.Fatalf("у Claude в форме лишние поля: %v", got)
+	}
+
+	// Переключаемся на совместимый с OpenAI и заполняем адрес.
+	for i := 0; i < len(f.fields[0].def.Options); i++ {
+		if f.value(0) == core.ProviderOpenAI {
+			break
+		}
+		press(m, "right")
+	}
+	if f.value(0) != core.ProviderOpenAI {
+		t.Fatal("не дошли до совместимого с OpenAI")
+	}
+	if got := visible(); len(got) < 4 {
+		t.Fatalf("поля OpenAI не показались: %v", got)
+	}
+	for i := range f.fields {
+		if f.fields[i].def.Key == "base_url" {
+			f.fields[i].text = newTextField("https://llm.example.com/v1")
+		}
+		if f.fields[i].def.Key == "model" {
+			f.fields[i].text = newTextField("своя-модель")
+		}
+	}
+
+	// Заглянули обратно в Claude — поля спрятались, но не пропали.
+	f.cursor = 0
+	press(m, "left")
+	if f.value(0) != core.ProviderClaude {
+		t.Fatalf("не вернулись на Claude: %q", f.value(0))
+	}
+	if got := visible(); len(got) != 1 {
+		t.Errorf("поля OpenAI остались на виду у Claude: %v", got)
+	}
+	press(m, "ctrl+s")
+	_, values := chanValues(t, m.st, "brain")
+	if values["base_url"] != "https://llm.example.com/v1" || values["model"] != "своя-модель" {
+		t.Errorf("спрятанные поля стёрлись при сохранении: %+v", values)
+	}
+}
+
+// Сохранённый в терминале выбор обязан доехать до сервиса: иначе человек видит
+// «сохранено», а разбор идёт прежним.
+func TestUIBrainChoiceReachesConfig(t *testing.T) {
+	m := uiTestModel(t, nil)
+	press(m, "5")
+	m.selectChannel("brain")
+	press(m, "enter")
+	f := m.chanForm
+	for i := 0; i < len(f.fields[0].def.Options); i++ {
+		if f.value(0) == core.ProviderCodex {
+			break
+		}
+		press(m, "right")
+	}
+	if f.value(0) != core.ProviderCodex {
+		t.Fatal("не дошли до codex")
+	}
+	press(m, "ctrl+s")
+
+	fresh := core.DefaultConfig()
+	if err := core.ApplyChannels(m.st, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.BrainProvider() != core.ProviderCodex {
+		t.Errorf("выбор из терминала не доехал до конфига: %q", fresh.BrainProvider())
 	}
 }

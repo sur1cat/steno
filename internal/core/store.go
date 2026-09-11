@@ -229,6 +229,16 @@ func migrate(db *sql.DB) error {
 			"cache_read":    "INTEGER NOT NULL DEFAULT 0",
 			"cache_write":   "INTEGER NOT NULL DEFAULT 0",
 			"cost_usd":      "REAL NOT NULL DEFAULT 0",
+			// Знаем ли мы цену этого запроса вообще. Отдельной колонкой, а не
+			// «cost_usd > 0», потому что нули бывают двух разных видов:
+			// у модели на своей машине ноль — правда, а у провайдера, цены
+			// которого нет в таблице, ноль — незнание. Пока эта разница жила
+			// только в памяти, `steno cost` показывал «$0.00» и там, и там, то
+			// есть врал ровно в том числе, ради которого его и завели.
+			//
+			// Умолчание 1 — для строк, записанных до появления колонки: там был
+			// один Claude, чьи цены steno знает.
+			"price_known": "INTEGER NOT NULL DEFAULT 1",
 		},
 		// Словарь проекта: имена людей отдельно, остальные слова вместе.
 		// База, заведённая до него, открывается и дочитывается здесь — иначе
@@ -389,6 +399,18 @@ type Segment struct {
 	End     float64 `json:"end"`
 	Speaker string  `json:"speaker"`
 	Text    string  `json:"text"`
+
+	// Уверенность движка — необязательная: её отдают не все. nil означает
+	// «движок не сказал», а не «ноль»; что это меняет и почему по словам, а не
+	// по реплике — в confidence.go.
+	//
+	// В базу не пишется намеренно. Уверенность — свойство одного прогона
+	// распознавания, и живёт она ровно до follow-up, который делается в том же
+	// запуске. Хранить её значило бы завести колонку, которая правдива только
+	// для записей, расшифрованных после этой версии, — а `steno transcript`,
+	// панель и публикация показывают текст, в котором пометок быть не должно.
+	Conf  *float64 `json:"conf,omitempty"`
+	Words []Word   `json:"words,omitempty"`
 }
 
 func (s *Store) SaveSegments(meetingID string, segs []Segment) error {
@@ -474,9 +496,13 @@ func (s *Store) saveTasks(meetingID string, items []ActionItem) error {
 }
 
 func (s *Store) SaveSpend(meetingID string, sp Spend) error {
+	known := 0
+	if sp.PriceKnown {
+		known = 1
+	}
 	res, err := s.DB.Exec(`UPDATE followups SET input_tokens=?, output_tokens=?,
-		cache_read=?, cache_write=?, cost_usd=? WHERE meeting_id=?`,
-		sp.Input, sp.Output, sp.CacheRead, sp.CacheWrite, sp.USD, meetingID)
+		cache_read=?, cache_write=?, cost_usd=?, price_known=? WHERE meeting_id=?`,
+		sp.Input, sp.Output, sp.CacheRead, sp.CacheWrite, sp.USD, known, meetingID)
 	if err != nil {
 		return err
 	}
@@ -490,24 +516,27 @@ func (s *Store) SaveSpend(meetingID string, sp Spend) error {
 
 func (s *Store) Spend(meetingID string) (Spend, error) {
 	var sp Spend
-	err := s.DB.QueryRow(`SELECT model, input_tokens, output_tokens, cache_read, cache_write, cost_usd
-		FROM followups WHERE meeting_id=?`, meetingID).
-		Scan(&sp.Model, &sp.Input, &sp.Output, &sp.CacheRead, &sp.CacheWrite, &sp.USD)
-	sp.PriceKnown = sp.USD > 0
+	var known int
+	err := s.DB.QueryRow(`SELECT model, input_tokens, output_tokens, cache_read, cache_write,
+		cost_usd, price_known FROM followups WHERE meeting_id=?`, meetingID).
+		Scan(&sp.Model, &sp.Input, &sp.Output, &sp.CacheRead, &sp.CacheWrite, &sp.USD, &known)
+	sp.PriceKnown = known == 1
 	return sp, err
 }
 
 // TotalSpend — сколько всего потрачено на follow-up за период. Ради этого
 // числа учёт и заводился: оценки «пара центов» расходятся с правдой в разы.
-func (s *Store) TotalSpend(since time.Time) (float64, int64, int64, int, error) {
-	var usd float64
-	var in, out int64
-	var n int
-	err := s.DB.QueryRow(`SELECT COALESCE(SUM(f.cost_usd),0), COALESCE(SUM(f.input_tokens),0),
-		COALESCE(SUM(f.output_tokens),0), COUNT(*)
+//
+// unpriced — сколько из них steno посчитать не смог: цены такой модели он не
+// знает. Их деньги в сумму не входят, и молчать об этом нельзя — иначе
+// «$0.00» читается как «бесплатно», хотя счёт придёт.
+func (s *Store) TotalSpend(since time.Time) (usd float64, in, out int64, n, unpriced int, err error) {
+	err = s.DB.QueryRow(`SELECT COALESCE(SUM(f.cost_usd),0), COALESCE(SUM(f.input_tokens),0),
+		COALESCE(SUM(f.output_tokens),0), COUNT(*),
+		COALESCE(SUM(CASE WHEN f.price_known = 0 THEN 1 ELSE 0 END),0)
 		FROM followups f JOIN meetings m ON m.id = f.meeting_id
-		WHERE m.started_at >= ?`, since.Unix()).Scan(&usd, &in, &out, &n)
-	return usd, in, out, n, err
+		WHERE m.started_at >= ?`, since.Unix()).Scan(&usd, &in, &out, &n, &unpriced)
+	return usd, in, out, n, unpriced, err
 }
 
 func (s *Store) Followup(meetingID string) (*Followup, error) {

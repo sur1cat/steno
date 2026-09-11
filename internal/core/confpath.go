@@ -135,7 +135,7 @@ func AdapterPath(p string) string {
 	}
 	name := filepath.Base(p)
 	switch name {
-	case "whisper-cpp.sh", "groq.sh", "faster-whisper.py":
+	case "whisper-cpp.sh", "groq.sh", "faster-whisper.py", "assemblyai.sh", "discord.sh":
 	default:
 		return p
 	}

@@ -39,11 +39,25 @@ func cmdNote(ctx context.Context, args []string) error {
 		return printMics()
 	}
 
-	cfg, st, err := open(*cfgPath)
+	// Первый запуск — до записи, а не после: наговорить пять минут и узнать,
+	// что расшифровывать нечем, — худший порядок. Нет настройки — заводится
+	// минимальная, без вопросов; нет модели — один вопрос; нет доступа к
+	// модели для разбора — один вопрос. См. firstrun.go.
+	path, err := ensureConfig(*cfgPath)
+	if err != nil {
+		return err
+	}
+	cfg, st, err := open(path)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
+	if err := ensureTranscriber(ctx, cfg); err != nil {
+		return err
+	}
+	if err := ensureBrain(cfg, path); err != nil {
+		return err
+	}
 
 	// С идентификатором — разобрать уже записанное. Нужно после сбоя: звук
 	// лежит на диске, а `steno process` разобрал бы заметку промптом созвона.

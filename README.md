@@ -26,11 +26,32 @@
 <a href="https://github.com/sur1cat/steno/releases/latest"><img src="https://img.shields.io/badge/Releases-1E2E27?style=for-the-badge" alt="Releases" height="30"></a>
 </p>
 
+<!-- assets/note.gif: a real `steno note` run, recorded with vhs from assets/note.tape.
+     Uncomment once it exists:
+<img src="assets/note.gif" width="835" alt="steno note: talk, press Enter, and the note comes back as tasks, decisions and open questions">
+-->
+
+</div>
+
+Try it in thirty seconds — no account, no Docker, nothing to configure:
+
+```console
+brew install sur1cat/tap/steno && steno note
+```
+
+Talk, press Enter. whisper transcribes on your machine — the first run offers
+to download the speech model, one Enter. The model you already have — the Claude
+Code subscription, or any Anthropic, OpenAI, Groq or OpenRouter key in your
+environment — turns it into tasks, decisions and open questions, printed right
+there and kept under your projects.
+
+## The bot in your meetings
+
+<div align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/intro-dark.svg">
   <img src="assets/intro-light.svg" width="1000" alt="Six steps, and what the meeting has become at each: a row in the calendar, audio and captions, two files on disk, a transcript with names, the follow-up with owners and due dates, and where it was sent">
 </picture>
-
 </div>
 
 A bot joins the call, records it, transcribes it and writes the follow-up —

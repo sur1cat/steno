@@ -5,6 +5,7 @@ import { api, type Channel } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ChipsInput, submittedFromChips } from "@/components/ui/chips-input";
 import { GoogleConnect } from "@/components/google-connect";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -67,6 +68,13 @@ export function ChannelDialog({
 
   if (!channel) return null;
   const set = (k: string, v: string) => setValues((prev) => ({ ...prev, [k]: v }));
+  // «Разбор» — не канал: выключателя у него нет, и про вход-выход ему сказать
+  // нечего. Форма при этом та же самая — своя вторая означала бы, что новое
+  // поле заводится дважды.
+  const isBrain = channel.kind === "brain";
+  const shown = channel.fields.filter(
+    (f) => !f.showWhen || (values[f.showWhen] ?? "") === f.showValue,
+  );
 
   return (
     <Dialog open={open} onClose={onClose} className="max-w-xl">
@@ -85,21 +93,23 @@ export function ChannelDialog({
           save.mutate();
         }}
       >
-        <div className="flex items-center justify-between rounded-xl bg-[var(--muted)]/60 px-4 py-3">
-          <div className="text-sm">
-            {t("Канал включён")}
-            <div className="text-xs text-[var(--muted-foreground)]">
-              {channel.in && channel.out
-                ? t("приносит созвоны и уносит follow-up")
-                : channel.in
-                  ? t("приносит созвоны")
-                  : t("уносит follow-up")}
+        {!isBrain && (
+          <div className="flex items-center justify-between rounded-xl bg-[var(--muted)]/60 px-4 py-3">
+            <div className="text-sm">
+              {t("Канал включён")}
+              <div className="text-xs text-[var(--muted-foreground)]">
+                {channel.in && channel.out
+                  ? t("приносит созвоны и уносит follow-up")
+                  : channel.in
+                    ? t("приносит созвоны")
+                    : t("уносит follow-up")}
+              </div>
             </div>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
           </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
-        </div>
+        )}
 
-        {channel.fields.map((f) => (
+        {shown.map((f) => (
           <div key={f.key}>
             {/* «google» — не поле, а кнопка: значения оно не хранит, и в
                 values его ключа нет. Согласие одно на все каналы Google,
@@ -144,6 +154,16 @@ export function ChannelDialog({
                     placeholder={f.placeholder}
                     addLabel={`${t("Добавить:")} ${f.label.toLowerCase()}`}
                   />
+                ) : f.kind === "select" ? (
+                  <SelectMenu
+                    options={f.options ?? []}
+                    value={values[f.key] ?? ""}
+                    onChange={(v) => set(f.key, v)}
+                    placeholder={f.placeholder}
+                    label={f.label}
+                    className="w-full"
+                    triggerClassName="h-10 w-full rounded-xl border-0 bg-[var(--muted)] px-3 text-sm"
+                  />
                 ) : (
                   <input
                     id={`ch-${f.key}`}
@@ -156,6 +176,16 @@ export function ChannelDialog({
                     className="h-10 w-full rounded-xl border-0 bg-[var(--muted)] px-3 text-sm placeholder:text-[var(--muted-foreground)]/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
                 )}
+                {/* У выбора пояснение двойное: общее к полю и своё у
+                    выбранного варианта. Второе важнее — «Ollama: модель на
+                    этой же машине, ключ не нужен» объясняет решение, которое
+                    человек принимает прямо сейчас. */}
+                {f.kind === "select" &&
+                  f.options?.find((o) => o.value === (values[f.key] ?? ""))?.hint && (
+                    <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
+                      {f.options.find((o) => o.value === (values[f.key] ?? ""))!.hint}
+                    </p>
+                  )}
                 {f.hint && (
                   <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
                     {f.hint}

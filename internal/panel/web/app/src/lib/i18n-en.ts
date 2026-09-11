@@ -2,6 +2,8 @@
 // стоит в вызове t(). Правило то же, что в i18n_en.go на стороне Go.
 export const en: Record<string, string> = {
   "Follow-up ещё не готов.": "The follow-up is not ready yet.",
+  "Разбор": "Model",
+  "Кто читает расшифровку и достаёт из неё задачи, решения и вопросы. Подписка, которая\n            уже есть, ключ провайдера или модель на этой же машине — ключи задаёт `steno setup`,\n            здесь их нет.": "Who reads the transcript and pulls the tasks, decisions and open questions out of it.\n            A subscription you already have, a provider key, or a model on this very machine — keys are set\n            by `steno setup`, they are not here.",
   "GitHub-репозиторий": "GitHub repository",
   "Google подключён.": "Google is connected.",
   "Zoom, телефон, что угодно": "Zoom, a phone call, anything",

@@ -279,3 +279,284 @@ func TestSetupShowsDataDirBeforeCreating(t *testing.T) {
 		t.Errorf("данные легли в %q, а ждали %q — отказ не вернул к вопросу", cfg.DataDir, want)
 	}
 }
+
+// Установка на своей модели: ключей не нужно ни одного, счёта тоже.
+//
+// Это тот путь, ради которого провайдеров вообще заводили: попробовать steno,
+// не заведя ни одного платного ключа. Проверяем, что мастер не спрашивает ключ
+// и не оставляет в конфиге ничего, что потребует его потом.
+func TestSetupLocalModelNeedsNoKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := filepath.Join(dir, "steno.json")
+
+	// Русский · личный профиль · каталог по умолчанию · верно · субтитры ·
+	// совместимый с OpenAI · Ollama · модель · дальше всё «нет» · панель.
+	input := strings.Join([]string{
+		"2",
+		"1", "", "", "3",
+		"3", "6", "llama3.3",
+		"n", "n", "n",
+		"n", "n", "n",
+		"", "",
+	}, "\n") + "\n"
+
+	withStdin(t, input, func() {
+		if err := cmdSetup(context.Background(), []string{"-o", out}); err != nil {
+			t.Fatalf("мастер сорвался: %v", err)
+		}
+	})
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("мастер записал невалидный JSON: %v", err)
+	}
+	if cfg.BrainProvider() != core.ProviderOpenAI {
+		t.Fatalf("провайдер: %q", cfg.BrainProvider())
+	}
+	if cfg.Brain.OpenAI.Preset != "ollama" {
+		t.Errorf("заготовка: %q", cfg.Brain.OpenAI.Preset)
+	}
+	if cfg.BrainModel() != "llama3.3" {
+		t.Errorf("модель: %q", cfg.BrainModel())
+	}
+	if !cfg.OpenAILocal() {
+		t.Errorf("адрес %q не признан местным — расход показался бы неизвестным", cfg.OpenAIBaseURL())
+	}
+	// Ключа быть не должно нигде: ни имени переменной в конфиге, ни строки
+	// в .env. Спросить его — значит убедить человека, что без ключа не выйдет.
+	if cfg.OpenAIKeyEnv() != "" {
+		t.Errorf("у местной модели зачем-то требуется ключ %q", cfg.OpenAIKeyEnv())
+	}
+	env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	for _, bad := range []string{"OPENAI_API_KEY", "STENO_LLM_API_KEY", "ANTHROPIC_API_KEY"} {
+		if strings.Contains(string(env), bad) {
+			t.Errorf("в .env появился %s, хотя ключ не спрашивали:\n%s", bad, env)
+		}
+	}
+}
+
+// Свой адрес — обязателен: смысл этого пути в том, что нового провайдера не
+// надо добавлять в steno. Заодно проверяем, что ключ к нему уезжает в .env, а
+// не в конфиг, который кладут в репозиторий.
+func TestSetupCustomOpenAIAddress(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := filepath.Join(dir, "steno.json")
+
+	// Русский · личный профиль · каталог по умолчанию · верно · субтитры ·
+	// совместимый с OpenAI · свой адрес · адрес · модель · ключ · дальше «нет».
+	input := strings.Join([]string{
+		"2",
+		"1", "", "", "3",
+		"3", "9", "https://llm.example.com/v1", "своя-модель", "секретный-ключ",
+		"n", "n", "n",
+		"n", "n", "n",
+		"", "",
+	}, "\n") + "\n"
+
+	withStdin(t, input, func() {
+		if err := cmdSetup(context.Background(), []string{"-o", out}); err != nil {
+			t.Fatalf("мастер сорвался: %v", err)
+		}
+	})
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.OpenAIEndpoint(); got != "https://llm.example.com/v1/chat/completions" {
+		t.Errorf("адрес запроса: %q", got)
+	}
+	if cfg.BrainModel() != "своя-модель" {
+		t.Errorf("модель: %q", cfg.BrainModel())
+	}
+	if strings.Contains(string(raw), "секретный-ключ") {
+		t.Error("ключ утёк в конфиг — его кладут в репозиторий")
+	}
+	env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	if !strings.Contains(string(env), "STENO_LLM_API_KEY=секретный-ключ") {
+		t.Errorf("ключ не попал в .env:\n%s", env)
+	}
+	if cfg.OpenAIKeyEnv() != "STENO_LLM_API_KEY" {
+		t.Errorf("конфиг не знает, откуда брать ключ: %q", cfg.OpenAIKeyEnv())
+	}
+}
+
+// Ключ Groq спрашивается один раз: он же нужен расшифровке, и второй вопрос
+// про него либо получает пустоту и стирает первый ответ, либо заставляет
+// вводить одно и то же дважды.
+func TestSetupAsksGroqKeyOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := filepath.Join(dir, "steno.json")
+
+	// Русский · команда · каталог по умолчанию · верно · Groq + ключ ·
+	// совместимый с OpenAI · Groq · модель · дальше «нет».
+	input := strings.Join([]string{
+		"2",
+		"2", "", "", "1", "ключ-groq",
+		"3", "2", "gpt-oss",
+		"n", "n", "n",
+		"n", "n", "n",
+		"", "",
+	}, "\n") + "\n"
+
+	withStdin(t, input, func() {
+		if err := cmdSetup(context.Background(), []string{"-o", out}); err != nil {
+			t.Fatalf("мастер сорвался: %v", err)
+		}
+	})
+	var cfg core.Config
+	raw, _ := os.ReadFile(out)
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Brain.OpenAI.Preset != "groq" || cfg.BrainModel() != "gpt-oss" {
+		t.Fatalf("Groq не выбрался: %+v", cfg.Brain.OpenAI)
+	}
+	env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	if n := strings.Count(string(env), "GROQ_API_KEY="); n != 1 {
+		t.Errorf("GROQ_API_KEY в .env %d раз:\n%s", n, env)
+	}
+	if !strings.Contains(string(env), "GROQ_API_KEY=ключ-groq") {
+		t.Errorf("ключ Groq потерялся:\n%s", env)
+	}
+	// Если бы мастер спросил ключ второй раз, следующий ответ («n» на вопрос
+	// про календарь) уехал бы в ключ, и вся вторая половина списка сдвинулась.
+	if cfg.Panel.Addr == "" || cfg.Calendar.Enabled {
+		t.Errorf("ответы сдвинулись: панель %q, календарь %v", cfg.Panel.Addr, cfg.Calendar.Enabled)
+	}
+}
+
+// Подписка ChatGPT: провайдер записан, ключей не спрашивают.
+func TestSetupCodexProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := filepath.Join(dir, "steno.json")
+
+	input := strings.Join([]string{
+		"2",
+		"1", "", "", "3",
+		"4", "gpt-5-codex",
+		"n", "n", "n",
+		"n", "n", "n",
+		"", "",
+	}, "\n") + "\n"
+
+	withStdin(t, input, func() {
+		if err := cmdSetup(context.Background(), []string{"-o", out}); err != nil {
+			t.Fatalf("мастер сорвался: %v", err)
+		}
+	})
+	var cfg core.Config
+	raw, _ := os.ReadFile(out)
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BrainProvider() != core.ProviderCodex {
+		t.Fatalf("провайдер: %q", cfg.BrainProvider())
+	}
+	if cfg.BrainModel() != "gpt-5-codex" {
+		t.Errorf("модель: %q", cfg.BrainModel())
+	}
+	env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	if strings.Contains(string(env), "API_KEY") {
+		t.Errorf("подписка не должна требовать ключей:\n%s", env)
+	}
+}
+
+// Первые два ответа на вопрос «чем платить» не должны меняться от того, что к
+// ним дописали ещё два: у людей записаны установки «выбери 1» и «выбери 2», и
+// перестановка молча переключила бы чью-то установку на другой способ платить.
+func TestSetupKeepsFirstTwoPaymentAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		answer, wantVia string
+	}{{"1", "cli"}, {"2", "api"}} {
+		t.Run(tc.answer, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", t.TempDir())
+			out := filepath.Join(dir, "steno.json")
+			answers := []string{"2", "1", "", "", "3", tc.answer}
+			if tc.answer == "2" {
+				answers = append(answers, "ключ-anthropic")
+			}
+			answers = append(answers, "1", "n", "n", "n", "n", "n", "n", "", "")
+			withStdin(t, strings.Join(answers, "\n")+"\n", func() {
+				if err := cmdSetup(context.Background(), []string{"-o", out}); err != nil {
+					t.Fatalf("мастер сорвался: %v", err)
+				}
+			})
+			var cfg core.Config
+			raw, _ := os.ReadFile(out)
+			if err := json.Unmarshal(raw, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.BrainProvider() != core.ProviderClaude {
+				t.Errorf("провайдер уехал: %q", cfg.BrainProvider())
+			}
+			if cfg.Claude.Via != tc.wantVia {
+				t.Errorf("ответ %q дал via=%q, ждали %q", tc.answer, cfg.Claude.Via, tc.wantVia)
+			}
+		})
+	}
+}
+
+// Модель через свой скрипт: провайдер записан, путь к скрипту — в конфиг, а не
+// в панель. Это тот путь, ради которого steno перестаёт зависеть от списка
+// поддерживаемых вендоров вовсе.
+func TestSetupModelScript(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	out := filepath.Join(dir, "steno.json")
+
+	script := filepath.Join(dir, "мой-llm.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Русский · личный профиль · каталог по умолчанию · верно · субтитры ·
+	// свой скрипт · путь · модель · дальше всё «нет» · панель.
+	input := strings.Join([]string{
+		"2",
+		"1", "", "", "3",
+		"5", script, "своя-модель",
+		"n", "n", "n",
+		"n", "n", "n",
+		"", "",
+	}, "\n") + "\n"
+
+	withStdin(t, input, func() {
+		if err := cmdSetup(context.Background(), []string{"-o", out}); err != nil {
+			t.Fatalf("мастер сорвался: %v", err)
+		}
+	})
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg core.Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("мастер записал невалидный JSON: %v", err)
+	}
+	if cfg.BrainProvider() != core.ProviderCommand {
+		t.Fatalf("провайдер: %q", cfg.BrainProvider())
+	}
+	if len(cfg.LLM.Cmd) != 1 || cfg.LLM.Cmd[0] != script {
+		t.Errorf("скрипт: %v", cfg.LLM.Cmd)
+	}
+	if cfg.BrainModel() != "своя-модель" {
+		t.Errorf("модель: %q", cfg.BrainModel())
+	}
+	// Ключей у этого пути не бывает: за них отвечает сам скрипт.
+	env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	if strings.Contains(string(env), "API_KEY") {
+		t.Errorf("мастер зачем-то спросил ключ:\n%s", env)
+	}
+}

@@ -291,10 +291,13 @@ func ProcessMeeting(ctx context.Context, cfg *core.Config, st *core.Store, id st
 	_ = st.SetStatus(id, "transcribed", "")
 	log.Printf(i18n.Tr("реплик: %d, из них с именем: %d"), len(segs), namedCount(segs))
 
-	if _, how, err := brain.ClaudeClient(cfg); err == nil {
-		log.Printf(i18n.Tr("делаю follow-up (%s, доступ: %s)"), cfg.Claude.Model, how)
+	// Через ResolveVia, а не через ClaudeClient: провайдеров больше одного, и
+	// «делаю follow-up (claude-opus-5)» на установке, работающей через Groq,
+	// отправляет искать поломку не туда.
+	if _, how, err := brain.ResolveVia(cfg); err == nil {
+		log.Printf(i18n.Tr("делаю follow-up (%s, доступ: %s)"), cfg.BrainModel(), how)
 	} else {
-		log.Printf(i18n.Tr("делаю follow-up (%s)"), cfg.Claude.Model)
+		log.Printf(i18n.Tr("делаю follow-up (%s)"), cfg.BrainModel())
 	}
 	// Модель должна видеть, что уже висит открытым: иначе каждый созвон
 	// заводит копии тех же задач, и состояние проекта тонет в дублях.
@@ -313,7 +316,7 @@ func ProcessMeeting(ctx context.Context, cfg *core.Config, st *core.Store, id st
 	// Порядок важен: расход дописывается в строку follow-up, а создаёт её
 	// SaveFollowup. Наоборот UPDATE не находил строки и молча терял расход —
 	// на повторном запуске всё сходилось, на первом `steno cost` показывал ноль.
-	if err := st.SaveFollowup(id, cfg.Claude.Model, f); err != nil {
+	if err := st.SaveFollowup(id, cfg.BrainModel(), f); err != nil {
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
 	}

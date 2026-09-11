@@ -49,6 +49,33 @@ const commitMatchSystem = `Тебе дают открытые задачи по 
    нормальный ответ и самый частый.
 6. why — одна фраза по-русски: почему ты считаешь, что это оно.`
 
+// commitMatchSchema вынесена из запроса отдельной функцией не ради красоты:
+// схему надо уметь проверить на пригодность для строгого режима совместимых с
+// OpenAI серверов, а из середины функции, которая ходит в сеть, её не достать.
+// См. core.StrictSchemaProblems и TestCommitMatchSchemaFitsStrictMode.
+func commitMatchSchema() map[string]any {
+	str := map[string]any{"type": "string"}
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"verdicts": map[string]any{"type": "array", "items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"task_id": str,
+					"commit":  str,
+					"confidence": map[string]any{"type": "string",
+						"enum": []string{"high", "medium", "low"}},
+					"why": str,
+				},
+				"required":             []string{"task_id", "commit", "confidence", "why"},
+				"additionalProperties": false,
+			}},
+		},
+		"required":             []string{"verdicts"},
+		"additionalProperties": false,
+	}
+}
+
 func matchCommitsToTasks(ctx context.Context, cfg *core.Config, project string,
 	tasks []core.ProjectItem, commits []Commit) ([]commitVerdict, core.Spend, error) {
 
@@ -76,29 +103,8 @@ func matchCommitsToTasks(ctx context.Context, cfg *core.Config, project string,
 		}
 	}
 
-	str := map[string]any{"type": "string"}
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"verdicts": map[string]any{"type": "array", "items": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"task_id": str,
-					"commit":  str,
-					"confidence": map[string]any{"type": "string",
-						"enum": []string{"high", "medium", "low"}},
-					"why": str,
-				},
-				"required":             []string{"task_id", "commit", "confidence", "why"},
-				"additionalProperties": false,
-			}},
-		},
-		"required":             []string{"verdicts"},
-		"additionalProperties": false,
-	}
-
 	// Сверка идёт раз в сутки по всем проектам — разоряться тут незачем.
-	out, spend, err := brain.AskLLM(ctx, cfg, commitMatchSystem, b.String(), schema, 4000)
+	out, spend, err := brain.AskLLM(ctx, cfg, commitMatchSystem, b.String(), commitMatchSchema(), 4000)
 	if err != nil {
 		return nil, core.Spend{}, err
 	}

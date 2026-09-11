@@ -63,6 +63,14 @@ nfpms:
     bindir: /usr/bin
     dependencies:
       - ffmpeg
+    # То же, что depends_on => :recommended у brew: whisper и jq ставятся по
+    # умолчанию, но пакет без них не ломается — кто распознаёт в облаке, ставит
+    # с --no-install-recommends и ничего не тянет. Имена — как в самих
+    # дистрибутивах: в Debian whisper.cpp — метапакет, тянущий whisper.cpp-tools
+    # с бинарником; в Fedora — whisper-cpp.
+    recommends:
+      - whisper.cpp
+      - jq
     overrides:
       rpm:
         # В Fedora из коробки ffmpeg-free, а пакет с именем ffmpeg — только из
@@ -70,6 +78,9 @@ nfpms:
         # принимает любой; по имени пакет не встал бы на чистую Fedora.
         dependencies:
           - /usr/bin/ffmpeg
+        recommends:
+          - whisper-cpp
+          - jq
     contents:
       - src: adapters
         dst: /usr/share/steno/adapters
@@ -119,10 +130,16 @@ brews:
       email: noreply@github.com
     commit_msg_template: "steno {{ .Tag }}"
     # ffmpeg нужен всегда — им пишется звук и готовится аудио. whisper-cpp и jq
-    # только тем, кто распознаёт локально, поэтому они в подсказке, а не здесь:
-    # тянуть их тому, кто выбрал Groq или субтитры, незачем.
+    # ставятся по умолчанию, но не обязательны (recommended): с ними `steno
+    # note` работает сразу после установки, а кто распознаёт в Groq или
+    # AssemblyAI, ставит с --without-whisper-cpp --without-jq и ничего не
+    # тянет. goreleaser печатает это как depends_on "whisper-cpp" => :recommended.
     dependencies:
       - name: ffmpeg
+      - name: whisper-cpp
+        type: recommended
+      - name: jq
+        type: recommended
     # Адаптеры расшифровки кладутся рядом с бинарником: без них steno умеет
     # только субтитры площадки, а setup ищет их именно в share пакета. Первая
     # brew-установка этого не делала, и распознавание оказывалось неработающим.
@@ -139,6 +156,10 @@ brews:
       Боту нужен Docker: контейнер с Chromium и звуком steno скачает сам перед
       первым созвоном. Заранее — docker pull ghcr.io/sur1cat/steno-bot
 
-      Для распознавания на своей машине (не нужно с Groq и с субтитрами):
+      Наговорить заметку, ничего не настраивая (модель скачается по одному Enter):
 
-        brew install whisper-cpp jq
+        steno note
+
+      whisper-cpp и jq поставлены как recommended: кто распознаёт в облаке
+      (Groq, AssemblyAI), может их не ставить — brew install steno
+      --without-whisper-cpp --without-jq — или убрать потом.

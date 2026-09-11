@@ -260,7 +260,7 @@ func TestTranscribeQueueSerializes(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, _, err := RunTranscriber(context.Background(), cfg, "нет-файла.ogg"); err != nil {
+			if _, _, err := RunTranscriber(context.Background(), cfg, "нет-файла.ogg", nil); err != nil {
 				t.Errorf("расшифровка сорвалась: %v", err)
 			}
 		}()
@@ -306,7 +306,7 @@ func TestQueueWaitIsNotCountedInTimeout(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, err := RunTranscriber(context.Background(), cfg, "x.ogg")
+			_, _, err := RunTranscriber(context.Background(), cfg, "x.ogg", nil)
 			errs <- err
 		}()
 	}

@@ -81,6 +81,16 @@
     "addr": ":8787",
     "token_env": "STENO_HTTP_TOKEN"
   },
+  "publish": {
+    "targets": [
+      {
+        "name": "discord",
+        "enabled": false,
+        "cmd": ["./adapters/discord.sh"],
+        "timeout": "2m"
+      }
+    ]
+  },
   "telegram": {
     "enabled": true,
     "token_env": "TELEGRAM_BOT_TOKEN",
@@ -103,8 +113,48 @@
     "threads": 0,
     "nice": true
   },
+  "//разбор": "Кем разбирать созвон. Пустой brain.provider — Claude, как было до появления остальных: конфиг, написанный раньше, работает без правки. Провайдер выбирается и кнопкой — в `steno setup`, в панели и в `steno ui`.",
+  "agent": {
+    "enabled": false,
+    "provider": "auto",
+    "base_branch": "",
+    "branch_prefix": "steno/",
+    "worktree_dir": "",
+    "max_usd": 2,
+    "timeout": "1h"
+  },
+  "brain": {
+    "provider": "claude",
+    "//openai": "Один формат на всех: OpenAI, Groq, OpenRouter, Together, DeepSeek — и Ollama, LM Studio, llama.cpp на этой же машине. Захардкоженного списка нет: preset только подставляет адрес, а base_url его перекрывает.",
+    "openai": {
+      "preset": "groq",
+      "base_url": "",
+      "model": "openai/gpt-oss-120b",
+      "api_key_env": "GROQ_API_KEY",
+      "json_mode": "auto",
+      "timeout": "15m",
+      "//prices": "Цен чужих провайдеров steno не знает и выдумывать не станет: без этой таблицы `steno cost` честно скажет «цена неизвестна». У модели на этой же машине ноль подставляется сам — там это правда.",
+      "prices": {}
+    },
+    "//codex": "Подписка ChatGPT через `codex exec`. Схема задаётся файлом и соблюдается — просить её словами, как у `claude -p`, не нужно. Расход подписка не сообщает, и в `steno cost` он значится неизвестным.",
+    "codex": {
+      "model": "",
+      "timeout": "15m"
+    }
+  },
+  "//llm": "Модель через свой скрипт — то же, чем для распознавания служит transcribe.cmd, и включается это provider = \"command\". Договор описан словами в шапке adapters/ollama.sh: запрос объектом JSON в stdin, ответ объектом JSON в stdout, диагностика в stderr, отказ ненулевым кодом. Годится для всего, что не говорит на диалекте OpenAI: llamafile, своя обёртка, эндпоинт за корпоративным VPN.",
+  "llm": {
+    "cmd": [
+      "./adapters/ollama.sh"
+    ],
+    "model": "llama3.1",
+    "timeout": "15m",
+    "prices": {}
+  },
+  "//claude": "max_tokens и output_language отсюда общие для всех провайдеров: раздел назван по первому из них, и переименовать его нельзя — он написан руками у всех, кто уже поставил steno.",
   "claude": {
     "api_key_env": "ANTHROPIC_API_KEY",
+    "via": "auto",
     "model": "claude-opus-5",
     "effort": "high",
     "output_language": ""

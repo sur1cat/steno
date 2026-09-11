@@ -1409,6 +1409,16 @@ func (m *uiModel) keyChannelForm(msg tea.KeyMsg) tea.Cmd {
 				f.addItem(row.field)
 			case row.field < 0:
 				f.enabled = !f.enabled
+			case f.fields[row.field].def.Kind == "select":
+				// Влево — назад по списку, всё остальное — вперёд. Выбор может
+				// спрятать или показать соседние поля, поэтому курсор после
+				// него надо вернуть в границы.
+				step := 1
+				if k == "left" {
+					step = -1
+				}
+				f.cycle(row.field, step)
+				f.clampCursor()
 			case f.fields[row.field].def.Kind == "switch":
 				f.fields[row.field].on = !f.fields[row.field].on
 			}

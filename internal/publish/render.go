@@ -186,6 +186,72 @@ func RenderTelegram(m *core.Meeting, f *core.Followup, docURL string) string {
 	return b.String()
 }
 
+// mdEsc гасит разметку в тексте, который пришёл от модели и из субтитров.
+// Имя участника со звёздочкой или подчёркиванием превращает половину сообщения
+// в курсив, а название задачи с квадратной скобкой — в поломанную ссылку; те же
+// «<b>» из чужой вставки на GitHub и в Notion отрисуются как настоящий тег,
+// потому что markdown там пропускает HTML насквозь.
+var mdEscaper = strings.NewReplacer(
+	`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`, "~", `\~`, "|", `\|`,
+	"[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`,
+)
+
+func mdEsc(s string) string { return mdEscaper.Replace(s) }
+
+// RenderMarkdown — тот же follow-up обычным markdown. Это текст, который
+// адаптер публикации кладёт в Discord, Mattermost, Notion, GitHub или письмо:
+// разметка у них расходится в мелочах, но markdown понимают все, и заводить
+// под каждую площадку свой отрисовщик здесь значило бы, что «пять строк bash»
+// начинаются с полусотни строк jq.
+//
+// Риски здесь есть, а «как шёл разговор» нет: риск — это то, ради чего человек
+// читает follow-up в чате, а хронология длиннее всего остального вместе взятого
+// и в чате её никто не читает. Кому она нужна — берёт её из followup.timeline
+// в том же JSON.
+func RenderMarkdown(m *core.Meeting, f *core.Followup, docURL string) string {
+	var b strings.Builder
+	e := mdEsc
+	fmt.Fprintf(&b, "## %s\n_%s", e(core.OrDash(f.Title)), e(m.StartedAt.Format("2 Jan 2006, 15:04")))
+	if len(m.Participants) > 0 {
+		fmt.Fprintf(&b, " · %s", e(strings.Join(m.Participants, ", ")))
+	}
+	b.WriteString("_\n")
+
+	for _, s := range f.TLDR {
+		fmt.Fprintf(&b, "- %s\n", e(s))
+	}
+	if len(f.ActionItems) > 0 {
+		fmt.Fprintf(&b, "\n### %s\n", i18n.Tr("Задачи"))
+		for _, a := range f.ActionItems {
+			fmt.Fprintf(&b, "- **%s** — %s _(%s)_\n",
+				e(a.Owner), e(a.What), e(DueOr(a.Due, i18n.Tr("срок не назван"))))
+		}
+	}
+	if len(f.Decisions) > 0 {
+		fmt.Fprintf(&b, "\n### %s\n", i18n.Tr("Решения"))
+		for _, d := range f.Decisions {
+			fmt.Fprintf(&b, "- %s\n", e(d.What))
+		}
+	}
+	if len(f.OpenQuestions) > 0 {
+		fmt.Fprintf(&b, "\n### %s\n", i18n.Tr("Открытые вопросы"))
+		for _, q := range f.OpenQuestions {
+			fmt.Fprintf(&b, i18n.Tr("- %s _(ждём: %s)_\n"),
+				e(q.Question), e(DueOr(q.WaitingOn, i18n.Tr("не определено"))))
+		}
+	}
+	if len(f.Risks) > 0 {
+		fmt.Fprintf(&b, "\n### %s\n", i18n.Tr("Риски"))
+		for _, r := range f.Risks {
+			fmt.Fprintf(&b, "- %s\n", e(r))
+		}
+	}
+	if docURL != "" {
+		fmt.Fprintf(&b, i18n.Tr("\n[Полные заметки и расшифровка](%s)"), docURL)
+	}
+	return b.String()
+}
+
 // splitForTelegram режет сообщение по лимиту в 4096 символов, стараясь рвать
 // по переводам строк, чтобы не разбить HTML-тег пополам. Резка по символам
 // живёт в chunk — здесь она была продублирована и разошлась: байтовый индекс

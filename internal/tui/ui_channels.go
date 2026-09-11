@@ -24,16 +24,79 @@ type uiChanFieldState struct {
 	def   core.ChannelField
 	text  textField   // text | number | duration
 	on    bool        // switch
+	pick  int         // select — какой из def.Options выбран
 	items []textField // list — по значению на строку
 }
 
 // uiChanForm — открытая форма канала.
 type uiChanForm struct {
 	key, name, about string
-	live             bool
-	enabled          bool
-	fields           []uiChanFieldState
-	cursor           int
+	// io | brain. У «Разбора» нет выключателя: выключить разбор — значит писать
+	// созвоны в стол, и строка «раздел включён» там просто врала бы.
+	kind    string
+	live    bool
+	enabled bool
+	fields  []uiChanFieldState
+	cursor  int
+}
+
+func (f *uiChanForm) brain() bool { return f.kind == core.ChannelKindBrain }
+
+// visible — показывать ли поле при нынешних значениях соседних. Спрашивать про
+// адрес OpenAI у того, кто выбрал подписку Claude, незачем: он не поймёт, надо
+// это заполнять или нет.
+//
+// Спрятанное поле значение не теряет — оно уходит в базу как было. Иначе
+// человек, заглянувший в Claude и вернувшийся, обнаружил бы стёртыми и адрес, и
+// имя модели.
+func (f *uiChanForm) visible(i int) bool {
+	fd := f.fields[i].def
+	if fd.ShowWhen == "" {
+		return true
+	}
+	for j := range f.fields {
+		if f.fields[j].def.Key == fd.ShowWhen {
+			return f.value(j) == fd.ShowValue
+		}
+	}
+	return true
+}
+
+// value — текущее значение поля в том виде, в каком оно уйдёт в базу.
+func (f *uiChanForm) value(i int) string {
+	fs := &f.fields[i]
+	switch fs.def.Kind {
+	case "switch":
+		return core.ChFlag(fs.on)
+	case "select":
+		if fs.pick >= 0 && fs.pick < len(fs.def.Options) {
+			return fs.def.Options[fs.pick].Value
+		}
+		return ""
+	case "list":
+		var vals []string
+		for _, it := range fs.items {
+			if v := strings.TrimSpace(it.String()); v != "" {
+				vals = append(vals, v)
+			}
+		}
+		return strings.Join(vals, ", ")
+	case "google":
+		return ""
+	}
+	return strings.TrimSpace(fs.text.String())
+}
+
+// cycle перебирает варианты выбора по кругу. По кругу, а не до упора: список
+// короткий, и упереться в его край, не поняв, что список кончился, — обычная
+// история в терминале.
+func (f *uiChanForm) cycle(field, step int) {
+	fs := &f.fields[field]
+	n := len(fs.def.Options)
+	if n == 0 {
+		return
+	}
+	fs.pick = ((fs.pick+step)%n + n) % n
 }
 
 // uiChanRow — строка формы под курсором. Форма плоская: переключатель канала,
@@ -50,13 +113,22 @@ const (
 
 func newChanForm(ch core.Channel) *uiChanForm {
 	f := &uiChanForm{key: ch.Key, name: ch.Name, about: ch.About,
-		live: ch.Live, enabled: ch.Enabled}
+		kind: ch.Kind, live: ch.Live, enabled: ch.Enabled}
 	for _, def := range ch.Fields {
 		st := uiChanFieldState{def: def}
 		v := ch.Values[def.Key]
 		switch def.Kind {
 		case "switch":
 			st.on = core.ChBool(v)
+		case "select":
+			// Незнакомое значение — первый вариант, а не пустота: в списке
+			// выбора пустой строки нет, и показать её было бы негде.
+			for i, o := range def.Options {
+				if o.Value == v {
+					st.pick = i
+					break
+				}
+			}
 		case "list":
 			for _, item := range core.ChList(v) {
 				st.items = append(st.items, newTextField(item))
@@ -73,10 +145,17 @@ func newChanForm(ch core.Channel) *uiChanForm {
 
 // rows — плоский список того, по чему ходит курсор. Поля вида «google» в него
 // не попадают: там нечего править, а курсор, застревающий на строке, которую
-// нельзя изменить, читается как поломка.
+// нельзя изменить, читается как поломка. По той же причине не попадают поля,
+// спрятанные соседним выбором, и строка «включён» у разделов без выключателя.
 func (f *uiChanForm) rows() []uiChanRow {
-	out := []uiChanRow{{field: -1, item: uiRowSelf}}
+	var out []uiChanRow
+	if !f.brain() {
+		out = append(out, uiChanRow{field: -1, item: uiRowSelf})
+	}
 	for i, fs := range f.fields {
+		if !f.visible(i) {
+			continue
+		}
 		switch fs.def.Kind {
 		case "google":
 		case "list":
@@ -120,7 +199,8 @@ func (f *uiChanForm) currentText() *textField {
 	switch {
 	case fs.def.Kind == "list" && r.item >= 0 && r.item < len(fs.items):
 		return &fs.items[r.item]
-	case fs.def.Kind == "switch" || fs.def.Kind == "list" || fs.def.Kind == "google":
+	case fs.def.Kind == "switch" || fs.def.Kind == "select" ||
+		fs.def.Kind == "list" || fs.def.Kind == "google":
 		return nil
 	case r.item == uiRowSelf:
 		return &fs.text
@@ -160,24 +240,12 @@ func (f *uiChanForm) removeItem(field, item int) bool {
 // через ChFlag: «1» и ничто, а не «on» или «true», — ChBool узнаёт только его.
 func (f *uiChanForm) values() map[string]string {
 	out := map[string]string{}
-	for _, fs := range f.fields {
+	for i, fs := range f.fields {
 		if !fs.def.Input() {
 			continue
 		}
-		switch fs.def.Kind {
-		case "switch":
-			out[fs.def.Key] = core.ChFlag(fs.on)
-		case "list":
-			var vals []string
-			for _, it := range fs.items {
-				if v := strings.TrimSpace(it.String()); v != "" {
-					vals = append(vals, v)
-				}
-			}
-			out[fs.def.Key] = strings.Join(vals, ", ")
-		default:
-			out[fs.def.Key] = strings.TrimSpace(fs.text.String())
-		}
+		// Спрятанные поля тоже сохраняем: см. visible().
+		out[fs.def.Key] = f.value(i)
 	}
 	return out
 }
@@ -209,6 +277,8 @@ func uiSaveChannel(st *core.Store, key string, enabled bool, fresh map[string]st
 // и другое. Строка короткая, потому что стоит в колонке списка.
 func uiChannelWhat(ch core.Channel) string {
 	switch {
+	case ch.Kind == core.ChannelKindBrain:
+		return i18n.Tr("разбирает созвоны")
 	case ch.In && ch.Out:
 		return i18n.Tr("и приносит, и шлёт")
 	case ch.In:

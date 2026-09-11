@@ -962,3 +962,134 @@ func TestPanelInvite(t *testing.T) {
 		t.Errorf("чужая ссылка принята, код %d", code)
 	}
 }
+
+// Раздел «Разбор» правится в панели тем же путём, что и каналы, — и это
+// главное, ради чего он тут: владельцу steno не должно быть нужно лезть в JSON,
+// чтобы переехать с Claude на свою модель.
+//
+// Проверяем всю дорогу: что раздел доезжает до панели, что он не канал, что
+// секретов в нём нет и что сохранённое доходит до сервиса.
+func TestPanelBrainSection(t *testing.T) {
+	srv, st, p := testPanel(t)
+	a := login(t, srv, "тайна")
+
+	if _, err := core.ImportChannels(st, p.cfg); err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Channels []core.Channel `json:"channels"`
+	}
+	a.get("/api/settings", &settings)
+	var brain *core.Channel
+	for i := range settings.Channels {
+		if settings.Channels[i].Key == "brain" {
+			brain = &settings.Channels[i]
+		}
+	}
+	if brain == nil {
+		t.Fatal("раздела «Разбор» нет в настройках — провайдера не выбрать иначе как в JSON")
+	}
+	if brain.Kind != core.ChannelKindBrain {
+		t.Errorf("раздел приехал каналом (%q) — панель нарисует ему выключатель", brain.Kind)
+	}
+	if brain.In || brain.Out {
+		t.Error("«Разбор» не приносит созвоны и не уносит follow-up")
+	}
+	// Умолчание — Claude: тот, кто ничего не выбирал, остаётся с прежним.
+	if brain.Values["provider"] != core.ProviderClaude {
+		t.Errorf("умолчание провайдера: %q", brain.Values["provider"])
+	}
+	// Выбор провайдера должен быть выбором, а не текстовым полем: владелец
+	// хочет нажимать, а не вспоминать, как пишется «openai».
+	var provider *core.ChannelField
+	for i := range brain.Fields {
+		if brain.Fields[i].Key == "provider" {
+			provider = &brain.Fields[i]
+		}
+	}
+	if provider == nil || provider.Kind != "select" {
+		t.Fatalf("провайдер выбирается не списком: %+v", provider)
+	}
+	// Все четыре пути должны быть в списке: список — единственное место, где
+	// человек про них узнаёт, и путь, не попавший сюда, для него не существует.
+	have := map[string]bool{}
+	for _, o := range provider.Options {
+		have[o.Value] = true
+		if o.Label == "" {
+			t.Errorf("вариант %q без подписи", o.Value)
+		}
+	}
+	for _, want := range []string{core.ProviderClaude, core.ProviderOpenAI,
+		core.ProviderCodex, core.ProviderCommand} {
+		if !have[want] {
+			t.Errorf("в списке нет провайдера %q", want)
+		}
+	}
+	// Имени переменной с ключом здесь быть не должно ни в поле, ни в значении.
+	for _, f := range brain.Fields {
+		if strings.Contains(f.Key, "key") || strings.Contains(f.Key, "secret") {
+			t.Errorf("в форме «Разбора» завелось поле про секрет: %q", f.Key)
+		}
+	}
+
+	// Правка через панель.
+	if code, body := a.do("POST", "/api/channels/brain", map[string]any{
+		"enabled": true,
+		"values": map[string]string{
+			"provider": core.ProviderOpenAI, "preset": "groq",
+			"model": "openai/gpt-oss-120b", "json_mode": "auto",
+		},
+	}); code != 200 {
+		t.Fatalf("сохранение раздела: %d %s", code, body)
+	}
+	fresh := core.DefaultConfig()
+	if err := core.ApplyChannels(st, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.BrainProvider() != core.ProviderOpenAI {
+		t.Fatalf("провайдер из панели не доехал до сервиса: %q", fresh.BrainProvider())
+	}
+	if got := fresh.OpenAIEndpoint(); got != "https://api.groq.com/openai/v1/chat/completions" {
+		t.Errorf("адрес: %q", got)
+	}
+	if got := fresh.OpenAIKeyEnv(); got != "GROQ_API_KEY" {
+		t.Errorf("имя переменной с ключом подставилось не по заготовке: %q", got)
+	}
+}
+
+// Имя переменной с ключом в панели не показывается — и потому не должно из неё
+// же и стираться. Иначе правка модели молча оставляла бы steno без ключа.
+func TestPanelKeepsBrainKeyEnv(t *testing.T) {
+	srv, st, p := testPanel(t)
+	a := login(t, srv, "тайна")
+
+	p.cfg.Brain.Provider = core.ProviderOpenAI
+	p.cfg.Brain.OpenAI.BaseURL = "https://llm.example.com/v1"
+	p.cfg.Brain.OpenAI.Model = "старая"
+	p.cfg.Brain.OpenAI.APIKeyEnv = "МОЙ_ОСОБЫЙ_КЛЮЧ"
+	if _, err := core.ImportChannels(st, p.cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := a.do("POST", "/api/channels/brain", map[string]any{
+		"enabled": true,
+		"values": map[string]string{
+			"provider": core.ProviderOpenAI,
+			"base_url": "https://llm.example.com/v1", "model": "новая", "json_mode": "auto",
+		},
+	}); code != 200 {
+		t.Fatalf("сохранение: %d %s", code, body)
+	}
+
+	fresh := core.DefaultConfig()
+	fresh.Brain.OpenAI.APIKeyEnv = "МОЙ_ОСОБЫЙ_КЛЮЧ" // так это лежит в конфиге на диске
+	if err := core.ApplyChannels(st, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.BrainModel() != "новая" {
+		t.Errorf("правка модели не доехала: %q", fresh.BrainModel())
+	}
+	if fresh.OpenAIKeyEnv() != "МОЙ_ОСОБЫЙ_КЛЮЧ" {
+		t.Errorf("правка в панели стёрла имя переменной с ключом: %q", fresh.OpenAIKeyEnv())
+	}
+}

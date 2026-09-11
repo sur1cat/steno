@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,10 +35,27 @@ import (
 type ChannelField struct {
 	Key   string `json:"key"`
 	Label string `json:"label"`
-	// text | list | number | duration | switch | google
+	// text | list | number | duration | switch | select | google
 	Kind        string `json:"kind"`
 	Hint        string `json:"hint"`
 	Placeholder string `json:"placeholder"`
+	// Только для «select»: из чего выбирать. Список приходит с сервера вместе с
+	// полем — как и всё остальное описание формы, чтобы вариант, заведённый в
+	// одном месте, не пришлось заводить во втором.
+	Options []ChannelOption `json:"options,omitempty"`
+	// Показывать поле, только когда другое поле равно этому значению. Нужно
+	// ровно одному разделу — «Разбор», где адрес и имя модели имеют смысл лишь
+	// у одного из провайдеров. Показывать их всегда значит спрашивать человека
+	// про адрес OpenAI, когда он выбрал подписку Claude.
+	ShowWhen  string `json:"showWhen,omitempty"`
+	ShowValue string `json:"showValue,omitempty"`
+}
+
+// ChannelOption — один вариант выбора.
+type ChannelOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Hint  string `json:"hint,omitempty"`
 }
 
 // Input — хранит ли поле значение. «google» — не поле, а кнопка: доступ в
@@ -45,11 +63,23 @@ type ChannelField struct {
 // значило бы завести второе место, где он может разойтись с первым.
 func (f ChannelField) Input() bool { return f.Kind != "google" }
 
-// Channel — канал в том виде, в каком его правит человек в панели.
+// Виды разделов настройки. Каналы приносят созвоны и уносят follow-up, и у них
+// есть выключатель. «Разбор» — не канал: выключить его нельзя, и слова «вход» и
+// «выход» к нему не относятся. Форма при этом та же самая, и рисуется она тем
+// же кодом — заводить под один раздел вторую форму в панели и третью в
+// терминале было бы куда хуже.
+const (
+	ChannelKindIO    = "io"
+	ChannelKindBrain = "brain"
+)
+
+// Channel — раздел настройки в том виде, в каком его правит человек в панели.
 type Channel struct {
-	Key     string            `json:"key"`
-	Name    string            `json:"name"`
-	About   string            `json:"about"`
+	Key   string `json:"key"`
+	Name  string `json:"name"`
+	About string `json:"about"`
+	// io | brain — см. ChannelKindIO.
+	Kind    string            `json:"kind"`
 	In      bool              `json:"in"`  // приносит созвоны
 	Out     bool              `json:"out"` // уносит follow-up
 	Enabled bool              `json:"enabled"`
@@ -67,10 +97,19 @@ type Channel struct {
 type channelDef struct {
 	key, Name, about string
 	in, out, Live    bool
-	Fields           []ChannelField
-	summary          func(map[string]string) string
-	read             func(*Config) (bool, map[string]string)
-	apply            func(*Config, bool, map[string]string)
+	// Пусто — обычный канал (ChannelKindIO).
+	kind    string
+	Fields  []ChannelField
+	summary func(map[string]string) string
+	read    func(*Config) (bool, map[string]string)
+	apply   func(*Config, bool, map[string]string)
+}
+
+func (d channelDef) Kind() string {
+	if d.kind == "" {
+		return ChannelKindIO
+	}
+	return d.kind
 }
 
 func ChList(s string) []string {
@@ -146,8 +185,9 @@ func ChDurText(d Duration) string {
 
 // См. uiTabTitles: описание каналов собирается лениво и один раз — на языке,
 // который к тому моменту уже прочитан из конфига.
-var ChannelDefs = sync.OnceValue(func() []channelDef {
+var builtinChannelDefs = sync.OnceValue(func() []channelDef {
 	return []channelDef{
+		brainDef(),
 		{
 			key: "calendar", Name: i18n.Tr("Календарь"), in: true,
 			about: i18n.Tr("Смотрит календари команды и заводит бота на встречи со ссылкой на созвон (Google Meet, Jitsi). ") +
@@ -324,11 +364,220 @@ var ChannelDefs = sync.OnceValue(func() []channelDef {
 	}
 })
 
+// brainDef — раздел «Разбор»: кем steno разбирает созвон.
+//
+// Это единственное место, где провайдер меняется без правки JSON, и потому
+// самое важное из всего, что здесь описано: человек, поставивший steno ради
+// созвонов, не должен лезть в файл, чтобы переехать с Claude на свою модель.
+// Форма — та же самая, что у каналов, и рисуют её те же двое: панель и
+// терминал. Свой экран под один раздел означал бы третий список полей, который
+// однажды разойдётся с остальными.
+//
+// Секретов здесь нет и не будет — как и у каналов. Ни значений ключей, ни имён
+// переменных, в которых они лежат. Имя переменной подставляется по заготовке
+// (Groq — GROQ_API_KEY), а сам ключ задаёт `steno setup` в .env с правами 0600.
+// Тому, кто открыл панель выбрать модель подешевле, слово OPENROUTER_API_KEY не
+// объясняет ничего и починить он по нему ничего не может.
+func brainDef() channelDef {
+	presets := make([]ChannelOption, 0, len(OpenAIPresets()))
+	for _, p := range OpenAIPresets() {
+		o := ChannelOption{Value: p.Key, Label: p.Name, Hint: p.Hint}
+		if p.BaseURL != "" {
+			o.Label = p.Name + " — " + p.BaseURL
+		}
+		presets = append(presets, o)
+	}
+	return channelDef{
+		// Live: false — и это не забытая строка. Настройки каналов
+		// перечитываются перед каждой рассылкой, а конфиг, по которому идёт
+		// разбор, сервис держит с самого старта: смена провайдера доходит до
+		// него только при перезапуске. Панель и терминал говорят об этом прямо,
+		// потому что «сохранено» на неприменившейся настройке — это полчаса
+		// поисков поломки, которой нет.
+		key: "brain", Name: i18n.Tr("Разбор"), kind: ChannelKindBrain,
+		about: i18n.Tr("Кто читает расшифровку и достаёт из неё задачи, решения и вопросы. ") +
+			i18n.Tr("Подписка, которая уже есть, ключ провайдера или модель на этой же машине."),
+		Fields: []ChannelField{
+			{Key: "provider", Label: i18n.Tr("Чем разбирать"), Kind: "select",
+				Options: []ChannelOption{
+					{Value: ProviderClaude, Label: "Claude",
+						Hint: i18n.Tr("Ключ Anthropic или подписка Claude Code через `claude -p`.")},
+					{Value: ProviderOpenAI, Label: i18n.Tr("Совместимый с OpenAI"),
+						Hint: i18n.Tr("OpenAI, Groq, OpenRouter, Together, DeepSeek — и Ollama, ") +
+							i18n.Tr("LM Studio, llama.cpp на этой же машине.")},
+					{Value: ProviderCodex, Label: i18n.Tr("Codex (подписка ChatGPT)"),
+						Hint: i18n.Tr("Через `codex exec`. Нужен установленный codex и выполненный вход.")},
+					{Value: ProviderCommand, Label: i18n.Tr("Свой скрипт"),
+						Hint: i18n.Tr("Всё остальное: llamafile, своя обёртка, эндпоинт за VPN. ") +
+							i18n.Tr("Сам скрипт задаётся в `steno setup` — отсюда командами не запускают.")},
+				}},
+			{Key: "preset", Label: i18n.Tr("Куда ходить"), Kind: "select",
+				ShowWhen: "provider", ShowValue: ProviderOpenAI, Options: presets,
+				Hint: i18n.Tr("Ключ к выбранному задаёт `steno setup` — здесь секретов нет.")},
+			{Key: "base_url", Label: i18n.Tr("Свой адрес"), Kind: "text",
+				ShowWhen: "provider", ShowValue: ProviderOpenAI,
+				Placeholder: "https://api.example.com/v1",
+				Hint:        i18n.Tr("Пусто — адрес из строки выше. Заполнено — главнее её.")},
+			{Key: "model", Label: i18n.Tr("Модель"), Kind: "text",
+				ShowWhen: "provider", ShowValue: ProviderOpenAI,
+				Placeholder: "gpt-5",
+				Hint:        i18n.Tr("Ровно как её зовёт провайдер: у Ollama — как в `ollama list`.")},
+			{Key: "json_mode", Label: i18n.Tr("Как просить разметку"), Kind: "select",
+				ShowWhen: "provider", ShowValue: ProviderOpenAI,
+				Options: []ChannelOption{
+					{Value: "auto", Label: i18n.Tr("Подобрать самому"),
+						Hint: i18n.Tr("Сначала строгой схемой, при отказе мягче. Стоит одного лишнего запроса.")},
+					{Value: "schema", Label: i18n.Tr("Строгой схемой"),
+						Hint: i18n.Tr("Так умеют OpenAI, Groq и большинство новых моделей.")},
+					{Value: "object", Label: i18n.Tr("Просто просить JSON")},
+					{Value: "prompt", Label: i18n.Tr("Только словами"),
+						Hint: i18n.Tr("Для совсем старых моделей и самодельных серверов.")},
+				}},
+			{Key: "codex_model", Label: i18n.Tr("Модель"), Kind: "text",
+				ShowWhen: "provider", ShowValue: ProviderCodex,
+				Hint: i18n.Tr("Пусто — та, что у codex по умолчанию.")},
+		},
+		summary: func(v map[string]string) string {
+			switch v["provider"] {
+			case ProviderOpenAI:
+				where := v["base_url"]
+				if where == "" {
+					if p, ok := OpenAIPresetByKey(v["preset"]); ok {
+						where = p.Name
+					}
+				}
+				return strings.TrimSpace(FirstNonEmpty(v["model"], i18n.Tr("модель не выбрана")) +
+					" · " + where)
+			case ProviderCodex:
+				return strings.TrimSpace("codex exec " + v["codex_model"])
+			case ProviderCommand:
+				// Путь к скрипту здесь не показывается и не правится: панель
+				// открыта всей команде по общему паролю, и поле, из которого
+				// сервис запускает команду, — это чужой шелл на этой машине.
+				// Задаётся он в `steno setup`, как и всё, чего в панели нет.
+				return i18n.Tr("свой скрипт")
+			}
+			// Модель Claude сюда не подставляется: её в этой форме нет, и
+			// показать в списке то, чего в форме не окажется, — обещание,
+			// которого раздел не сдержит.
+			return "Claude"
+		},
+		read: func(c *Config) (bool, map[string]string) {
+			return true, map[string]string{
+				"provider":    c.BrainProvider(),
+				"preset":      c.Brain.OpenAI.Preset,
+				"base_url":    c.Brain.OpenAI.BaseURL,
+				"model":       c.Brain.OpenAI.Model,
+				"json_mode":   FirstNonEmpty(c.Brain.OpenAI.JSONMode, "auto"),
+				"codex_model": c.Brain.Codex.Model,
+			}
+		},
+		apply: func(c *Config, _ bool, v map[string]string) {
+			// Выключателя у этого раздела нет: разбор — то, ради чего steno
+			// вообще существует, и «выключить» его значит писать созвоны в
+			// стол. Поэтому первый аргумент здесь не используется.
+			c.Brain.Provider = strings.TrimSpace(v["provider"])
+			c.Brain.OpenAI.Preset = strings.TrimSpace(v["preset"])
+			c.Brain.OpenAI.BaseURL = strings.TrimSpace(v["base_url"])
+			c.Brain.OpenAI.Model = strings.TrimSpace(v["model"])
+			c.Brain.OpenAI.JSONMode = strings.TrimSpace(v["json_mode"])
+			c.Brain.Codex.Model = strings.TrimSpace(v["codex_model"])
+			// Имя переменной с ключом в панели не показывается и оттуда не
+			// приходит — сохраняем то, что уже задано конфигом. Иначе правка
+			// модели в панели молча обнуляла бы ключ.
+			c.Brain.OpenAI.APIKeyEnv = chKept(v, "api_key_env", c.Brain.OpenAI.APIKeyEnv)
+		},
+	}
+}
+
+// ChannelDefs — разделы настройки: встроенные каналы и адаптеры публикации.
+// Встроенные собираются один раз, а адаптеры приходят из настройки — их
+// сколько угодно, и имена у них свои, поэтому постоянным список быть не может.
+//
+// Параметр вариативный не для красоты: ChannelByKey зовут из панели и из
+// терминала, и конфига у них в этот момент нет.
+func ChannelDefs(cfg ...*Config) []channelDef {
+	defs := append([]channelDef(nil), builtinChannelDefs()...)
+	if len(cfg) > 0 && cfg[0] != nil {
+		for _, t := range cfg[0].Publish.Targets {
+			defs = append(defs, publishCmdDef(PublishTargetName(t)))
+		}
+	}
+	return defs
+}
+
+const publishCmdPrefix = "cmd:"
+
+// PublishTargetName — имя адресата: своё, если задано, иначе из команды. То же
+// правило, что в publish.CommandName; повторено здесь, потому что core не может
+// импортировать publish — publish импортирует core.
+func PublishTargetName(t PublishTarget) string {
+	if n := strings.TrimSpace(t.Name); n != "" {
+		return n
+	}
+	if len(t.Cmd) == 0 {
+		return "cmd"
+	}
+	base := filepath.Base(strings.TrimSpace(t.Cmd[0]))
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	switch base {
+	case "", ".", "..":
+		return "cmd"
+	}
+	return base
+}
+
+// publishCmdDef — форма одного адаптера публикации. Она одинаковая у всех, а
+// ключ несёт имя, поэтому определение собирается по ключу целиком: так строку
+// «cmd:discord» находит и ChannelByKey, у которого конфига нет.
+func publishCmdDef(name string) channelDef {
+	return channelDef{
+		key: publishCmdPrefix + name, Name: name, out: true, Live: true,
+		about: i18n.Tr("Свой адаптер: команда, которая получает созвон на stdin и публикует его куда угодно. ") +
+			i18n.Tr("Заводится строкой в publish.targets, а здесь включается и выключается."),
+		Fields: []ChannelField{
+			{Key: "cmd", Label: i18n.Tr("Команда"), Kind: "text",
+				Placeholder: "./adapters/discord.sh",
+				Hint:        i18n.Tr("Аргументы через пробел. Свои ключи адаптер берёт из .env — здесь секретов нет.")},
+			{Key: "timeout", Label: i18n.Tr("Сколько ждать"), Kind: "duration", Placeholder: "2m"},
+		},
+		summary: func(v map[string]string) string { return v["cmd"] },
+		read: func(c *Config) (bool, map[string]string) {
+			for _, t := range c.Publish.Targets {
+				if PublishTargetName(t) == name {
+					return t.On(), map[string]string{
+						"cmd":     strings.Join(t.Cmd, " "),
+						"timeout": ChDurText(t.Timeout),
+					}
+				}
+			}
+			return false, map[string]string{}
+		},
+		apply: func(c *Config, on bool, v map[string]string) {
+			for i, t := range c.Publish.Targets {
+				if PublishTargetName(t) == name {
+					c.Publish.Targets[i].Enabled = &on
+					if cmd := strings.Fields(v["cmd"]); len(cmd) > 0 {
+						c.Publish.Targets[i].Cmd = cmd
+					}
+					c.Publish.Targets[i].Timeout = chDur(v["timeout"], t.Timeout)
+					return
+				}
+			}
+		},
+	}
+}
+
 func ChannelByKey(key string) (channelDef, bool) {
 	for _, d := range ChannelDefs() {
 		if d.key == key {
 			return d, true
 		}
+	}
+	// Адаптеров публикации в постоянном списке нет: их имена задаёт человек.
+	// Форма у всех одна, и по ключу «cmd:discord» она собирается целиком.
+	if n, ok := strings.CutPrefix(key, publishCmdPrefix); ok && n != "" {
+		return publishCmdDef(n), true
 	}
 	return channelDef{}, false
 }
@@ -382,13 +631,19 @@ func ImportChannels(st *Store, cfg *Config) (int, error) {
 	if len(have) > 0 {
 		return 0, nil // база уже главнее конфига
 	}
-	for _, d := range ChannelDefs() {
+	n := 0
+	for _, d := range ChannelDefs(cfg) {
 		on, values := d.read(cfg)
 		if err := st.SaveChannel(d.key, on, values); err != nil {
 			return 0, err
 		}
+		// Считаем только каналы: про них сервис пишет «перенёс N каналов», и
+		// раздел «Разбор», уехавший тем же путём, каналом от этого не стал.
+		if d.Kind() == ChannelKindIO {
+			n++
+		}
 	}
-	return len(ChannelDefs()), nil
+	return n, nil
 }
 
 // ApplyChannels накладывает настройки из базы на конфиг на месте. Годится
@@ -398,7 +653,7 @@ func ApplyChannels(st *Store, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	for _, d := range ChannelDefs() {
+	for _, d := range ChannelDefs(cfg) {
 		if row, ok := have[d.key]; ok {
 			d.apply(cfg, row.Enabled, row.Values)
 		}
@@ -426,8 +681,8 @@ func ActiveChannels(st *Store, cfg *Config) *Config {
 // человек их там увидел бы.
 func PanelChannels(st *Store, cfg *Config) []Channel {
 	have, _ := st.ChannelSettings()
-	out := make([]Channel, 0, len(ChannelDefs()))
-	for _, d := range ChannelDefs() {
+	out := make([]Channel, 0, len(ChannelDefs(cfg)))
+	for _, d := range ChannelDefs(cfg) {
 		on, stored := d.read(cfg)
 		if row, ok := have[d.key]; ok {
 			on = row.Enabled
@@ -445,7 +700,7 @@ func PanelChannels(st *Store, cfg *Config) []Channel {
 			}
 		}
 		ch := Channel{
-			Key: d.key, Name: d.Name, About: d.about, In: d.in, Out: d.out,
+			Key: d.key, Name: d.Name, About: d.about, Kind: d.Kind(), In: d.in, Out: d.out,
 			Enabled: on, Values: values, Fields: d.Fields, Live: d.Live,
 		}
 		if d.summary != nil {

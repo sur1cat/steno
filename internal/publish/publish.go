@@ -57,6 +57,11 @@ func PublishAll(ctx context.Context, cfg *core.Config, st *core.Store, m *core.M
 		record(st, lg, m.ID, "telegram", "", err)
 		fail("telegram", err)
 	}
+	// Адаптеры, которые человек принёс сам. Идут после встроенных адресатов:
+	// ссылка на документ к этому моменту уже есть, и она видна им в links.
+	if cmds := Commands(cfg); len(cmds) > 0 {
+		errs = append(errs, PublishCommands(ctx, st, lg, cmds, NewPayload(m, f, segs, docURL))...)
+	}
 	errs = append(errs, publishToOrigin(ctx, cfg, st, m, f, docURL, slackChannelID, lg)...)
 	return errs
 }

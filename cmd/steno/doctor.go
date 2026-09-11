@@ -32,9 +32,14 @@ type check struct {
 	fix   []string
 	// Без этого нельзя даже записать созвон.
 	blocking bool
+	// Чем это чинится прямо здесь, если человек у терминала: скачать модель,
+	// принять ключ. Пусто — только словами. Doctor, который видит, что модели
+	// нет, и печатает curl, вместо того чтобы спросить «скачать?», — это
+	// констатация там, где нужна помощь.
+	offer func(context.Context) error
 }
 
-func cmdDoctor(args []string) error {
+func cmdDoctor(ctx context.Context, args []string) error {
 	fs := newFlagSet("doctor")
 	cfgPath := setupFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -51,7 +56,7 @@ func cmdDoctor(args []string) error {
 	cs = append(cs, checkBot(cfg))
 	cs = append(cs, checkPlatforms(cfg))
 	cs = append(cs, checkTranscribe(cfg))
-	cs = append(cs, checkClaude(cfg))
+	cs = append(cs, checkBrain(cfg, core.ResolveConfigPath(*cfgPath)))
 	cs = append(cs, checkGoogle(cfg))
 	cs = append(cs, checkSources(cfg)...)
 	cs = append(cs, checkTargets(cfg)...)
@@ -64,7 +69,8 @@ func cmdDoctor(args []string) error {
 	path := core.ResolveConfigPath(*cfgPath)
 	if _, err := os.Stat(path); err != nil {
 		fmt.Printf("steno doctor · %s\n", paint("33", i18n.Tr("конфига ")+path+i18n.Tr(" нет — показываю умолчания")))
-		fmt.Printf("%s\n\n", dim(i18n.Tr("настроить одной командой:  steno setup")))
+		fmt.Printf("%s\n", dim(i18n.Tr("настроить одной командой:  steno setup")))
+		fmt.Printf("%s\n\n", dim(i18n.Tr("для заметок с микрофона хватит и `steno note` — минимальную настройку заведёт сама")))
 	} else {
 		fmt.Printf(i18n.Tr("steno doctor · конфиг %s\n\n"), path)
 	}
@@ -80,6 +86,23 @@ func cmdDoctor(args []string) error {
 			if c.blocking {
 				blocked = true
 			}
+		}
+	}
+
+	// То, что чинится на месте, — чиним, если есть кому ответить. В трубе и в
+	// скрипте doctor остаётся отчётом: спросить некого, а качать гигабайт без
+	// спроса нельзя.
+	if stdinTTY() {
+		for _, c := range cs {
+			if c.state != "fail" || c.offer == nil {
+				continue
+			}
+			fmt.Println()
+			if err := c.offer(ctx); err != nil {
+				fmt.Println(warn(err.Error()))
+				continue
+			}
+			fmt.Println(ok(c.name + i18n.Tr(": готово — проверь ещё раз: steno doctor")))
 		}
 	}
 
@@ -99,12 +122,14 @@ func cmdDoctor(args []string) error {
 func checkData(cfg *core.Config) check {
 	probe := filepath.Join(cfg.DataDir, ".doctor")
 	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
-		return check{i18n.Tr("данные"), "fail", cfg.DataDir + i18n.Tr(" — нет записи"), []string{
-			"→ " + err.Error(),
-		}, true}
+		return check{name: i18n.Tr("данные"), state: "fail",
+			note: cfg.DataDir + i18n.Tr(" — нет записи"),
+			fix: []string{
+				"→ " + err.Error(),
+			}, blocking: true}
 	}
 	os.Remove(probe)
-	return check{i18n.Tr("данные"), "ok", cfg.DataDir, nil, true}
+	return check{name: i18n.Tr("данные"), state: "ok", note: cfg.DataDir, blocking: true}
 }
 
 func checkBot(cfg *core.Config) check {
@@ -119,16 +144,18 @@ func checkBot(cfg *core.Config) check {
 			missing = removeString(missing, "chromium")
 		}
 		if len(missing) > 0 {
-			return check{i18n.Tr("бот (local)"), "fail",
-				i18n.Tr("не хватает: ") + strings.Join(missing, ", "),
-				[]string{i18n.Tr("→ либо поставь их, либо убери bot.local — тогда бот пойдёт в docker")}, true}
+			return check{name: i18n.Tr("бот (local)"), state: "fail",
+				note: i18n.Tr("не хватает: ") + strings.Join(missing, ", "),
+				fix:  []string{i18n.Tr("→ либо поставь их, либо убери bot.local — тогда бот пойдёт в docker")}, blocking: true}
 		}
-		return check{i18n.Tr("бот (local)"), "ok", i18n.Tr("chromium, ffmpeg и pulseaudio на месте"), nil, true}
+		return check{name: i18n.Tr("бот (local)"), state: "ok",
+			note: i18n.Tr("chromium, ffmpeg и pulseaudio на месте"), blocking: true}
 	}
 
 	if _, err := exec.LookPath("docker"); err != nil {
-		return check{i18n.Tr("бот (docker)"), "fail", i18n.Tr("docker не найден"),
-			[]string{i18n.Tr("→ поставь Docker Desktop или задай bot.local = true")}, true}
+		return check{name: i18n.Tr("бот (docker)"), state: "fail",
+			note: i18n.Tr("docker не найден"),
+			fix:  []string{i18n.Tr("→ поставь Docker Desktop или задай bot.local = true")}, blocking: true}
 	}
 	// Через `docker images -q`: inspect по имени не находит образ, собранный
 	// BuildKit в новом хранилище Docker Desktop. См. haveImage в main.go.
@@ -142,12 +169,13 @@ func checkBot(cfg *core.Config) check {
 		// steno, незачем — раньше здесь стояло «✗» и требование склонировать
 		// репозиторий и собрать гигабайт руками.
 		if strings.Contains(cfg.Bot.Image, "/") {
-			return check{i18n.Tr("бот (docker)"), "ok",
-				i18n.Tr("образа ") + cfg.Bot.Image + i18n.Tr(" нет — скачается перед первым созвоном"),
-				[]string{i18n.Tr("→ можно заранее:  docker pull ") + cfg.Bot.Image}, false}
+			return check{name: i18n.Tr("бот (docker)"), state: "ok",
+				note: i18n.Tr("образа ") + cfg.Bot.Image + i18n.Tr(" нет — скачается перед первым созвоном"),
+				fix:  []string{i18n.Tr("→ можно заранее:  docker pull ") + cfg.Bot.Image}}
 		}
-		return check{i18n.Tr("бот (docker)"), "fail", i18n.Tr("нет образа ") + cfg.Bot.Image,
-			[]string{"→ make bot-image"}, true}
+		return check{name: i18n.Tr("бот (docker)"), state: "fail",
+			note: i18n.Tr("нет образа ") + cfg.Bot.Image,
+			fix:  []string{"→ make bot-image"}, blocking: true}
 	}
 	_ = out
 	// Запись, разбор страницы и снятие субтитров живут внутри образа, а не в
@@ -155,32 +183,52 @@ func checkBot(cfg *core.Config) check {
 	// полдня чинить то, что уже починено: человек ставит новую версию, идёт на
 	// созвон и получает прежнее поведение. Молчать об этом нельзя.
 	if age := imageAge(strings.TrimSpace(string(out))); age != "" {
-		return check{i18n.Tr("бот (docker)"), "fail",
-			i18n.Tr("образ ") + cfg.Bot.Image + i18n.Tr(" старше самого steno на ") + age,
-			fixes(cfg), false}
+		return check{name: i18n.Tr("бот (docker)"), state: "fail",
+			note: i18n.Tr("образ ") + cfg.Bot.Image + i18n.Tr(" старше самого steno на ") + age,
+			fix:  fixes(cfg)}
 	}
-	return check{i18n.Tr("бот (docker)"), "ok", i18n.Tr("образ ") + cfg.Bot.Image + i18n.Tr(" на месте"), nil, true}
+	return check{name: i18n.Tr("бот (docker)"), state: "ok",
+		note: i18n.Tr("образ ") + cfg.Bot.Image + i18n.Tr(" на месте"), blocking: true}
 }
 
 func checkTranscribe(cfg *core.Config) check {
 	if cfg.Transcribe.Source == "captions" {
-		return check{i18n.Tr("расшифровка"), "ok",
-			i18n.Tr("из субтитров площадки — ставить ничего не нужно"),
-			[]string{i18n.Tr("качество ниже whisper; для продакшена смени transcribe.source на command")}, false}
+		return check{name: i18n.Tr("расшифровка"), state: "ok",
+			note: i18n.Tr("из субтитров площадки — ставить ничего не нужно"),
+			fix:  []string{i18n.Tr("качество ниже whisper; для продакшена смени transcribe.source на command")}}
 	}
 	if len(cfg.Transcribe.Cmd) == 0 {
-		return check{i18n.Tr("расшифровка"), "fail", i18n.Tr("не задан transcribe.cmd"),
-			[]string{i18n.Tr(`→ или поставь "source": "captions", чтобы взять текст из субтитров площадки`)}, false}
+		return check{name: i18n.Tr("расшифровка"), state: "fail",
+			note: i18n.Tr("не задан transcribe.cmd"),
+			fix:  []string{i18n.Tr(`→ или поставь "source": "captions", чтобы взять текст из субтитров площадки`)}}
 	}
 	// Через AdapterPath: путь в конфиге мог указывать в каталог версии, которую
 	// снёс brew upgrade, а адаптер при этом лежит рядом с новой.
 	bin := core.AdapterPath(cfg.Transcribe.Cmd[0])
 	if _, err := exec.LookPath(bin); err != nil {
-		return check{i18n.Tr("расшифровка"), "fail", i18n.Tr("не запускается ") + bin,
-			[]string{
+		return check{name: i18n.Tr("расшифровка"), state: "fail", note: i18n.Tr("не запускается ") + bin,
+			fix: []string{
 				"→ " + err.Error(),
 				i18n.Tr(`→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`),
-			}, false}
+			}}
+	}
+	// У whisper.cpp два условия, которых у остальных адаптеров нет: бинарник и
+	// модель на диске. Их doctor смотрит сам, до прогона адаптера, — чтобы
+	// сказать теми же словами, что и `steno note`, и предложить то же самое.
+	if w := inspectWhisper(cfg); w.adapter {
+		if len(w.missing) > 0 {
+			lines := strings.Split(noRecognizer(w.missing).Error(), "\n")
+			return check{name: i18n.Tr("расшифровка"), state: "fail", note: lines[0], fix: lines[1:]}
+		}
+		if w.model == "" {
+			return check{name: i18n.Tr("расшифровка"), state: "fail",
+				note: i18n.Tr("речевой модели нет в ") + w.dir,
+				fix: []string{
+					i18n.Tr("→ скачать спросит и `steno note`, и doctor в терминале — один Enter"),
+					i18n.Tr("→ или руками: ") + whisperModelsURL + whisperModelName() + ".bin",
+				},
+				offer: func(ctx context.Context) error { return ensureTranscriber(ctx, cfg) }}
+		}
 	}
 	// Найти файл мало. Адаптеру нужна модель на полгигабайта, и без неё он
 	// падает — а doctor до этого рапортовал «ok». Поэтому прогоняем его
@@ -196,9 +244,9 @@ func checkTranscribe(cfg *core.Config) check {
 			fix = append(fix, "→ "+l)
 		}
 		fix = append(fix, i18n.Tr(`→ или поставь "source": "captions" — текст возьмётся из субтитров площадки`))
-		return check{i18n.Tr("расшифровка"), "fail", i18n.Tr("адаптер не отработал"), fix, false}
+		return check{name: i18n.Tr("расшифровка"), state: "fail", note: i18n.Tr("адаптер не отработал"), fix: fix}
 	}
-	return check{i18n.Tr("расшифровка"), "ok", out, nil, false}
+	return check{name: i18n.Tr("расшифровка"), state: "ok", note: out}
 }
 
 // probeTranscriber прогоняет адаптер на полусекунде тишины и проверяет, что он
@@ -219,7 +267,7 @@ func probeTranscriber(cfg *core.Config) (string, error) {
 	defer cancel()
 	probe := *cfg
 	probe.Transcribe.Timeout = core.Duration(3 * time.Minute)
-	_, notes, err := audio.RunTranscriber(ctx, &probe, wav)
+	_, notes, err := audio.RunTranscriber(ctx, &probe, wav, nil)
 	if err != nil {
 		return "", err
 	}
@@ -240,18 +288,79 @@ var (
 	smallModelRe = regexp.MustCompile(`(?i)tiny|base|small`)
 )
 
-func checkClaude(cfg *core.Config) check {
+// checkBrain — кем steno разбирает созвон и доступен ли он. Провайдеров стало
+// больше одного, поэтому строка начинается с имени выбранного: увидеть здесь
+// «Claude» на установке, работающей через Groq, значит искать поломку не там.
+func checkBrain(cfg *core.Config, cfgPath string) check {
+	name := i18n.Tr("разбор")
+	title := brain.ProviderTitle(cfg)
 	_, how, err := brain.ResolveVia(cfg)
 	if err != nil {
-		return check{"Claude", "fail", i18n.Tr("нет доступа"),
-			[]string{
-				i18n.Tr("→ ключ API: console.anthropic.com → API keys, потом export ") +
-					cfg.Claude.APIKeyEnv + "=sk-ant-…",
-				i18n.Tr("→ либо подписка: поставь Claude Code и войди — steno возьмёт её через `claude -p`"),
-			}, false}
+		// Причина отказа уже написана человеческими словами тем, кто её знает,
+		// — ResolveVia. Повторять её своими здесь значит однажды разойтись.
+		var fix []string
+		for _, l := range core.LastLines(err.Error(), 4) {
+			fix = append(fix, "→ "+l)
+		}
+		c := check{name: name, state: "fail", note: title + i18n.Tr(" — нет доступа"), fix: fix}
+		if cfg.BrainProvider() == core.ProviderClaude {
+			c.fix = append(c.fix, i18n.Tr("→ или смени провайдера: `steno setup`, «Чем платить за follow-up»"))
+			// Пока выбор не сделан, ключ можно просто вставить — как в
+			// `steno note`. Названный провайдер чинится настройкой, не здесь.
+			if cfg.Claude.Via == "auto" || cfg.Claude.Via == "api" {
+				c.offer = func(context.Context) error { return ensureBrain(cfg, cfgPath) }
+			}
+		}
+		return c
 	}
-	return check{"Claude", "ok",
-		cfg.Claude.Model + ", effort " + core.OrDash(cfg.Claude.Effort) + " · " + how, nil, false}
+	note := title + " · " + core.OrDash(cfg.BrainModel())
+	if cfg.BrainProvider() == core.ProviderClaude {
+		note += ", effort " + core.OrDash(cfg.Claude.Effort)
+	}
+	note += " · " + how
+
+	var fix []string
+	// Настройка может быть безупречной, а модель на этой же машине — не
+	// запущена. Узнавать об этом на первом созвоне, когда час разговора уже
+	// записан, поздно; doctor для того и есть, чтобы сходить туда заранее.
+	if cfg.BrainProvider() == core.ProviderOpenAI {
+		if ok, why := brain.OpenAIReach(context.Background(), cfg); !ok {
+			return check{name: name, state: "fail", note: title + i18n.Tr(" не отвечает"), fix: []string{
+				"→ " + why,
+				i18n.Tr("→ адрес сейчас ") + cfg.OpenAIBaseURL(),
+			}}
+		}
+	}
+	// Скрипт проверяем запуском не здесь: он ходит к настоящей модели и может
+	// стоить денег и минут. Что он на месте и запускается, уже сказала
+	// ResolveVia — этого для предполётной проверки довольно.
+	fix = append(fix, brainPriceFix(cfg)...)
+	if cfg.BrainProvider() == core.ProviderCommand {
+		fix = append(fix, i18n.Tr("→ договор со скриптом описан в adapters/ollama.sh"))
+		if _, ok := cfg.LLM.Prices[cfg.BrainModel()]; !ok {
+			fix = append(fix, i18n.Tr("→ деньги считает сам скрипт полем usd; молчит — `steno cost` покажет токены без денег"))
+		}
+	}
+	return check{name: name, state: "ok", note: note, fix: fix}
+}
+
+// brainPriceFix — предупреждение про неизвестную цену. Отдельной функцией,
+// чтобы его можно было проверить, не поднимая чужой сервер: у steno нет цен ни
+// одного провайдера, кроме Anthropic, и молчать об этом нельзя — иначе `steno
+// cost` покажет ноль там, где счёт придёт.
+//
+// У модели на этой же машине предупреждать не о чем: там ноль — правда.
+func brainPriceFix(cfg *core.Config) []string {
+	if cfg.BrainProvider() != core.ProviderOpenAI || cfg.OpenAILocal() {
+		return nil
+	}
+	if _, ok := cfg.Brain.OpenAI.Prices[cfg.BrainModel()]; ok {
+		return nil
+	}
+	return []string{
+		i18n.Tr("→ цена этой модели неизвестна — `steno cost` покажет токены без денег"),
+		i18n.Tr("→ чтобы считались деньги, впиши её в brain.openai.prices"),
+	}
 }
 
 // checkGoogle — одной строкой: чем steno входит в Google и от чьего имени.
@@ -271,19 +380,19 @@ func checkGoogle(cfg *core.Config) check {
 			fix = append(fix, i18n.Tr("→ ключ организации при этом не используется: ")+
 				i18n.Tr("подключённый аккаунт главнее"))
 		}
-		return check{"Google", "ok", note, fix, false}
+		return check{name: "Google", state: "ok", note: note, fix: fix}
 	}
 	if key != "" {
-		return check{"Google", "ok", i18n.Tr("доступ ключом организации"), nil, false}
+		return check{name: "Google", state: "ok", note: i18n.Tr("доступ ключом организации")}
 	}
 	if !cfg.Calendar.Enabled && !cfg.Gmail.Enabled && !cfg.GoogleDocs.Enabled {
-		return check{"Google", "off", i18n.Tr("не подключён, и никому не нужен"), nil, false}
+		return check{name: "Google", state: "off", note: i18n.Tr("не подключён, и никому не нужен")}
 	}
 	fix := []string{i18n.Tr("→ панель, «Настройки» → «Подключить Google»")}
 	if !google.GoogleOAuthReady(cfg) {
 		fix = append(fix, i18n.Tr("→ кнопки там пока нет: `steno setup` спросит client id и секрет"))
 	}
-	return check{"Google", "fail", i18n.Tr("не подключён"), fix, false}
+	return check{name: "Google", state: "fail", note: i18n.Tr("не подключён"), fix: fix}
 }
 
 // checkGoogleAccess — доступ для одного канала: сначала подключённый аккаунт,
@@ -296,12 +405,12 @@ func checkGoogle(cfg *core.Config) check {
 func checkGoogleAccess(cfg *core.Config, name, keyFile, subject string) check {
 	if t, err := google.LoadGoogleToken(cfg); err == nil {
 		if subject != "" && !strings.EqualFold(subject, t.Account) {
-			return check{name, "fail", i18n.Tr("нужен доступ от имени ") + subject, []string{
+			return check{name: name, state: "fail", note: i18n.Tr("нужен доступ от имени ") + subject, fix: []string{
 				i18n.Tr("→ steno подключён как ") + t.Account + i18n.Tr(" и работает только от него"),
 				i18n.Tr("→ либо поправь адрес, либо переходи на ключ организации"),
-			}, false}
+			}}
 		}
-		return check{name, "ok", i18n.Tr("от имени ") + t.Account, nil, false}
+		return check{name: name, state: "ok", note: i18n.Tr("от имени ") + t.Account}
 	}
 	return checkGoogleKey(name, keyFile)
 }
@@ -314,8 +423,9 @@ func checkSources(cfg *core.Config) []check {
 		if c.state == "ok" {
 			switch {
 			case len(cfg.Calendar.Calendars) == 0:
-				c = check{i18n.Tr("календарь"), "fail", i18n.Tr("не указан ни один календарь"),
-					[]string{i18n.Tr("→ панель, «Каналы» → «Календарь» → «Чьи календари смотреть»")}, false}
+				c = check{name: i18n.Tr("календарь"), state: "fail",
+					note: i18n.Tr("не указан ни один календарь"),
+					fix:  []string{i18n.Tr("→ панель, «Каналы» → «Календарь» → «Чьи календари смотреть»")}}
 			default:
 				c.note = fmt.Sprintf(i18n.Tr("%d календарей, %s"), len(cfg.Calendar.Calendars), c.note)
 				// По кнопке steno видит только свой календарь. Чужой в списке
@@ -335,7 +445,7 @@ func checkSources(cfg *core.Config) []check {
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{i18n.Tr("календарь"), "off", i18n.Tr("выключен"), nil, false})
+		cs = append(cs, check{name: i18n.Tr("календарь"), state: "off", note: i18n.Tr("выключен")})
 	}
 
 	if cfg.Gmail.Enabled {
@@ -343,24 +453,25 @@ func checkSources(cfg *core.Config) []check {
 			google.CredentialsFile(cfg.Gmail.CredentialsFile, cfg.GoogleDocs.CredentialsFile),
 			cfg.Gmail.Account)
 		if c.state == "ok" && cfg.Gmail.Account == "" {
-			c = check{i18n.Tr("почта бота"), "fail", i18n.Tr("не указан ящик бота"),
-				[]string{i18n.Tr("→ панель, «Каналы» → «Почта бота» → «Ящик бота»")}, false}
+			c = check{name: i18n.Tr("почта бота"), state: "fail",
+				note: i18n.Tr("не указан ящик бота"),
+				fix:  []string{i18n.Tr("→ панель, «Каналы» → «Почта бота» → «Ящик бота»")}}
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{i18n.Tr("почта бота"), "off", i18n.Tr("выключена"), nil, false})
+		cs = append(cs, check{name: i18n.Tr("почта бота"), state: "off", note: i18n.Tr("выключена")})
 	}
 
 	if cfg.Telegram.Listen {
 		if len(cfg.Telegram.AllowedChats) == 0 && cfg.Telegram.ChatID == "" {
-			cs = append(cs, check{i18n.Tr("Telegram вход"), "fail",
-				i18n.Tr("не задан ни chat_id, ни allowed_chats"),
-				[]string{i18n.Tr("→ без этого сервис не стартует: принимать ссылки от кого угодно нельзя")}, false})
+			cs = append(cs, check{name: i18n.Tr("Telegram вход"), state: "fail",
+				note: i18n.Tr("не задан ни chat_id, ни allowed_chats"),
+				fix:  []string{i18n.Tr("→ без этого сервис не стартует: принимать ссылки от кого угодно нельзя")}})
 		} else {
 			cs = append(cs, checkEnv(i18n.Tr("Telegram вход"), cfg.Telegram.TokenEnv))
 		}
 	} else {
-		cs = append(cs, check{i18n.Tr("Telegram вход"), "off", i18n.Tr("выключен"), nil, false})
+		cs = append(cs, check{name: i18n.Tr("Telegram вход"), state: "off", note: i18n.Tr("выключен")})
 	}
 
 	if cfg.HTTP.Enabled {
@@ -371,7 +482,7 @@ func checkSources(cfg *core.Config) []check {
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{i18n.Tr("HTTP вход"), "off", i18n.Tr("выключен"), nil, false})
+		cs = append(cs, check{name: i18n.Tr("HTTP вход"), state: "off", note: i18n.Tr("выключен")})
 	}
 	return cs
 }
@@ -386,32 +497,32 @@ func checkTargets(cfg *core.Config) []check {
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"Google Docs", "off", i18n.Tr("выключен"), nil, false})
+		cs = append(cs, check{name: "Google Docs", state: "off", note: i18n.Tr("выключен")})
 	}
 	if cfg.Slack.Enabled {
 		c := checkEnv("Slack", cfg.Slack.TokenEnv)
 		if c.state == "ok" && cfg.Slack.Channel == "" {
-			c = check{"Slack", "fail", i18n.Tr("не указан канал"), nil, false}
+			c = check{name: "Slack", state: "fail", note: i18n.Tr("не указан канал")}
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"Slack", "off", i18n.Tr("выключен"), nil, false})
+		cs = append(cs, check{name: "Slack", state: "off", note: i18n.Tr("выключен")})
 	}
 	if cfg.Telegram.Enabled {
 		c := checkEnv("Telegram", cfg.Telegram.TokenEnv)
 		if c.state == "ok" && cfg.Telegram.ChatID == "" {
-			c = check{"Telegram", "fail", i18n.Tr("не указан chat_id"), nil, false}
+			c = check{name: "Telegram", state: "fail", note: i18n.Tr("не указан chat_id")}
 		}
 		cs = append(cs, c)
 	} else {
-		cs = append(cs, check{"Telegram", "off", i18n.Tr("выключен"), nil, false})
+		cs = append(cs, check{name: "Telegram", state: "off", note: i18n.Tr("выключен")})
 	}
 	return cs
 }
 
 func checkPanel(cfg *core.Config) check {
 	if !cfg.Panel.Enabled {
-		return check{i18n.Tr("панель"), "off", i18n.Tr("выключена"), nil, false}
+		return check{name: i18n.Tr("панель"), state: "off", note: i18n.Tr("выключена")}
 	}
 	c := checkEnv(i18n.Tr("панель"), cfg.Panel.PasswordEnv)
 	if c.state == "ok" {
@@ -422,40 +533,44 @@ func checkPanel(cfg *core.Config) check {
 
 func checkEnv(name, env string) check {
 	if env == "" {
-		return check{name, "fail", i18n.Tr("не указано имя переменной с секретом"), nil, false}
+		return check{name: name, state: "fail", note: i18n.Tr("не указано имя переменной с секретом")}
 	}
 	if strings.TrimSpace(os.Getenv(env)) == "" {
-		return check{name, "fail", i18n.Tr("переменная ") + env + i18n.Tr(" пуста"),
-			[]string{"→ export " + env + "=..."}, false}
+		return check{name: name, state: "fail",
+			note: i18n.Tr("переменная ") + env + i18n.Tr(" пуста"),
+			fix:  []string{"→ export " + env + "=..."}}
 	}
-	return check{name, "ok", env + i18n.Tr(" задана"), nil, false}
+	return check{name: name, state: "ok", note: env + i18n.Tr(" задана")}
 }
 
 // checkGoogleKey читает ключ service-account и проверяет, что это он и есть.
 // Самая частая ошибка здесь — скачать не тот JSON из консоли Google.
 func checkGoogleKey(name, path string) check {
 	if path == "" {
-		return check{name, "fail", i18n.Tr("нет доступа в Google"), []string{
+		return check{name: name, state: "fail", note: i18n.Tr("нет доступа в Google"), fix: []string{
 			i18n.Tr("→ панель, «Настройки» → «Подключить Google»"),
 			i18n.Tr("→ либо ключ организации в google_docs.credentials_file"),
-		}, false}
+		}}
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return check{name, "fail", i18n.Tr("ключ не читается"), []string{"→ " + err.Error()}, false}
+		return check{name: name, state: "fail",
+			note: i18n.Tr("ключ не читается"),
+			fix:  []string{"→ " + err.Error()}}
 	}
 	var key struct {
 		Type        string `json:"type"`
 		ClientEmail string `json:"client_email"`
 	}
 	if err := json.Unmarshal(raw, &key); err != nil {
-		return check{name, "fail", i18n.Tr("ключ — не JSON"), []string{"→ " + err.Error()}, false}
+		return check{name: name, state: "fail", note: i18n.Tr("ключ — не JSON"), fix: []string{"→ " + err.Error()}}
 	}
 	if key.Type != "service_account" || key.ClientEmail == "" {
-		return check{name, "fail", i18n.Tr("это не ключ service-account"),
-			[]string{i18n.Tr("→ в консоли Google: IAM → сервисные аккаунты → ключи → создать JSON")}, false}
+		return check{name: name, state: "fail",
+			note: i18n.Tr("это не ключ service-account"),
+			fix:  []string{i18n.Tr("→ в консоли Google: IAM → сервисные аккаунты → ключи → создать JSON")}}
 	}
-	return check{name, "ok", key.ClientEmail, nil, false}
+	return check{name: name, state: "ok", note: key.ClientEmail}
 }
 
 // notMine — чьи календари не принадлежат подключённому аккаунту. "primary" —
@@ -495,15 +610,15 @@ func checkPlatforms(cfg *core.Config) check {
 	}
 	note := i18n.Tr("умею: ") + strings.Join(names, ", ")
 	if len(noCaptions) == 0 {
-		return check{i18n.Tr("площадки"), "ok", note, nil, false}
+		return check{name: i18n.Tr("площадки"), state: "ok", note: note}
 	}
-	return check{i18n.Tr("площадки"), "ok", note, []string{
+	return check{name: i18n.Tr("площадки"), state: "ok", note: note, fix: []string{
 		i18n.Tr("→ у ") + strings.Join(noCaptions, ", ") + i18n.Tr(" субтитры есть не всегда: на публичном ") +
 			i18n.Tr("meet.jit.si они выключены на сервере (transcription.enabled=false)"),
 		i18n.Tr("→ без них расшифровка идёт по звуку и без имён говорящих; что вышло на ") +
 			i18n.Tr("самом деле, бот пишет строкой «субтитры: …» и полем captions в result.json"),
 		i18n.Tr("→ свой сервер Jitsi добавляется в selectors.json, ключ jitsi.hosts"),
-	}, false}
+	}}
 }
 
 // fixes — чем чинить отставший образ. Готовый в реестре есть не для всякого

@@ -1252,9 +1252,14 @@ func (m *uiModel) channelsView() []string {
 		c := rows[i]
 		nameW, stateW, whatW := m.colsChannels()
 		line := " " + uiCell(c.Name, nameW)
-		if c.Enabled {
+		switch {
+		case c.Kind == core.ChannelKindBrain:
+			// «Разбор» не выключается, и «включён» тут значило бы, что бывает
+			// иначе. Колонку всё равно занимаем — иначе строка съезжает.
+			line += uiCell("", stateW)
+		case c.Enabled:
 			line += uiOKStyle.Render(uiCell(i18n.Tr("включён"), stateW))
-		} else {
+		default:
 			line += uiDim.Render(uiCell(i18n.Tr("выключен"), stateW))
 		}
 		line += uiDim.Render(uiCell(uiChannelWhat(c), whatW))
@@ -1352,9 +1357,19 @@ func (m *uiModel) channelFormView() ([]string, int) {
 			row(here, name, fs.items[r.item].view(w, here))
 		default:
 			fs := &f.fields[r.field]
-			if fs.def.Kind == "switch" {
+			switch fs.def.Kind {
+			case "switch":
 				row(here, fs.def.Label, check(fs.on))
-			} else {
+			case "select":
+				row(here, fs.def.Label, uiSelectView(fs, here))
+				// Пояснение к выбранному варианту — важнее общего к полю:
+				// оно объясняет решение, которое человек принимает сейчас.
+				if fs.pick >= 0 && fs.pick < len(fs.def.Options) {
+					if h := fs.def.Options[fs.pick].Hint; h != "" {
+						note(uiDim.Render(h))
+					}
+				}
+			default:
 				row(here, fs.def.Label, fs.text.view(w, here))
 			}
 			if fs.def.Hint != "" {
@@ -1366,6 +1381,28 @@ func (m *uiModel) channelFormView() ([]string, int) {
 	out = append(out, uiWrapLines("  ", uiDim.Render(
 		i18n.Tr("Токенов и паролей здесь нет и не будет: их задаёт steno setup, и лежат они в .env.")), m.w-2)...)
 	return out, active
+}
+
+// uiSelectView — выбор одного из вариантов. Раскрывающегося списка в терминале
+// нет, поэтому показываем выбранное и стрелки: «‹ Claude ›» читается как то, что
+// можно листать, а голое слово — как подпись, которую менять нельзя.
+//
+// Номер варианта рядом («2/3») нужен по той же причине: без него не видно, что
+// вариантов вообще больше одного.
+func uiSelectView(fs *uiChanFieldState, here bool) string {
+	label := i18n.Tr("не выбрано")
+	if fs.pick >= 0 && fs.pick < len(fs.def.Options) {
+		label = fs.def.Options[fs.pick].Label
+	}
+	n := len(fs.def.Options)
+	counter := ""
+	if n > 1 {
+		counter = fmt.Sprintf(" %d/%d", fs.pick+1, n)
+	}
+	if !here {
+		return uiDim.Render("  " + label + counter)
+	}
+	return uiAccent.Render("‹ ") + label + uiAccent.Render(" ›") + uiDim.Render(counter)
 }
 
 // googleLines — состояние доступа в Google. Кнопки здесь быть не может: за
@@ -1922,11 +1959,17 @@ func (m *uiModel) previewChannel(w int) []string {
 	var out []string
 	out = append(out, uiWrapLines("", c.About, w)...)
 	out = append(out, "")
-	state := uiDim.Render(i18n.Tr("  выключен"))
-	if c.Enabled {
-		state = uiOKStyle.Render(i18n.Tr("  включён"))
+	// У «Разбора» выключателя нет — см. channelsView, — поэтому строка
+	// состояния у него состоит из одного «что он делает».
+	if c.Kind == core.ChannelKindBrain {
+		out = append(out, uiDim.Render("  "+uiChannelWhat(c)))
+	} else {
+		state := uiDim.Render(i18n.Tr("  выключен"))
+		if c.Enabled {
+			state = uiOKStyle.Render(i18n.Tr("  включён"))
+		}
+		out = append(out, state+uiDim.Render(" · "+uiChannelWhat(c)))
 	}
-	out = append(out, state+uiDim.Render(" · "+uiChannelWhat(c)))
 	if s := strings.TrimSpace(c.Summary); s != "" {
 		out = append(out, uiDim.Render(i18n.Tr("  настроено: ")+s))
 	} else {
