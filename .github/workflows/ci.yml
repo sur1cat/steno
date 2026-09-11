@@ -17,6 +17,11 @@ jobs:
       - run: cd internal/panel/web/app && npm ci --no-audit --no-fund
       - run: cd internal/panel/web/app && npx tsc -b && npx vite build
 
+      # Тесты гоняют настоящие адаптеры из adapters/ — это скрипты на bash,
+      # которым нужны ffmpeg и jq, ровно как и в жизни. Подменять их
+      # заглушками значило бы проверять не то, что запускается у людей.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg jq
+
       - run: gofmt -l . | tee /dev/stderr | (! read)
       - run: go vet ./...
       - run: go test ./...
