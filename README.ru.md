@@ -185,11 +185,21 @@ telegram        │                       │
 
 ## Установка
 
-Нужен запущенный Docker — бот заходит в созвон внутри контейнера. Остальное
-steno делает сам.
+Один бинарник, и адаптеры расшифровки едут с ним: каждый способ ниже кладёт их
+туда, где бинарник их ищет, и `steno setup` находит их без подсказок.
+
+| | |
+|---|---|
+| [macOS, Linux](#homebrew) | `brew install sur1cat/tap/steno` |
+| [Debian, Ubuntu](#debian-ubuntu) | `sudo apt install ./steno_<версия>_amd64.deb` — `.deb` лежит в [Releases](https://github.com/sur1cat/steno/releases/latest) |
+| [Fedora, RHEL](#fedora-rhel) | `sudo dnf install ./steno-<версия>-1.x86_64.rpm` — `.rpm` там же |
+| [Любой Linux или Mac](#архив) | `curl -L https://github.com/sur1cat/steno/releases/latest/download/steno_<версия>_<os>_<arch>.tar.gz \| tar xz` — `linux` или `darwin`, `amd64` или `arm64`; суммы в [checksums.txt](https://github.com/sur1cat/steno/releases/latest/download/checksums.txt) |
+| [Из исходников](#собрать-самому) | `git clone https://github.com/sur1cat/steno && cd steno && make build` — нужны Go и Node; не `go install`, ниже сказано почему |
+| Бот | Нужен запущенный Docker — бот заходит в созвон внутри контейнера, образ скачается перед первым созвоном; заранее — `docker pull ghcr.io/sur1cat/steno-bot` |
+
+Дальше, каким бы путём ни пришёл:
 
 ```console
-brew install sur1cat/tap/steno
 steno setup          # девять вопросов, каждый ответ проверяется
 steno start          # работает фоном; остановить — steno stop
 ```
@@ -214,6 +224,59 @@ steno start          # работает фоном; остановить — ste
 ```
 steno doctor         # скажет, чего не хватает и чем это лечится
 ```
+
+### Homebrew
+
+```console
+brew install sur1cat/tap/steno
+```
+
+В формуле есть блок для Linux, так что там та же команда. ffmpeg приедет с
+ней, адаптеры лягут в `$(brew --prefix)/share/steno/adapters`. На ARM-Linux у
+Homebrew нет готовых сборок, и ffmpeg он стал бы собирать из исходников — там
+лучше `.deb`, `.rpm` или архив.
+
+### Debian, Ubuntu
+
+```console
+v=$(curl -fsSL https://api.github.com/repos/sur1cat/steno/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+curl -fsSLO https://github.com/sur1cat/steno/releases/download/v$v/steno_${v}_amd64.deb
+sudo apt install ./steno_${v}_amd64.deb
+```
+
+На ARM — `arm64`. `apt install ./файл.deb` притянет ffmpeg, `dpkg -i` оставил
+бы его тебе. Бинарник ложится в `/usr/bin`, адаптеры — в
+`/usr/share/steno/adapters`.
+
+### Fedora, RHEL
+
+```console
+v=$(curl -fsSL https://api.github.com/repos/sur1cat/steno/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+sudo dnf install https://github.com/sur1cat/steno/releases/download/v$v/steno-${v}-1.x86_64.rpm
+```
+
+На ARM — `aarch64`. Пакет просит `/usr/bin/ffmpeg`, а не пакет по имени:
+подходит и `ffmpeg-free` из самой Fedora, и `ffmpeg` из RPM Fusion; в RHEL и
+его клонах ffmpeg только из RPM Fusion.
+
+### Архив
+
+```console
+v=$(curl -fsSL https://api.github.com/repos/sur1cat/steno/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+curl -fsSLO https://github.com/sur1cat/steno/releases/download/v$v/steno_${v}_linux_amd64.tar.gz
+curl -fsSL https://github.com/sur1cat/steno/releases/download/v$v/checksums.txt | grep linux_amd64 | sha256sum -c
+tar xzf steno_${v}_linux_amd64.tar.gz
+sudo install steno /usr/local/bin/
+sudo mkdir -p /usr/local/share/steno && sudo cp -R adapters /usr/local/share/steno/
+```
+
+`linux` или `darwin`, `amd64` или `arm64`; на Mac вместо `sha256sum -c` —
+`shasum -a 256 -c`. ffmpeg здесь ставишь сам: `apt install ffmpeg`,
+`dnf install ffmpeg-free`, `brew install ffmpeg`.
+
+Адаптерам необязательно лежать в `share`: steno первым делом смотрит рядом с
+собственным бинарником, так что бинарник и `adapters/` могут просто лежать в
+одном каталоге.
 
 ### Язык
 
@@ -253,7 +316,7 @@ cd bar && ./build.sh && open build/StenoBar.app
 
 ### Собрать самому
 
-На Linux и вообще если собирать самому:
+Если собирать самому:
 
 ```
 git clone https://github.com/sur1cat/steno && cd steno

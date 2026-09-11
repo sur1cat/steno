@@ -66,10 +66,18 @@ on your machine; with local whisper and a local model, nothing leaves at all.
 
 ## Install
 
-Docker must be running — the bot joins the call inside a container.
+| | |
+|---|---|
+| macOS, Linux | `brew install sur1cat/tap/steno` |
+| Debian, Ubuntu | `sudo apt install ./steno_<version>_amd64.deb` — the `.deb` is on [Releases](https://github.com/sur1cat/steno/releases/latest) |
+| Fedora, RHEL | `sudo dnf install ./steno-<version>-1.x86_64.rpm` — the `.rpm`, same place |
+| Any Linux or Mac | `curl -L https://github.com/sur1cat/steno/releases/latest/download/steno_<version>_<os>_<arch>.tar.gz \| tar xz` — `linux` or `darwin`, `amd64` or `arm64`; sums in [checksums.txt](https://github.com/sur1cat/steno/releases/latest/download/checksums.txt) |
+| From source | `git clone https://github.com/sur1cat/steno && cd steno && make build` — Go and Node; not `go install`, [here is why](docs/install.md#from-source) |
+| The bot | Docker must be running — the bot joins the call inside a container, pulled before the first call; `docker pull ghcr.io/sur1cat/steno-bot` does it now |
+
+Then, whichever way you came in:
 
 ```console
-brew install sur1cat/tap/steno
 steno setup     # nine questions, each answer checked
 steno start     # background; steno stop ends it
 ```
@@ -84,7 +92,7 @@ steno start     # background; steno stop ends it
 Secrets go into a `.env` with mode 0600, never into the config. `steno doctor`
 says what is still missing and prints the line that fixes it.
 
-**Linux, source builds, the interface language, which model writes the follow-up —**
+**Each way with the full commands, the interface language, which model writes the follow-up —**
 [docs/install.md](docs/install.md).
 
 ## Use it however suits you

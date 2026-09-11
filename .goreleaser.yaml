@@ -35,6 +35,48 @@ archives:
       - README.ru.md
       - LICENSE
 
+# Пакеты для тех, у кого нет brew: apt install ./steno_….deb и dnf install
+# ставят бинарник, адаптеры и ffmpeg разом, а не «распакуй архив и разложи сам».
+#
+# Адаптеры уходят в /usr/share/steno/adapters. Это не выбор пакета, а то, где
+# их ищет бинарник: FindAdapter в internal/core/confpath.go смотрит рядом с
+# собой, затем в <bin>/../share/steno/adapters — с /usr/bin/steno это ровно
+# /usr/share/steno/adapters, тот же путь, куда brew кладёт pkgshare. Не путь
+# из конфига: у поставившего пакетом конфига ещё нет, а setup сам запишет
+# найденное.
+nfpms:
+  - id: packages
+    ids: [steno]
+    package_name: steno
+    vendor: Rustem Turgeldin
+    homepage: https://github.com/sur1cat/steno
+    maintainer: Rustem Turgeldin <rustem.turgeldin@bk.ru>
+    description: "Meeting notes and follow-ups: a bot joins your calls, records, transcribes, publishes"
+    license: MIT
+    section: utils
+    # apk нет: адаптеры — bash-скрипты, а в Alpine bash не из коробки.
+    formats: [deb, rpm]
+    # Имена как у самих дистрибутивов — steno_0.3.1_amd64.deb и
+    # steno-0.3.1-1.x86_64.rpm, — а не общий шаблон goreleaser с linux в имени:
+    # их и ждёт человек, набирающий apt install ./steno_… по памяти.
+    file_name_template: "{{ .ConventionalFileName }}"
+    bindir: /usr/bin
+    dependencies:
+      - ffmpeg
+    overrides:
+      rpm:
+        # В Fedora из коробки ffmpeg-free, а пакет с именем ffmpeg — только из
+        # RPM Fusion. Оба ставят /usr/bin/ffmpeg, и зависимость от файла
+        # принимает любой; по имени пакет не встал бы на чистую Fedora.
+        dependencies:
+          - /usr/bin/ffmpeg
+    contents:
+      - src: adapters
+        dst: /usr/share/steno/adapters
+        type: tree
+      - src: LICENSE
+        dst: /usr/share/doc/steno/copyright
+
 checksum:
   name_template: checksums.txt
 
