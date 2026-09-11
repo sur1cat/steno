@@ -64,18 +64,24 @@ about the same thing.
 
 ## Ask a model
 
-`steno mcp` is an MCP server over stdio on the same database: Claude Code,
-Claude Desktop or Cursor connect to it and answer *"what did we decide about
-the migration?"* or *"what is open on payments?"* themselves. No service needs
-to run, and `-c` picks the config the same way it does everywhere else.
+`steno mcp` is an MCP server over stdio on the same database: the assistant
+connects to it and answers *"what did we decide about the migration?"* or
+*"what is open on payments?"* itself. No service needs to run, and `-c` picks
+the config the same way it does everywhere else.
+
+It is a protocol, not a vendor — any MCP client works:
 
 ```console
 claude mcp add steno -- steno mcp        # Claude Code
+codex  mcp add steno -- steno mcp        # Codex CLI (lands in ~/.codex/config.toml)
 ```
 
-Claude Desktop and Cursor take the same thing in their JSON:
-`{"mcpServers": {"steno": {"command": "steno", "args": ["mcp"]}}}` — Claude
-Desktop does not read your shell's PATH, so give it the full path from `which steno`.
+Cursor, Claude Desktop, Zed, Windsurf and the rest take the same thing in their
+JSON: `{"mcpServers": {"steno": {"command": "steno", "args": ["mcp"]}}}` —
+Claude Desktop does not read your shell's PATH, so give it the full path from
+`which steno`. A local model works the same way: Ollama only serves the model,
+so pick a client that speaks MCP and point it at Ollama — Goose, LM Studio,
+oterm, ollmcp — and add steno there.
 
 | | |
 |---|---|

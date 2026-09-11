@@ -714,6 +714,33 @@ make panel-dev   # vite на 5273, /api проксируется в запуще
 старта, и их переключение подхватывается при следующем запуске сервиса —
 дёргать их на ходу значило бы ронять идущие записи.
 
+## Спросить у ассистента
+
+`steno mcp` — MCP-сервер поверх той же базы: ассистент, который знает твой
+код, теперь знает и что решила команда — с секундой, на которой это сказали.
+Сервис для этого запускать не нужно.
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/term-mcp-ru-dark.svg">
+  <img src="assets/term-mcp-ru-light.svg" width="835" alt="Сессия ассистента: на вопрос про миграцию он ищет по расшифровкам, читает follow-up и отвечает с владельцами, сроками и таймкодами; потом закрывает задачу по просьбе">
+</picture>
+</div>
+
+Это протокол, а не привязка к одному вендору — подключается любой клиент MCP:
+
+```console
+claude mcp add steno -- steno mcp     # Claude Code
+codex  mcp add steno -- steno mcp     # Codex CLI
+```
+
+Cursor, Claude Desktop, Zed и остальные берут то же самое в JSON —
+`{"mcpServers": {"steno": {"command": "steno", "args": ["mcp"]}}}`. Локальная
+модель тоже работает: Ollama отдаёт модель, а со steno разговаривает клиент
+перед ней — Goose, LM Studio, oterm. Семь инструментов, из них один пишет
+(`close_item`), остальные только читают: `list_meetings`, `get_followup`,
+`get_transcript`, `search`, `projects`, `open_items`.
+
 ## Проекты
 
 На одном созвоне обсуждают три-четыре проекта сразу, и плоский follow-up через

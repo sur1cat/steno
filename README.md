@@ -114,7 +114,7 @@ service running.
 | 🖥️ **[`steno ui`](#tour)** | full-screen terminal: meetings, tasks, projects, search | no |
 | 🌐 **[Panel](#tour)** | a browser, on the machine or over the network | yes |
 | 🍎 **[Menu bar](#in-the-menu-bar)** | macOS: today, tasks, projects, one field to send the bot | only to send the bot |
-| 🤖 **[MCP](docs/commands.md#ask-a-model)** | Claude Code, Claude Desktop, Cursor: `claude mcp add steno -- steno mcp` | no |
+| 🤖 **[MCP](#ask-the-assistant-you-already-use)** | Claude Code, Codex, Cursor, Claude Desktop — or a local model behind Goose or LM Studio | no |
 
 **Who writes it up** — `steno setup` asks; `brain.provider` pins it. All four
 hand back the same JSON, so nothing downstream knows who answered.
@@ -209,6 +209,32 @@ The shared secret is not optional — whoever knows it can send the bot into any
 call, so the endpoint does not come up without one. It lives in the `.env`, and
 never in the panel or the config. A refusal names which of the three things is
 wrong: the header, the secret, or the link.
+
+## Ask the assistant you already use
+
+`steno mcp` is an MCP server over the same database, so the assistant that
+knows your code now also knows what the team decided — with the second it was
+said. No service has to be running.
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/term-mcp-dark.svg">
+  <img src="assets/term-mcp-light.svg" width="835" alt="An assistant session: asked what was decided about the migration, it searches the transcripts, reads the follow-up and answers with owners, due dates and timecodes; then closes a task on request">
+</picture>
+</div>
+
+It is a protocol, not a vendor: any MCP client plugs in.
+
+```console
+claude mcp add steno -- steno mcp     # Claude Code
+codex  mcp add steno -- steno mcp     # Codex CLI
+```
+
+Cursor, Claude Desktop, Zed and the rest take the same thing as JSON —
+`{"mcpServers": {"steno": {"command": "steno", "args": ["mcp"]}}}`. A local
+model works too: Ollama serves the model, and a client in front of it — Goose,
+LM Studio, oterm — talks to steno. Seven tools, one of which writes:
+[docs/commands.md](docs/commands.md#ask-a-model).
 
 ## Tour
 
