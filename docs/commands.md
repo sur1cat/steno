@@ -16,6 +16,7 @@ needs the service running. `-c <path>` points at another `steno.json`.
 | `steno status` | is it running, since when, where the log is |
 | `steno autostart on\|off` | start it when you log in |
 | `steno doctor` | check every piece and print the fix under each problem |
+| `steno demo` | the panel on demo data, no setup: a temporary base, four meetings, gone on Ctrl+C. `--addr`, `--no-open` |
 | `steno version` | the version, and the bot image that matches it |
 
 <img src="../assets/cli-doctor.svg" width="880" alt="steno doctor — every piece checked, with a fix printed under each problem">

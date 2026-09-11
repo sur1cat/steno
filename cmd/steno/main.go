@@ -66,6 +66,7 @@ const usage = `steno — заметки и follow-up с созвонов.
                              --yes          не спрашивать, для скриптов
   steno prune                удалить старые записи по срокам из конфига
   steno doctor               проверить, чего не хватает для запуска
+  steno demo                 панель на демо-данных: без настройки и созвона
   steno version              версия и какой образ бота ей соответствует
   steno cost [дней]          сколько потрачено на follow-up
   steno projects [проект]    что открыто по проектам
@@ -137,6 +138,8 @@ func main() {
 		err = cmdMeetingRm(args)
 	case "doctor":
 		err = cmdDoctor(args)
+	case "demo":
+		err = cmdDemo(ctx, args)
 	case "version", "--version", "-v":
 		err = cmdVersion()
 	case "cost":

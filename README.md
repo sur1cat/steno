@@ -9,6 +9,7 @@
 [![Release](https://img.shields.io/github/v/release/sur1cat/steno?color=1f2d27&label=release&labelColor=0b0f0d)](https://github.com/sur1cat/steno/releases)
 [![macOS · Linux](https://img.shields.io/badge/macOS-·%20Linux-4DDBA4?labelColor=0b0f0d)](docs/install.md)
 [![Go](https://img.shields.io/badge/Go-one%20binary-00ADD8?labelColor=0b0f0d)](https://go.dev)
+[![Works with Google Meet](https://img.shields.io/badge/works%20with-Google%20Meet-4DDBA4?labelColor=0b0f0d)](#how-the-bot-gets-into-a-call)
 [![License](https://img.shields.io/badge/license-MIT-3fb950?labelColor=0b0f0d)](LICENSE)
 
 **English** · [Русский](README.ru.md)
@@ -42,6 +43,26 @@ meeting. One Go binary; recordings stay on your machine.
   <img src="assets/term-start-light.svg" width="835" alt="steno start: it listens, joins the call, records, transcribes, writes the follow-up and sends it">
 </picture>
 </div>
+
+## Why this and not Otter, Fireflies or Fathom
+
+Those are good. If a transcript with a summary is all you need, they do it
+today with no server and no setup. steno is for two things they don't do, and
+one they can't promise.
+
+🧠 **It learns your vocabulary from your code.** Attach a repository and steno
+reads its README, manifests, layout and the subjects of recent commits — that
+last part matters most, because that is where the words your team says out loud
+live. So *"fix the webhooks in billing"* files itself under the right project.
+
+📌 **The project outlives the meeting.** Before each call the model is shown
+what is still open, so the same task is not created again every week. Once a
+day new commits are matched against open tasks: work done quietly, never
+mentioned on a call, still gets closed — with the commit as evidence.
+
+🔒 **The recording stays with you.** A visible bot, not a hidden recorder:
+anyone on the call can remove it. Audio and transcripts live in one directory
+on your machine; with local whisper and a local model, nothing leaves at all.
 
 ## Install
 
@@ -112,6 +133,13 @@ It joins under a name that says it is recording, so it is visible in the
 participant list. Anyone can remove it — the follow-up is still produced from
 what was captured.
 
+| | |
+|---|---|
+| ✅ **Google Meet** | checked on real calls: joining, recording, captions for the speaker names |
+| ✅ **A recording you already have** | Zoom, a phone call, a voice note — upload it, the rest is the same |
+| 🚧 **Jitsi Meet** | built on Jitsi's own end-to-end tests; no bot has joined a live call yet |
+| 🚫 **Teams · Zoom** | deliberately not: a CAPTCHA or a disabled setting you only discover on the call — [why](docs/how-it-works.md#what-works-and-what-does-not-yet) |
+
 ## Bring your own
 
 The model is not the only swappable part. Two more seams, both of them a
@@ -174,6 +202,11 @@ never in the panel or the config. A refusal names which of the three things is
 wrong: the header, the secret, or the link.
 
 ## Tour
+
+Everything below on demo data, before the first meeting and without a single
+question asked: `steno demo` opens the panel in your browser — four meetings,
+their tasks and decisions, a schedule for the next two days. Ctrl+C, and it
+is gone.
 
 <table>
 <tr>
