@@ -33,6 +33,16 @@ func sourceFiles(t *testing.T) []string {
 			switch d.Name() {
 			case ".git", "node_modules", "web", "assets", "adapters", "bar", "docker":
 				return fs.SkipDir
+			// Служебный каталог агентов; там лежат чужие git worktree с
+			// незаконченной работой, и её строки — не наши. Тест обходит
+			// исходники этого дерева, а не соседних.
+			case ".claude":
+				return fs.SkipDir
+			}
+			// Вложенный worktree узнаётся по своему .git — файлу или каталогу.
+			// Скрытые каталоги вообще пропускаем: исходников в них не бывает.
+			if path != root && strings.HasPrefix(d.Name(), ".") {
+				return fs.SkipDir
 			}
 			return nil
 		}

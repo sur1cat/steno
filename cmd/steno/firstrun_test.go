@@ -75,7 +75,16 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func whisperConfig(t *testing.T) *core.Config {
 	t.Helper()
 	cfg := core.DefaultConfig()
-	cfg.Transcribe.Cmd = []string{filepath.Join(t.TempDir(), "whisper-cpp.sh"), "{{audio}}", "{{language}}"}
+	// Адаптер по названному пути обязан существовать. Без файла doctor честно
+	// отвечает «не запускается» ещё до проверки модели — и на маке разработчика
+	// этого не видно, потому что AdapterPath находит адаптер из brew-установки
+	// в /opt/homebrew/share/steno/adapters. Тест проходил только там, где
+	// стоит steno; на чистом Linux в CI он падал.
+	adapter := filepath.Join(t.TempDir(), "whisper-cpp.sh")
+	if err := os.WriteFile(adapter, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Transcribe.Cmd = []string{adapter, "{{audio}}", "{{language}}"}
 	return cfg
 }
 
