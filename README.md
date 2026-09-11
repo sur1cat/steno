@@ -72,6 +72,33 @@ participant with "recording" in its name, and anyone on the call can remove it.
 Audio and transcripts live in one directory on your machine; with local whisper
 and a local model, nothing leaves at all.
 
+## A task becomes a branch
+
+A task off a call is one sentence; the other nine tenths live in the code.
+`steno spec` reads the repository behind the project and writes the spec: what
+is known, where it lives in the code, what to do, how to check it — and, in a
+section it refuses to leave out, what is still missing. A task that is not
+code — *"ask Vika about the mockup"* — is declined with a reason, not padded
+out into a document nobody asked for.
+
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/term-spec-dark.svg">
+  <img src="assets/term-spec-light.svg" width="869" alt="steno spec turns a task into a spec with the places in the code, the steps, the checks and what is still missing; steno spec run gives it to the agent in its own worktree, which comes back as a branch">
+</picture>
+</div>
+
+`steno spec run` hands it to Claude Code or Codex — the one behind your
+follow-ups, or `agent.provider` to choose — in a git worktree of its own, on a
+branch of its own. What comes back is a branch to look at. Never a push, never
+a commit on main.
+
+Off by default: `"agent": {"enabled": true}` in `steno.json` is the moment you
+give steno the right to write files and run commands on this machine. And it
+runs only on a human action — never from Telegram, mail or the HTTP endpoint:
+anyone on a call can say *"delete the repository"*, and it would arrive as a
+task.
+
 ## Install
 
 | | |
@@ -259,33 +286,6 @@ Tasks, decisions and open questions stay per project — in the panel, `steno ui
 and the menu bar — until something closes them: the next call, a button, or a
 commit. Once a day new commits are matched against open tasks, so work done
 quietly is closed with the commit as evidence.
-
-## A task becomes a branch
-
-A task off a call is one sentence; the other nine tenths live in the code.
-`steno spec` reads the repository behind the project and writes the spec: what
-is known, where it lives in the code, what to do, how to check it — and, in a
-section it refuses to leave out, what is still missing. A task that is not
-code — *"ask Vika about the mockup"* — is declined with a reason, not padded
-out into a document nobody asked for.
-
-<div align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/term-spec-dark.svg">
-  <img src="assets/term-spec-light.svg" width="869" alt="steno spec turns a task into a spec with the places in the code, the steps, the checks and what is still missing; steno spec run gives it to the agent in its own worktree, which comes back as a branch">
-</picture>
-</div>
-
-`steno spec run` hands it to Claude Code or Codex — the one behind your
-follow-ups, or `agent.provider` to choose — in a git worktree of its own, on a
-branch of its own. What comes back is a branch to look at. Never a push, never
-a commit on main.
-
-Off by default: `"agent": {"enabled": true}` in `steno.json` is the moment you
-give steno the right to write files and run commands on this machine. And it
-runs only on a human action — never from Telegram, mail or the HTTP endpoint:
-anyone on a call can say *"delete the repository"*, and it would arrive as a
-task.
 
 ## Tour
 
