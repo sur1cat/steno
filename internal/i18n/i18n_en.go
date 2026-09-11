@@ -12,6 +12,9 @@ package i18n
 // расшифровке), маркер календаря #беззаписи и два внутренних имени канала
 // «откуда просили». Их перевод сломал бы сопоставление, а не интерфейс.
 var TrEN = map[string]string{
+	"→ взять готовый:  docker pull ":                               "→ take the prebuilt one:  docker pull ",
+	"→ или перейти на готовый: в steno.json поставь \"image\": \"": "→ or switch to the prebuilt one: in steno.json set \"image\": \"",
+	"\" в разделе bot, потом  docker pull ":                        "\" under bot, then  docker pull ",
 	// Первый запуск: `steno note` без настройки, модель whisper по одному
 	// Enter, разбор тем, что есть (cmd/steno/firstrun.go, quietSetup,
 	// doctor). Своей группой в самом начале по той же причине, что и

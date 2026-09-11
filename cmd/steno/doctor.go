@@ -651,13 +651,34 @@ func checkPlatforms(cfg *core.Config) check {
 	}}
 }
 
-// fixes — чем чинить отставший образ. Готовый в реестре есть не для всякого
-// имени: локально собранный «steno-bot:latest» тянуть неоткуда, и предлагать
-// это значит послать человека за несуществующим.
-func fixes(cfg *core.Config) []string {
-	out := []string{i18n.Tr("→ пересобрать:  make bot-image")}
-	if reg := core.DefaultBotImage(); strings.Contains(reg, "/") && reg != cfg.Bot.Image {
-		out = append(out, i18n.Tr("→ или взять готовый:  docker pull ")+reg)
+// fixes — чем чинить отставший образ. Совет обязан совпадать с тем, что
+// steno на самом деле запустит: образ берётся из bot.image в конфиге, и
+// скачивать в реестре образ с другим именем — значит послать человека за
+// тем, что потом никто не использует. Ровно так и случилось: конфиг,
+// записанный при установке с dev-сборки, пинит «steno-bot:latest», а
+// doctor советовал docker pull …:0.4.0 — после которого всё оставалось
+// как было.
+func fixes(cfg *core.Config) []string { return imageFixes(cfg.Bot.Image, core.DefaultBotImage()) }
+
+// imageFixes — та же логика с образом из реестра параметром: версию сборки
+// из теста не задать, а проверить все три ветки нужно.
+func imageFixes(configured, reg string) []string {
+	fromRegistry := strings.Contains(reg, "/")
+	var out []string
+	switch {
+	case fromRegistry && configured == reg:
+		// Конфиг указывает на реестр — pull подхватится сам.
+		out = append(out, i18n.Tr("→ взять готовый:  docker pull ")+reg)
+	case fromRegistry:
+		// Конфиг пинит другое имя (обычно локальный latest). Скачанное из
+		// реестра не запустится, пока имя в конфиге не совпадёт, — говорим
+		// об этом прямо, а не только про пересборку.
+		out = append(out,
+			i18n.Tr("→ пересобрать:  make bot-image"),
+			i18n.Tr("→ или перейти на готовый: в steno.json поставь \"image\": \"")+reg+
+				i18n.Tr("\" в разделе bot, потом  docker pull ")+reg)
+	default:
+		out = append(out, i18n.Tr("→ пересобрать:  make bot-image"))
 	}
 	return append(out,
 		i18n.Tr("запись и разбор страницы идут внутри образа — старый образ ведёт себя по-старому"))
