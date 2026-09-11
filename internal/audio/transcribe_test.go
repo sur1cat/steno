@@ -285,35 +285,61 @@ func TestTranscribeQueueSerializes(t *testing.T) {
 
 // Ожидание в очереди не должно съедать таймаут расшифровки: созвон, простоявший
 // час, обязан начать считаться, а не сорваться, не начавшись.
+//
+// Без часов на стене. Прежняя версия гоняла три прогона по 0.4 с при таймауте
+// 2 с — и не могла поймать баг (третий укладывался и с засчитанным ожиданием),
+// зато падала под нагрузкой сама (sleep растягивался). Здесь первый адаптер
+// держит очередь, пока тест его не отпустит, а второй ждёт в очереди заведомо
+// дольше таймаута; заведомо — потому что отпускаем только после этого.
 func TestQueueWaitIsNotCountedInTimeout(t *testing.T) {
 	ResizeTranscribeQueue(1)
 	t.Cleanup(func() { ResizeTranscribeQueue(1) })
 
 	dir := t.TempDir()
+	gate := filepath.Join(dir, "go")
 	script := filepath.Join(dir, "adapter.sh")
-	mustWriteFile(t, script, "#!/bin/sh\nsleep 0.4\necho '{\"segments\":[{\"start\":0,\"end\":1,\"text\":\"тест\"}]}'\n")
+	// Ждёт файл-калитку, потом отвечает. Опрос раз в 20 мс — это не часы,
+	// а способ дождаться сигнала от теста.
+	mustWriteFile(t, script, "#!/bin/sh\nwhile [ ! -e \""+gate+"\" ]; do sleep 0.02; done\n"+
+		"echo '{\"segments\":[{\"start\":0,\"end\":1,\"text\":\"тест\"}]}'\n")
 	if err := os.Chmod(script, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := core.DefaultConfig()
-	cfg.Transcribe.Cmd = []string{script, "{{audio}}"}
-	cfg.Transcribe.Nice = false
-	cfg.Transcribe.Timeout = core.Duration(2 * time.Second)
-
-	var wg sync.WaitGroup
-	errs := make(chan error, 3)
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _, err := RunTranscriber(context.Background(), cfg, "x.ogg", nil)
-			errs <- err
-		}()
+	// Два конфига: держателю очереди — просторный таймаут, иначе его убьёт
+	// собственный, пока он висит на калитке (и это было бы правильно);
+	// ожидающему — короткий, короче времени, которое он простоит в очереди.
+	const timeout = 150 * time.Millisecond
+	newCfg := func(d time.Duration) *core.Config {
+		cfg := core.DefaultConfig()
+		cfg.Transcribe.Cmd = []string{script, "{{audio}}"}
+		cfg.Transcribe.Nice = false
+		cfg.Transcribe.Timeout = core.Duration(d)
+		return cfg
 	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
+	holder, waiter := newCfg(10*time.Second), newCfg(timeout)
+
+	errs := make(chan error, 2)
+	run := func(cfg *core.Config) {
+		_, _, err := RunTranscriber(context.Background(), cfg, "x.ogg", nil)
+		errs <- err
+	}
+	go run(holder) // первый: берёт очередь и висит на калитке
+	// Дать первому занять очередь: пока он её не взял, второй мог бы
+	// проскочить вперёд, и ждать в очереди было бы некому.
+	deadline := time.Now().Add(5 * time.Second)
+	for len(transcribeQueue) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("первый прогон так и не занял очередь")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	go run(waiter) // второй: встаёт в очередь
+	// Второй ждёт в очереди дольше таймаута — в несколько раз, чтобы это
+	// было правдой и на медленной машине.
+	time.Sleep(4 * timeout)
+	mustWriteFile(t, gate, "") // отпустить обоих
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
 			t.Fatalf("расшифровка сорвалась из-за ожидания в очереди: %v", err)
 		}
 	}
