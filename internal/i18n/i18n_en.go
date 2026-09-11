@@ -12,10 +12,18 @@ package i18n
 // расшифровке), маркер календаря #беззаписи и два внутренних имени канала
 // «откуда просили». Их перевод сломал бы сопоставление, а не интерфейс.
 var TrEN = map[string]string{
-	"  Веб-панель: архив, поиск, проекты, кнопки. Необязательна — то же есть": "  The web panel: archive, search, projects, buttons. Optional — the same lives",
-	"  в steno ui и в строке меню. Меняется потом: steno panel on|off.":       "  in steno ui and in the menu bar. Changeable later: steno panel on|off.",
-	"Поднимать панель вместе с сервисом?":                                     "Bring the panel up with the service?",
-	"  выключена; включить потом:  steno panel on":                            "  off; turn on later:  steno panel on",
+	"путь, ссылка на репозиторий или адрес сайта; пусто — кода нет": "a path, a repository link or a site address; empty — there is no code",
+	"  В репозитории вижу:":                  "  In the repository I can see:",
+	"    люди (по коммитам): ":               "    people (from commits): ",
+	"    сервисы (docker-compose, модули): ": "    services (docker-compose, modules): ",
+	"  Ниже это подставлено — поправь, как зовут вслух, или Enter, если так и есть.":              "  It is pre-filled below — fix it to how it is said out loud, or Enter if it is right.",
+	"  Репозиторий не на этой машине — людей и сервисы соберу после клонирования: steno context ": "  The repository is not on this machine — people and services come after cloning: steno context ",
+	"именами, которыми зовут на созвоне":                                                          "by the names used on the call",
+	"чужие сервисы тоже — их в репозитории нет":                                                   "external services too — they are not in the repository",
+	"  Веб-панель: архив, поиск, проекты, кнопки. Необязательна — то же есть":                     "  The web panel: archive, search, projects, buttons. Optional — the same lives",
+	"  в steno ui и в строке меню. Меняется потом: steno panel on|off.":                           "  in steno ui and in the menu bar. Changeable later: steno panel on|off.",
+	"Поднимать панель вместе с сервисом?":                                                         "Bring the panel up with the service?",
+	"  выключена; включить потом:  steno panel on":                                                "  off; turn on later:  steno panel on",
 	"панель включена: ":                                                               "the panel is on: ",
 	"  выключить:  steno panel off":                                                   "  turn off:  steno panel off",
 	"панель выключена — сервис поднимается без неё":                                   "the panel is off — the service starts without it",

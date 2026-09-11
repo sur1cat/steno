@@ -407,7 +407,7 @@ func RepoAuthorNames(ctx context.Context, dir string) []string {
 func topModules(dir string) string {
 	var out []string
 	for _, name := range TopModuleNames(dir) {
-		if title := docTitle(filepath.Join(dir, name)); title != "" {
+		if title := DocTitle(filepath.Join(dir, name)); title != "" {
 			out = append(out, name+" — "+title)
 		} else {
 			out = append(out, name)
@@ -448,7 +448,7 @@ var boilerplateDirs = map[string]bool{
 
 // docTitle — первый заголовок из документации модуля. Берём именно заголовок, а
 // не первый абзац: он короткий и написан затем, чтобы назвать суть.
-func docTitle(dir string) string {
+func DocTitle(dir string) string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""

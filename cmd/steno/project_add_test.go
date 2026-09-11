@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,13 +23,15 @@ func TestProjectAddAsksWhenNothingTold(t *testing.T) {
 	restore := pretendTerminal(t)
 	defer restore()
 
+	// Код — первым вопросом: репозиторий сам знает людей и сервисы, и
+	// спрашивать их до пути значило бы вводить руками то, что лежит в git.
 	answers := strings.Join([]string{
+		"https://github.com/o/pay", // источник
+		"",                         // хватит
 		"приём денег",              // о чём проект
 		"биллинг, платежи",         // как называют вслух
 		"Орынгали, Рустем",         // кто участвует
 		"Сапар, ЛК",                // сервисы и сокращения
-		"https://github.com/o/pay", // источник
-		"",                         // хватит
 	}, "\n") + "\n"
 
 	withStdin(t, answers, func() {
@@ -127,15 +131,16 @@ func TestProjectAddDoesNotAskWithoutTerminal(t *testing.T) {
 func TestProjectAskSurvivesEndOfInput(t *testing.T) {
 	var out strings.Builder
 	p := core.Project{Name: "Платежи"}
-	askProjectFrom(t, &p, "приём денег\n", &out)
+	// Первый вопрос теперь — где код. Один ответ, потом конец ввода.
+	askProjectFrom(t, &p, "https://github.com/o/pay\n", &out)
 
-	if p.About != "приём денег" {
-		t.Errorf("первый ответ потерялся: %q", p.About)
+	if len(p.Sources) != 1 || p.Sources[0].Value != "https://github.com/o/pay" {
+		t.Errorf("первый ответ потерялся: %+v", p.Sources)
 	}
-	if len(p.People) != 0 || len(p.Sources) != 0 {
+	if p.About != "" || len(p.People) != 0 || len(p.Vocabulary) != 0 {
 		t.Errorf("после конца ввода что-то заполнилось: %+v", p)
 	}
-	// «Кто участвует» — четвёртый вопрос; после конца ввода его быть не должно.
+	// «Кто участвует» идёт после конца ввода; задавать его некому.
 	if strings.Contains(out.String(), "Кто в нём участвует") {
 		t.Errorf("вопросы посыпались после конца ввода:\n%s", out.String())
 	}
@@ -258,4 +263,59 @@ func hasWord(words []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Локальный репозиторий отвечает за человека: авторы коммитов и сервисы из
+// docker-compose подставляются в вопросы. Enter принимает подставленное,
+// ввод заменяет его целиком — латиницу из git на то, как зовут вслух.
+func TestProjectAddPrefillsFromLocalRepo(t *testing.T) {
+	restore := pretendTerminal(t)
+	defer restore()
+
+	repo := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Topatayev Anuar", "GIT_AUTHOR_EMAIL=a@x",
+			"GIT_COMMITTER_NAME=Topatayev Anuar", "GIT_COMMITTER_EMAIL=a@x")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "docker-compose.yml"),
+		[]byte("services:\n  worker_sapar:\n    image: x\n  db:\n    image: y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-q", "-m", "init")
+
+	answers := strings.Join([]string{
+		repo,    // источник — локальный путь
+		"",      // хватит
+		"",      // о чём — берём как есть
+		"",      // вслух — пусто
+		"Ануар", // люди: латиницу из git заменяем вслух
+		"",      // сервисы — Enter принимает найденное
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	withStdin(t, answers, func() {
+		a := &projectAsk{in: bufio.NewReader(strings.NewReader(answers)), out: &out}
+		p := &core.Project{Name: "Такси"}
+		a.run(p, false)
+		if strings.Join(p.People, ",") != "Ануар" {
+			t.Errorf("ввод должен заменить подставленное целиком: %v", p.People)
+		}
+		if got := strings.Join(p.Vocabulary, ","); !strings.Contains(got, "worker_sapar") || !strings.Contains(got, "db") {
+			t.Errorf("Enter должен принять сервисы из compose: %v", p.Vocabulary)
+		}
+	})
+	if !strings.Contains(out.String(), "Topatayev Anuar") {
+		t.Errorf("найденный в коммитах автор не показан человеку:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "worker_sapar") {
+		t.Errorf("найденный сервис не показан человеку:\n%s", out.String())
+	}
 }

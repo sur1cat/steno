@@ -1275,24 +1275,18 @@ func (a *projectAsk) run(p *core.Project, known bool) {
 			return // сохранять нечего, дальше спрашивать не о чем
 		}
 	}
-	p.About = a.line(i18n.Tr("О чём он, одной строкой"),
-		i18n.Tr("по ней модель отличает его от соседнего проекта"))
-	p.Aliases = core.CommaList(a.line(i18n.Tr("Как его называют вслух"),
-		i18n.Tr("через запятую: «биллинг», «платежи»")))
-	// Главный вопрос из всех. Имена людей — то, чего нет ни в одном источнике
-	// в пригодном виде: в git человек подписан логином, в календаре — тем, что
-	// он однажды вписал в аккаунт, а на созвоне его зовут по имени.
-	p.People = core.CommaList(a.line(i18n.Tr("Кто в нём участвует"),
-		i18n.Tr("именами, которыми зовут на созвоне, а не подписью в git")))
-	p.Vocabulary = core.CommaList(a.line(i18n.Tr("Какие сервисы и сокращения звучат вслух"),
-		i18n.Tr("через запятую; чужие сервисы тоже — их в репозитории нет")))
 
+	// Код — первым. Репозиторий сам знает, кто над ним работает и какие
+	// сервисы в нём есть; спрашивать это у человека до того, как он назвал
+	// путь, значит заставить его вводить руками то, что лежит в git log и в
+	// docker-compose. Раньше путь стоял последним вопросом, и человек прямо
+	// сказал, что думает об этом порядке.
 	question, hint := i18n.Tr("Где лежит код или документы"),
-		i18n.Tr("путь, ссылка на репозиторий или адрес сайта")
+		i18n.Tr("путь, ссылка на репозиторий или адрес сайта; пусто — кода нет")
 	for {
 		v := a.line(question, hint)
 		if v == "" {
-			return
+			break
 		}
 		kind := guessSourceKind(v)
 		if kind == "path" {
@@ -1301,6 +1295,100 @@ func (a *projectAsk) run(p *core.Project, known bool) {
 		p.Sources = append(p.Sources, core.Source{Kind: kind, Value: v})
 		question, hint = i18n.Tr("Ещё один источник"), i18n.Tr("пусто — хватит")
 	}
+	found := harvestSources(p.Sources)
+	if found.any() {
+		fmt.Fprintln(a.out)
+		fmt.Fprintln(a.out, dim(i18n.Tr("  В репозитории вижу:")))
+		if len(found.people) > 0 {
+			fmt.Fprintln(a.out, dim(i18n.Tr("    люди (по коммитам): ")+strings.Join(found.people, ", ")))
+		}
+		if len(found.services) > 0 {
+			fmt.Fprintln(a.out, dim(i18n.Tr("    сервисы (docker-compose, модули): ")+strings.Join(found.services, ", ")))
+		}
+		fmt.Fprintln(a.out, dim(i18n.Tr("  Ниже это подставлено — поправь, как зовут вслух, или Enter, если так и есть.")))
+		fmt.Fprintln(a.out)
+	} else if len(p.Sources) > 0 {
+		fmt.Fprintln(a.out, dim(i18n.Tr("  Репозиторий не на этой машине — людей и сервисы соберу после клонирования: steno context ")+p.Name))
+		fmt.Fprintln(a.out)
+	}
+
+	p.About = a.lineDefault(i18n.Tr("О чём он, одной строкой"),
+		i18n.Tr("по ней модель отличает его от соседнего проекта"), found.title)
+	p.Aliases = core.CommaList(a.line(i18n.Tr("Как его называют вслух"),
+		i18n.Tr("через запятую: «биллинг», «платежи»")))
+	// Главный вопрос из всех. В git человек подписан логином или латиницей, а
+	// на созвоне его зовут по имени — и замерено, что латиница на русскую речь
+	// не действует. Поэтому найденное только подставляется: последнее слово за
+	// человеком, но список ему уже не надо вспоминать.
+	p.People = core.CommaList(a.lineDefault(i18n.Tr("Кто в нём участвует"),
+		i18n.Tr("именами, которыми зовут на созвоне"), strings.Join(found.people, ", ")))
+	p.Vocabulary = core.CommaList(a.lineDefault(i18n.Tr("Какие сервисы и сокращения звучат вслух"),
+		i18n.Tr("чужие сервисы тоже — их в репозитории нет"), strings.Join(found.services, ", ")))
+}
+
+// lineDefault — вопрос с подставленным ответом: Enter принимает его, любой
+// ввод заменяет целиком. Именно заменяет, а не дописывает: человек правит
+// латиницу на кириллицу, и «Topatayev Anuar, Ануар» ему не нужен.
+func (a *projectAsk) lineDefault(question, hint, def string) string {
+	if def == "" {
+		return a.line(question, hint)
+	}
+	if a.eof {
+		return def
+	}
+	fmt.Fprintf(a.out, "  %s %s\n", question, dim("— "+hint))
+	fmt.Fprintf(a.out, "  [%s]\n  ", def)
+	s, err := a.in.ReadString('\n')
+	if err != nil {
+		a.eof = true
+		fmt.Fprintln(a.out)
+	}
+	if v := strings.TrimSpace(s); v != "" {
+		return v
+	}
+	return def
+}
+
+// harvested — что репозиторий рассказал о себе сам.
+type harvested struct {
+	title    string
+	people   []string
+	services []string
+}
+
+func (h harvested) any() bool { return len(h.people) > 0 || len(h.services) > 0 || h.title != "" }
+
+// harvestSources собирает людей и сервисы из тех источников, что лежат на
+// этой машине. Удалённый репозиторий клонируется позже (steno context) — ходить
+// в сеть посреди диалога значит повесить его на медленном канале.
+func harvestSources(srcs []core.Source) harvested {
+	var h harvested
+	seen := map[string]bool{}
+	add := func(dst *[]string, vals []string) {
+		for _, v := range vals {
+			if v = strings.TrimSpace(v); v != "" && !seen[v] {
+				seen[v] = true
+				*dst = append(*dst, v)
+			}
+		}
+	}
+	for _, s := range srcs {
+		if s.Kind != "path" {
+			continue
+		}
+		if st, err := os.Stat(s.Value); err != nil || !st.IsDir() {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		add(&h.people, brain.RepoAuthorNames(ctx, s.Value))
+		cancel()
+		add(&h.services, brain.ComposeServices(s.Value))
+		add(&h.services, brain.TopModuleNames(s.Value))
+		if h.title == "" {
+			h.title = brain.DocTitle(s.Value)
+		}
+	}
+	return h
 }
 
 // guessSourceKind различает репозиторий, адрес и каталог по самой строке.
