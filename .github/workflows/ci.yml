@@ -24,7 +24,19 @@ jobs:
 
       - run: gofmt -l . | tee /dev/stderr | (! read)
       - run: go vet ./...
-      - run: go test ./...
+      # Имя упавшего теста — в аннотацию прогона: аннотации видны через
+      # публичный API без входа, а логи — нет. Без этого причину красного CI
+      # приходилось воспроизводить вслепую по четырём контейнерам подряд.
+      - run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee /tmp/go-test.log
+        continue-on-error: true
+        id: gotest
+      - if: steps.gotest.outcome == 'failure'
+        run: |
+          grep -nE '^\s*--- FAIL|^FAIL\s|^panic:|^\s+\S+\.go:[0-9]+:' /tmp/go-test.log \
+            | head -40 | sed 's/^/::error::/'
+          exit 1
       # Разбор DOM площадок на синтетическом дереве: настоящий браузер не
       # поднимается, поэтому это можно гонять в CI.
       - run: make test-js
