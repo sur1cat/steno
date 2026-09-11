@@ -3,11 +3,40 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/sur1cat/steno/internal/core"
 )
+
+// Агент в doctor: выключен — не поломка, а «—» с подсказкой, как включить;
+// включён при текстовом провайдере — поломка, потому что исполнять некому и
+// кнопка в панели ответит отказом ровно тогда, когда её нажмут.
+func TestDoctorExplainsAgentState(t *testing.T) {
+	cfg := core.DefaultConfig()
+	off := checkAgent(cfg)
+	if off.state != "off" || !strings.Contains(strings.Join(off.fix, "\n"), "steno agent on") {
+		t.Fatalf("выключенный агент описан не так: %+v", off)
+	}
+
+	cfgPath := t.TempDir() + "/steno.json"
+	if err := os.WriteFile(cfgPath, []byte(`{"agent":{"enabled":true,"auto_spec":true}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Path = cfgPath
+	cfg.Brain.Provider = core.ProviderOpenAI
+	bad := checkAgent(cfg)
+	if bad.state != "fail" || bad.blocking {
+		t.Fatalf("включённый агент без исполнителя должен быть поломкой, но не блокирующей: %+v", bad)
+	}
+	if !strings.Contains(bad.note, "ТЗ собираются сами") {
+		t.Errorf("про автосборку не сказано: %q", bad.note)
+	}
+	if len(bad.fix) == 0 || !strings.Contains(strings.Join(bad.fix, "\n"), "claude") {
+		t.Errorf("не сказано, чем чинить: %v", bad.fix)
+	}
+}
 
 // doctor обязан говорить, кем steno разбирает созвон и доступен ли он. Раньше
 // он всегда говорил «Claude» — на установке через Groq это отправляло искать

@@ -116,6 +116,7 @@
   "//разбор": "Кем разбирать созвон. Пустой brain.provider — Claude, как было до появления остальных: конфиг, написанный раньше, работает без правки. Провайдер выбирается и кнопкой — в `steno setup`, в панели и в `steno ui`.",
   "agent": {
     "enabled": false,
+    "auto_spec": false,
     "provider": "auto",
     "base_branch": "",
     "branch_prefix": "steno/",

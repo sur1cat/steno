@@ -19,6 +19,7 @@ import (
 	"github.com/sur1cat/steno/internal/i18n"
 	"github.com/sur1cat/steno/internal/note"
 	"github.com/sur1cat/steno/internal/publish"
+	"github.com/sur1cat/steno/internal/spec"
 )
 
 // Конвейер созвона: записать, расшифровать, разобрать, разослать.
@@ -334,9 +335,14 @@ func ProcessMeeting(ctx context.Context, cfg *core.Config, st *core.Store, id st
 	publish.PublishProjectDocs(ctx, cfg, st, f, id, log.New(os.Stderr, "", log.Ltime))
 
 	if noPublish {
+		spec.AfterFollowup(ctx, cfg, st, id)
 		return nil
 	}
 	errs := publish.PublishAll(ctx, cfg, st, m, f, segs, log.New(os.Stderr, "", log.Ltime))
+	// ТЗ — после рассылки, а не до: follow-up ждут в чате сразу, а ТЗ по
+	// каждой задаче — это минута на репозиторий и модель. И независимо от
+	// того, дошла ли рассылка: задачи в проекте уже лежат.
+	spec.AfterFollowup(ctx, cfg, st, id)
 	if len(errs) > 0 {
 		msg := errors.Join(errs...).Error()
 		_ = st.SetStatus(id, "publish_failed", msg)

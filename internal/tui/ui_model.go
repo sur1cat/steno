@@ -12,6 +12,7 @@ import (
 	"github.com/sur1cat/steno/internal/brain"
 	"github.com/sur1cat/steno/internal/core"
 	"github.com/sur1cat/steno/internal/i18n"
+	"github.com/sur1cat/steno/internal/spec"
 )
 
 // Состояние терминального интерфейса и переходы между экранами. Здесь нет ни
@@ -48,6 +49,7 @@ const (
 	scrPicker
 	scrConfirm
 	scrHelp
+	scrSpec
 )
 
 type uiPickTarget int
@@ -76,6 +78,7 @@ type uiAction int
 const (
 	actDeleteProject uiAction = iota
 	actDeleteMeeting
+	actRunSpec
 )
 
 type uiConfirm struct {
@@ -206,6 +209,13 @@ type uiModel struct {
 	// Проекты, по которым прямо сейчас собирается справка.
 	building map[string]bool
 
+	// ТЗ: последнее по каждой задаче, открытая карточка, и по каким задачам
+	// ТЗ собирается или исполняется прямо сейчас. См. ui_spec.go.
+	specs        map[string]*spec.Spec
+	spec         *spec.Spec
+	specBuilding map[string]bool
+	specRunning  map[string]bool
+
 	status   string
 	statusIs int // 0 — обычное сообщение, 1 — ошибка, 2 — удача
 }
@@ -220,8 +230,10 @@ func NewUIModel(cfg *core.Config, st *core.Store) *uiModel {
 	return &uiModel{
 		cfg: cfg, st: st,
 		w: 80, h: 24,
-		stack:    []uiScreen{scrList},
-		building: map[string]bool{},
+		stack:        []uiScreen{scrList},
+		building:     map[string]bool{},
+		specBuilding: map[string]bool{},
+		specRunning:  map[string]bool{},
 	}
 }
 
@@ -287,6 +299,10 @@ func (m *uiModel) Reload() error {
 	// Каналы читаем тем же способом, что панель: описание полей из ChannelDefs,
 	// значения — из базы поверх конфига.
 	m.channels = core.PanelChannels(m.st, m.cfg)
+
+	if err := m.reloadSpecs(); err != nil {
+		return err
+	}
 
 	m.runSearch()
 	m.clampCursor()
@@ -454,6 +470,12 @@ func (m *uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case uiSpecDone:
+		m.onSpecDone(msg)
+		return m, nil
+	case uiSpecRunDone:
+		m.onSpecRunDone(msg)
+		return m, nil
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
 	}
@@ -487,6 +509,8 @@ func (m *uiModel) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return m.keyChannelForm(msg)
 	case scrMeeting, scrTranscript, scrProject:
 		return m.keyCard(k)
+	case scrSpec:
+		return m.keySpec(k)
 	}
 
 	if m.editing() {
@@ -765,6 +789,8 @@ func (m *uiModel) keyTasks(k string) tea.Cmd {
 			return nil
 		}
 		m.afterItemChange(i18n.Tr("%s снова в работе"), it.ID)
+	case "t":
+		return m.specForSelected()
 	case "p":
 		m.openProjectPicker()
 	case "o":
@@ -1039,6 +1065,8 @@ func (m *uiModel) keyConfirm(k string) tea.Cmd {
 			} else {
 				m.sayText(i18n.Tr("созвон удалён"))
 			}
+		case actRunSpec:
+			return m.runSpec(c.arg)
 		}
 	default:
 		m.confirm = nil

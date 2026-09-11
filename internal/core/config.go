@@ -354,11 +354,64 @@ type Config struct {
 		Targets []PublishTarget `json:"targets"`
 	} `json:"publish"`
 
+	// Задача с созвона — агенту: ТЗ по репозиторию и работа в отдельной
+	// рабочей копии. Поля описаны у самого типа; исполнение выключено, пока
+	// человек не включил его руками (steno agent on).
+	Agent AgentSettings `json:"agent"`
+
 	// noPublish — флаг командной строки, а не настройка: `steno join
 	// --no-publish` не должен ничего рассылать. Гасить для этого сами каналы
 	// нельзя с тех пор, как они живут в базе: перед рассылкой настройки
 	// перечитываются, и погашенное в памяти тут же вернулось бы включённым.
 	NoPublish bool
+
+	// Path — откуда конфиг прочитан. Пусто — умолчания без файла. Нужен тем,
+	// кто перечитывает свой раздел на каждое обращение (spec.SettingsFor):
+	// выключатель, который срабатывает без перезапуска, обязан читать тот же
+	// файл, что был назван в -c, а не угадывать его по указателю.
+	Path string `json:"-"`
+}
+
+// AgentSettings — раздел "agent": что делать с задачей после того, как она
+// легла в проект. Читает его и всю механику держит пакет spec; здесь только
+// форма — чтобы мастер установки писал раздел вместе с остальными, а
+// `steno agent on|off` правил тот же файл, который читают все.
+//
+// Чего в этих настройках НЕТ и не будет: пути к исполняемому файлу агента.
+// Такое поле, выставляемое через веб-форму панели, — это выполнение
+// произвольного кода от имени того, кто запустил steno. Агент выбирается
+// именем (claude | codex), а имя ищется в PATH.
+type AgentSettings struct {
+	// Разрешение писать файлы и выполнять команды на этой машине. Выключено:
+	// steno, поставленный из Homebrew ради заметок с созвонов, не должен
+	// получать его молча. Включает человек, руками, один раз, понимая зачем.
+	Enabled bool `json:"enabled"`
+
+	// Собирать ТЗ самому, как только задача с проектом появилась в разборе.
+	// ТЗ ничего не пишет и ничего не запускает — это чтение репозитория и
+	// запрос к модели; исполнение всё равно ждёт нажатия.
+	AutoSpec bool `json:"auto_spec"`
+
+	// Кем исполнять: auto | claude | codex. Пусто — auto, то есть по
+	// brain.provider.
+	Provider string `json:"provider"`
+
+	// От чего ответвляться. Пусто — от того коммита, на котором репозиторий
+	// стоит сейчас. В main не коммитим никогда и никуда не пушим.
+	BaseBranch string `json:"base_branch"`
+
+	// Приставка к имени ветки. Она же — обещание человеку: всё, что начинается
+	// с неё, сделано машиной, и это видно в списке веток без пояснений.
+	BranchPrefix string `json:"branch_prefix"`
+
+	// Куда класть рабочие копии. Пусто — <data_dir>/agent.
+	WorktreeDir string `json:"worktree_dir"`
+
+	// Потолок расхода на один запуск, если исполнитель умеет его соблюдать.
+	MaxUSD float64 `json:"max_usd"`
+
+	// Сколько ждать агента. Ноль — час.
+	Timeout Duration `json:"timeout"`
 }
 
 // Project — то, вокруг чего собираются решения и задачи. Псевдонимы нужны,
@@ -563,6 +616,13 @@ func DefaultConfig() *Config {
 	c.Panel.PasswordEnv = "STENO_PANEL_PASSWORD"
 	c.HTTP.Addr = ":8787"
 	c.HTTP.TokenEnv = "STENO_HTTP_TOKEN"
+	// Агент выключен, но раздел в файле лежит целиком: тот, кто откроет
+	// steno.json, должен увидеть, что такое вообще бывает, — а не узнать об
+	// этом из README через месяц.
+	c.Agent.Provider = "auto"
+	c.Agent.BranchPrefix = "steno/"
+	c.Agent.MaxUSD = 2
+	c.Agent.Timeout = Duration(time.Hour)
 	ApplyLangDefaults(&c)
 	return &c
 }
@@ -579,12 +639,17 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	if abs, err := filepath.Abs(path); err == nil {
+		c.Path = abs
+	} else {
+		c.Path = path
+	}
 	// Все пути — относительно самого конфига, а не текущего каталога. Иначе
 	// конфиг в /etc/steno работает ровно до первой записи созвона, а потом
 	// падает на ненайденном адаптере расшифровки — то есть после того, как час
 	// разговора уже записан.
 	base := filepath.Dir(path)
-	rel := []*string{&c.DataDir, &c.Bot.Selectors,
+	rel := []*string{&c.DataDir, &c.Bot.Selectors, &c.Agent.WorktreeDir,
 		&c.GoogleDocs.CredentialsFile, &c.Calendar.CredentialsFile, &c.Gmail.CredentialsFile}
 	for _, p := range rel {
 		if *p != "" && !filepath.IsAbs(*p) {

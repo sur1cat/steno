@@ -52,7 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
     label: t("Проекты"),
     about: t("По делу, а не по встречам"),
     icon: FolderKanban,
-    owns: ["/p/"],
+    owns: ["/p/", "/s/"],
   },
   {
     to: "/settings",

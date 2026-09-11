@@ -84,15 +84,25 @@ func Run(ctx context.Context, d Deps, set Settings, specID, by string, sink Sink
 		return nil, errors.New(i18n.Tr("у ТЗ не записан репозиторий"))
 	}
 
-	branch := set.prefix() + slug(firstNonEmpty(sp.Title, sp.ItemID)) + "-" + stamp(time.Now())
-	wt := filepath.Join(set.worktreeDir(d.Cfg.DataDir), brain.SafeName(sp.Project), sp.ID)
+	branch := prefixOf(set) + slug(firstNonEmpty(sp.Title, sp.ItemID)) + "-" + stamp(time.Now())
+	wt := filepath.Join(worktreeDirOf(set, d.Cfg.DataDir), brain.SafeName(sp.Project), sp.ID)
 
 	log := newLog(wt + ".log")
 	defer log.Close()
+	// Хвост журнала уезжает в базу по ходу дела, а не только в конце: панель,
+	// строка меню и `steno ui` читают базу, и «идёт работа» без единой строки
+	// о том, какая именно, — это полчаса неизвестности. Раз в несколько
+	// секунд, а не на каждую строку: агент пишет по десятку событий в секунду.
+	var flushed time.Time
 	say := func(kind, text string) {
 		log.write(kind, text)
 		if sink != nil {
 			sink(kind, text)
+		}
+		if sp.Status == StatusRunning && time.Since(flushed) > 3*time.Second {
+			sp.RunLog = log.tail()
+			_ = d.Sp.Save(sp)
+			flushed = time.Now()
 		}
 	}
 
@@ -113,7 +123,7 @@ func Run(ctx context.Context, d Deps, set Settings, specID, by string, sink Sink
 	}
 
 	say("note", i18n.Trf("исполняет %s", ag.Title))
-	runCtx, cancel := context.WithTimeout(ctx, set.timeout())
+	runCtx, cancel := context.WithTimeout(ctx, timeoutOf(set))
 	defer cancel()
 
 	runErr := runAgent(runCtx, ag, set, d.Cfg, wt, agentPrompt(sp, branch), say)

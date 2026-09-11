@@ -10,6 +10,7 @@ import (
 
 	"github.com/sur1cat/steno/internal/core"
 	"github.com/sur1cat/steno/internal/demo"
+	"github.com/sur1cat/steno/internal/spec"
 )
 
 // Инструменты проверяются на демо-наборе, а не на трёх строках, заведённых на
@@ -96,6 +97,7 @@ func TestToolsListAndAnnotations(t *testing.T) {
 	want := map[string]bool{
 		"list_meetings": true, "get_followup": true, "get_transcript": true, "search": true,
 		"projects": true, "open_items": true, "close_item": false,
+		"list_specs": true, "get_spec": true,
 	}
 	if len(res.Tools) != len(want) {
 		t.Errorf("инструментов %d, ждали %d", len(res.Tools), len(want))
@@ -384,5 +386,76 @@ func TestCloseItem(t *testing.T) {
 	call(t, cs, "close_item", map[string]any{"id": open.Items[0].ID, "reason": "онбординг заморозили", "status": "dropped"}, &out)
 	if out.Item.Status != "dropped" {
 		t.Errorf("dropped: %+v", out.Item)
+	}
+}
+
+// ТЗ отдаются только на чтение: собрать и запустить модель отсюда не может, и
+// список инструментов это подтверждает — ни build_spec, ни run_spec в нём нет.
+func TestSpecsReadOnly(t *testing.T) {
+	cs, st := client(t)
+	store, err := spec.Open(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items openItemsResult
+	call(t, cs, "open_items", map[string]any{"project": "Платежи", "kind": "task"}, &items)
+	if len(items.Items) != 1 {
+		t.Fatalf("ждали одну задачу по Платежам: %+v", items.Items)
+	}
+	task := items.Items[0]
+	ok := &spec.Spec{
+		ID: "S-1", ItemID: task.ID, Project: "Платежи", Repo: t.TempDir(), Status: spec.StatusDraft,
+		Title:    "Вебхуки биллинга",
+		Places:   []spec.Place{{Path: "billing/webhooks.py", Found: true}},
+		Steps:    []string{"поправить обработчик"},
+		Unknowns: []spec.Unknown{{Question: "какой провайдер?", Why: "не сказано", Ask: "Участник Б"}},
+	}
+	if err := store.Save(ok); err != nil {
+		t.Fatal(err)
+	}
+	// Второе, придуманное: без единого вопроса — по нему работать нельзя.
+	bad := &spec.Spec{
+		ID: "S-2", ItemID: "T-нет", Project: "Платежи", Status: spec.StatusDraft, Title: "выдумка",
+		Places: []spec.Place{{Path: "a.py", Found: true}}, Steps: []string{"сделать"},
+	}
+	if err := store.Save(bad); err != nil {
+		t.Fatal(err)
+	}
+
+	var list listSpecsResult
+	call(t, cs, "list_specs", map[string]any{"project": "биллинг"}, &list)
+	// Своих два, и демо-набор кладёт своё по той же задаче — оно старше и
+	// уступает место S-1: последнее ТЗ по задаче одно.
+	if list.Project != "Платежи" || len(list.Specs) != 2 {
+		t.Fatalf("list_specs: %+v", list)
+	}
+	byID := map[string]specRow{}
+	for _, r := range list.Specs {
+		byID[r.ID] = r
+	}
+	if !byID["S-1"].Runnable || byID["S-1"].Unknowns != 1 || byID["S-1"].ItemID != task.ID {
+		t.Errorf("годное ТЗ описано неверно: %+v", byID["S-1"])
+	}
+	if byID["S-2"].Runnable || len(byID["S-2"].Blocked) == 0 {
+		t.Errorf("ТЗ без вопросов должно быть помечено негодным: %+v", byID["S-2"])
+	}
+
+	var one getSpecResult
+	call(t, cs, "get_spec", map[string]any{"id": "S-1"}, &one)
+	if !strings.Contains(one.Markdown, "какой провайдер?") || !strings.Contains(one.Markdown, "billing/webhooks.py") {
+		t.Errorf("get_spec не отдал само задание:\n%s", one.Markdown)
+	}
+	if msg := call(t, cs, "get_spec", map[string]any{"id": "S-9"}, nil); !strings.Contains(msg, "list_specs") {
+		t.Errorf("неизвестный id должен отсылать к list_specs: %q", msg)
+	}
+
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range tools.Tools {
+		if strings.Contains(tool.Name, "run") || strings.Contains(tool.Name, "build") {
+			t.Errorf("модели не положено ни собирать, ни запускать ТЗ: %s", tool.Name)
+		}
 	}
 }

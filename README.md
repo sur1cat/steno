@@ -114,11 +114,14 @@ follow-ups, or `agent.provider` to choose — in a git worktree of its own, on a
 branch of its own. What comes back is a branch to look at. Never a push, never
 a commit on main.
 
-Off by default: `"agent": {"enabled": true}` in `steno.json` is the moment you
-give steno the right to write files and run commands on this machine. And it
-runs only on a human action — never from Telegram, mail or the HTTP endpoint:
-anyone on a call can say *"delete the repository"*, and it would arrive as a
-task.
+Off by default: `steno agent on` — or the switch in the menu bar — is the
+moment you give steno the right to write files and run commands on this
+machine. And it runs only on a human action — never from Telegram, mail or the
+HTTP endpoint: anyone on a call can say *"delete the repository"*, and it would
+arrive as a task. The spec itself can be written without asking: `steno agent
+auto on`, and every task that lands in a project gets one right after the call —
+the button in the panel, the menu bar and `steno ui` then only says "hand it
+over".
 
 ## Install
 

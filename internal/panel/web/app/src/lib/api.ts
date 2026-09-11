@@ -289,6 +289,108 @@ export interface Channel {
 export interface Settings {
   projects: SettingsProject[];
   channels: Channel[];
+  agent: AgentState;
+}
+
+// --- ТЗ и агент -------------------------------------------------------------
+
+/**
+ * Состояние выключателя и исполнителя. Панель его показывает и не правит:
+ * разрешение писать файлы на машине с сервисом даёт тот, кто за ней сидит —
+ * `steno agent on` или кнопка в строке меню, — а не форма с общим паролем.
+ */
+export interface AgentState {
+  enabled: boolean;
+  autoSpec: boolean;
+  /** «Claude Code» или «Codex». Пусто — исполнитель не выбрался, см. why. */
+  executor: string;
+  bin: string;
+  /** Исполнитель найден и вошёл. Имеет смысл только при probed. */
+  ready: boolean;
+  why: string;
+  probed: boolean;
+  branchPrefix: string;
+}
+
+export type SpecStatus = "draft" | "rejected" | "running" | "done" | "failed";
+
+/** Строка о ТЗ — то, что видно у задачи, не открывая само задание. */
+export interface SpecRow {
+  id: string;
+  item_id: string;
+  project: string;
+  title: string;
+  status: SpecStatus;
+  reject?: string;
+  /** Почему по нему нельзя запускать агента. Пусто — можно. */
+  blocked?: string[];
+  unknowns: number;
+  branch?: string;
+  repo?: string;
+  run_by?: string;
+  run_error?: string;
+  at: string;
+  usd: number;
+  model?: string;
+}
+
+export interface SpecsPage {
+  /** id задачи → её последнее ТЗ. */
+  specs: Record<string, SpecRow>;
+  /** По каким задачам ТЗ собирается прямо сейчас. */
+  building: string[];
+  /** По каким сборка сорвалась — с текстом ошибки. */
+  failed: Record<string, string>;
+}
+
+export interface SpecPlace {
+  path: string;
+  why: string;
+}
+
+export interface SpecUnknown {
+  question: string;
+  why: string;
+  ask: string;
+}
+
+export interface SpecGuess {
+  what: string;
+  if_wrong: string;
+}
+
+export interface SpecBody {
+  summary: string[] | null;
+  known: string[] | null;
+  places: SpecPlace[] | null;
+  /** Есть ли путь в репозитории — по позициям places. Проверено на диске. */
+  found: boolean[] | null;
+  steps: string[] | null;
+  checks: string[] | null;
+  unknowns: SpecUnknown[] | null;
+  guesses: SpecGuess[] | null;
+  not_here: string[] | null;
+  blocked: boolean;
+  why: string;
+}
+
+export interface SpecItem {
+  id: string;
+  text: string;
+  owner: string;
+  due: string;
+  status: string;
+  quote: string;
+  openedIn: string;
+}
+
+export interface SpecFull {
+  spec: SpecRow;
+  body: SpecBody;
+  markdown: string;
+  log: string;
+  agent: AgentState;
+  item?: SpecItem;
 }
 
 /**
@@ -449,6 +551,15 @@ export const api = {
 
   closeItem: (id: string) => post<{ ok: boolean }>(`/api/items/${encodeURIComponent(id)}/close`),
   reopenItem: (id: string) => post<{ ok: boolean }>(`/api/items/${encodeURIComponent(id)}/reopen`),
+
+  // ТЗ. Сборка и запуск отвечают 202 сразу: работа идёт в сервисе минутами,
+  // и страница дальше опрашивает состояние.
+  specs: (project: string) => get<SpecsPage>(`/api/specs?project=${encodeURIComponent(project)}`),
+  spec: (id: string) => get<SpecFull>(`/api/specs/${encodeURIComponent(id)}`),
+  buildSpec: (itemId: string) =>
+    post<{ status: string }>(`/api/items/${encodeURIComponent(itemId)}/spec`),
+  runSpec: (id: string) => post<{ status: string }>(`/api/specs/${encodeURIComponent(id)}/run`),
+  agent: () => get<AgentState>("/api/agent"),
 
   schedule: (days: number) => get<SchedulePage>(`/api/schedule?days=${days}`),
   scheduleOverride: (key: string, decision: "" | "skip" | "attend") =>

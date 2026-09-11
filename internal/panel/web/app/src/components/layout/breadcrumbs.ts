@@ -21,6 +21,9 @@ export function buildBreadcrumbs(pathname: string): Crumb[] {
   if (pathname.startsWith("/m/")) {
     return [{ label: t("Созвоны"), to: "/" }, { label: t("Созвон") }];
   }
+  if (pathname.startsWith("/s/")) {
+    return [{ label: t("Проекты"), to: "/projects" }, { label: t("ТЗ") }];
+  }
   if (pathname.startsWith("/p/")) {
     return [
       { label: t("Проекты"), to: "/projects" },

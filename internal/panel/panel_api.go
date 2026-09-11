@@ -414,6 +414,9 @@ func (p *Panel) apiSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"projects": out,
 		"channels": core.PanelChannels(p.st, p.cfg),
+		// Агент показывается, но не правится: выключатель — у того, кто
+		// сидит за машиной с сервисом (см. panel_spec.go).
+		"agent": p.agentState(),
 	})
 }
 

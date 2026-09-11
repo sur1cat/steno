@@ -18,6 +18,7 @@ import (
 	"github.com/sur1cat/steno/internal/core"
 	"github.com/sur1cat/steno/internal/google"
 	"github.com/sur1cat/steno/internal/i18n"
+	"github.com/sur1cat/steno/internal/spec"
 )
 
 // steno doctor — предполётная проверка. Первый запуск сервиса упирается в
@@ -61,6 +62,7 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	cs = append(cs, checkSources(cfg)...)
 	cs = append(cs, checkTargets(cfg)...)
 	cs = append(cs, checkPanel(cfg))
+	cs = append(cs, checkAgent(cfg))
 
 	// Отсутствие конфига надо называть отсутствием. Раньше в шапке печаталось
 	// «конфиг steno.json» и тогда, когда файла не было вовсе: doctor показывал
@@ -529,6 +531,34 @@ func checkPanel(cfg *core.Config) check {
 		c.note = i18n.Tr("слушает ") + cfg.Panel.Addr
 	}
 	return c
+}
+
+// checkAgent — есть ли кому исполнять ТЗ. Не блокирует: созвон записывается и
+// без агента. Но включённое исполнение без исполнителя — поломка, о которой
+// человек узнал бы только нажав кнопку, а doctor для того и есть.
+func checkAgent(cfg *core.Config) check {
+	name := i18n.Tr("агент")
+	set := spec.SettingsFor(cfg)
+	r := spec.Check(cfg, set, set.Enabled)
+	auto := ""
+	if set.AutoSpec {
+		auto = i18n.Tr(", ТЗ собираются сами")
+	}
+	if !set.Enabled {
+		note := i18n.Tr("выключен — ТЗ собираются, ветки не заводятся") + auto
+		return check{name: name, state: "off", note: note,
+			fix: []string{i18n.Tr("→ включить: steno agent on")}}
+	}
+	if r.Executor == "" || !r.Ready {
+		var fix []string
+		for _, l := range core.LastLines(r.Why, 3) {
+			fix = append(fix, "→ "+l)
+		}
+		return check{name: name, state: "fail",
+			note: i18n.Tr("включён, но исполнять некому") + auto, fix: fix}
+	}
+	return check{name: name, state: "ok",
+		note: i18n.Trf("включён, исполняет %s, ветки %s…", r.Executor, r.BranchPrefix) + auto}
 }
 
 func checkEnv(name, env string) check {

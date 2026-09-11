@@ -33,6 +33,8 @@ const instructions = `steno records meetings and keeps what came out of them: th
 
 Where to start: list_meetings for recent meetings and their ids, projects for the project names. "What did we decide about X?" — search for X, then get_followup for the meeting that matched, or get_transcript with from_sec/to_sec around the hit to read the exact words. "What is open on X?" — open_items with the project name. Text is in whatever language the meeting was held in; ids and field names are stable.
 
+A task can have a spec — a technical brief written from the project's repository, with what is known, where it lives in the code, the steps, and what is still missing before it can be done. list_specs shows them per task, get_spec reads one in full. Specs are written and handed to a coding agent only by a person (the steno panel, the menu bar, the "steno spec" command); this server only reads them.
+
 close_item is the only tool that changes anything. Call it only when the user explicitly asks to close, finish or drop an item.`
 
 // Окно расшифровки за один вызов. Часовой созвон — это шестьсот реплик и
@@ -100,6 +102,22 @@ func New(st *core.Store) *sdk.Server {
 			"Item ids look like T-3f2a, Q-…, D-… and are what close_item takes.",
 		Annotations: readOnly,
 	}, s.openItems)
+	sdk.AddTool(srv, &sdk.Tool{
+		Name: "list_specs",
+		Description: "Specs written for tasks: one per task, the latest. A spec is the task from a meeting turned into a " +
+			"technical brief from the project's repository — what is known, where it lives in the code, the steps, how to check, " +
+			"and what is still missing. status: draft (written), rejected (the task is not about code), running (an agent is " +
+			"working on it), done (a branch exists), failed. runnable says whether an agent may be started from it; " +
+			"blocked lists why not. Filter by project. Read one in full with get_spec.",
+		Annotations: readOnly,
+	}, s.listSpecs)
+	sdk.AddTool(srv, &sdk.Tool{
+		Name: "get_spec",
+		Description: "One spec in full, as markdown, plus the agent's log when it ran and the branch it produced. " +
+			"Ids look like S-3f2a and come from list_specs. Specs are written and run only by a person from the steno " +
+			"panel, the menu bar or `steno spec`; this server cannot write or run them.",
+		Annotations: readOnly,
+	}, s.getSpec)
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "close_item",
 		Description: "Close one open item by id with a reason: done, or dropped when it will not be done. " +

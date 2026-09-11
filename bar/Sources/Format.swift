@@ -134,4 +134,19 @@ enum Format {
     }
 
     static func calls(_ n: Int) -> String { plural(n, L.t("созвон"), L.t("созвона"), L.t("созвонов")) }
+
+    /// Обрезать до n знаков с многоточием: в подвале шириной 360 длинная
+    /// задача не помещается, а первых слов хватает, чтобы узнать её.
+    static func cut(_ s: String, _ n: Int) -> String {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.count <= n { return t }
+        return String(t.prefix(max(n - 1, 1))).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// «3 вопроса» — сколько дыр назвало ТЗ. По-английски форм две, и «few»
+    /// работает обычным множественным, как в plural у панели.
+    static func questions(_ n: Int) -> String {
+        if L.lang != L.ru { return "\(n) " + (n == 1 ? "question" : "questions") }
+        return plural(n, "вопрос", "вопроса", "вопросов")
+    }
 }

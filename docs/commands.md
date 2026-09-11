@@ -90,6 +90,7 @@ oterm, ollmcp — and add steno there.
 | `get_transcript` | the lines with their second and speaker; `from_sec`/`to_sec` window, 200 lines per call |
 | `search` | full text over transcripts and follow-ups: meeting, second, passage |
 | `projects` · `open_items` | what is open per project — tasks, questions, decisions, with owner and origin |
+| `list_specs` · `get_spec` | the specs written for tasks, and one in full with the agent's log — read only: writing and running them stays with a person |
 | `close_item` | the one tool that writes: closes an item as done or dropped, with a reason |
 
 ## Projects — how it learns your vocabulary
@@ -106,6 +107,27 @@ oterm, ollmcp — and add steno there.
 | &nbsp;&nbsp;`--word a,b` | the project's services and abbreviations |
 | `steno projects rm <name>` | remove it from the registry; its tasks stay |
 | `steno context [name]` | build the primers from the code and the sites |
+
+## A task becomes a branch
+
+| | |
+|---|---|
+| `steno spec` | every open task, and whether it has a spec: written, declined, running, done |
+| `steno spec <task-id>` | write the spec for one task from the project's repository — `T-3f2a` from `steno projects` |
+| &nbsp;&nbsp;`--all` · `--project <name>` | every open task of a project; tasks that are not about code are declined for the price of one short call |
+| `steno spec show <spec-id>` | the spec in full, and the agent's log once it ran |
+| `steno spec run <spec-id>` | hand it to Claude Code or Codex: a worktree of its own, a branch, a commit — never a push |
+| `steno agent` | what is on, who executes, where the branches go |
+| `steno agent on\|off` | allow or forbid running specs on this machine — the one switch, read live by the panel and the menu bar |
+| `steno agent auto on\|off` | write specs on its own after every write-up (reading the code and one model call per task) |
+
+A spec must name what is still missing; one that names no open question, no
+place in the code that exists, or no step of work cannot be run — from the
+terminal, the panel, the menu bar or `steno ui` alike. Running is never
+triggered by anything that comes from outside: not Telegram, not mail, not the
+HTTP endpoint. Same in the panel: the task in its project has a **Spec** button,
+the spec page has **run the agent**; `steno ui` has `t` on a task and `a` on
+the spec; the menu bar has the same two buttons and both switches under ⋯.
 
 ## Clean up
 

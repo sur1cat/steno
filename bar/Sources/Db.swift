@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import SwiftUI
 
 // Чтение базы steno напрямую.
 //
@@ -40,6 +41,9 @@ struct DbSnapshot {
     var tasks: [Item] = []
     var questions: [Item] = []
     var projects: [ProjectRow] = []
+    /// Последнее ТЗ по каждой задаче (ключ — id задачи). Пусто, если таблицы
+    /// ещё нет: её заводит сервис при первом обращении к ТЗ.
+    var specs: [String: SpecRow] = [:]
     var takenAt = Date()
 
     var today: [Meeting] { meetings.filter { Calendar.current.isDateInToday($0.started) } }
@@ -132,6 +136,47 @@ struct Meeting: Identifiable {
         default:
             if isNote { return "" }
             return leftReason.isEmpty || endedNormally ? "" : L.t("ушёл раньше")
+        }
+    }
+}
+
+/// ТЗ по задаче — то, что видно в строке задачи, не открывая задание.
+/// Годность считается так же, как Gate в spec.go: есть хоть один вопрос, хоть
+/// одно найденное место в коде, хоть один шаг, и модель не сказала «нельзя».
+struct SpecRow: Identifiable {
+    let id: String
+    let itemID: String
+    let status: String     // draft | rejected | running | done | failed
+    let title: String
+    let reject: String
+    let branch: String
+    let runError: String
+    let unknowns: Int
+    let runnable: Bool
+    let created: Date
+
+    /// Что с ТЗ — одним словом для строки задачи.
+    var word: String {
+        switch status {
+        case "rejected": return L.t("не про код")
+        case "running": return L.t("агент работает")
+        case "done": return L.t("есть ветка")
+        case "failed": return L.t("агент сорвался")
+        default:
+            if !runnable { return L.t("ТЗ: нельзя запускать") }
+            return L.t("ТЗ · %@", Format.questions(unknowns))
+        }
+    }
+
+    /// Тревожное — оранжевым: сорвалось или негодно; работа — тоже оранжевым,
+    /// но как «идёт», а не как «беда». Готовое и ветка — зелёным.
+    var tone: Color {
+        switch status {
+        case "failed": return .orange
+        case "done": return .green
+        case "running": return .orange
+        case "rejected": return .secondary
+        default: return runnable ? .green : .orange
         }
     }
 }
@@ -294,6 +339,25 @@ final class Db {
             }
         }
 
+        // ТЗ — если таблица уже есть. Её заводит сервис при первом обращении
+        // к ТЗ, и на свежей установке её нет; это не ошибка, а «ТЗ ещё не
+        // делали», и молчать тут правильно.
+        if hasTable("specs") {
+            try each("""
+                SELECT id, item_id, status, reject, payload, branch, run_error, created_at
+                  FROM specs ORDER BY created_at
+                """) { st in
+                let (unknowns, runnable) = Db.gate(payload: text(st, 4))
+                let row = SpecRow(id: text(st, 0), itemID: text(st, 1), status: text(st, 2),
+                                  title: Db.title(payload: text(st, 4)), reject: text(st, 3),
+                                  branch: text(st, 5), runError: text(st, 6),
+                                  unknowns: unknowns, runnable: runnable, created: date(st, 7))
+                // Порядок по возрастанию — последнее затирает прежние, как
+                // Latest в store.go.
+                s.specs[row.itemID] = row
+            }
+        }
+
         // Проекты заводит человек в панели, а счётчики считаем по пунктам.
         try each("""
             SELECT p.name,
@@ -394,6 +458,34 @@ final class Db {
         guard sqlite3_step(st) == SQLITE_DONE else {
             throw DbError.query(String(cString: sqlite3_errmsg(h)))
         }
+    }
+
+    private func hasTable(_ name: String) -> Bool {
+        var found = false
+        try? each("SELECT 1 FROM sqlite_schema WHERE type='table' AND name = ?", name) { _ in
+            found = true
+        }
+        return found
+    }
+
+    /// Годность ТЗ по его телу — то же, что Gate в spec.go, только по JSON:
+    /// вопросов > 0, шагов > 0, хоть один путь нашёлся, blocked не стоит.
+    private static func gate(payload: String) -> (unknowns: Int, runnable: Bool) {
+        guard let data = payload.data(using: .utf8),
+              let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return (0, false) }
+        let unknowns = (o["unknowns"] as? [Any])?.count ?? 0
+        let steps = (o["steps"] as? [Any])?.count ?? 0
+        let found = ((o["found"] as? [Bool]) ?? []).contains(true)
+        let blocked = o["blocked"] as? Bool ?? false
+        return (unknowns, unknowns > 0 && steps > 0 && found && !blocked)
+    }
+
+    private static func title(payload: String) -> String {
+        guard let data = payload.data(using: .utf8),
+              let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return "" }
+        return o["title"] as? String ?? ""
     }
 
     // --- мелочи --------------------------------------------------------------

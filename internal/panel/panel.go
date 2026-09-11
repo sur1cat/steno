@@ -60,6 +60,12 @@ type Panel struct {
 
 	// Сериализует паузу после неверного пароля.
 	loginMu sync.Mutex
+
+	// ТЗ: что собирается прямо сейчас (id задачи → true), что сорвалось
+	// (id задачи → текст ошибки) и кэш проверки исполнителя. См. panel_spec.go.
+	building sync.Map
+	failed   sync.Map
+	agentProbe
 }
 
 // clientIP берёт адрес из X-Forwarded-For, если панель стоит за прокси.

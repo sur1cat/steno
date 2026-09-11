@@ -11,6 +11,7 @@ import { SearchPage } from "@/pages/search";
 import { TasksPage } from "@/pages/tasks";
 import { ProjectsPage } from "@/pages/projects";
 import { ProjectPage } from "@/pages/project";
+import { SpecPage } from "@/pages/spec";
 import { SettingsPage } from "@/pages/settings";
 
 // Протухшая cookie не должна выглядеть как поломка: любой 401 — это «пора
@@ -50,6 +51,7 @@ function Routed() {
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/p/:name" element={<ProjectPage />} />
+        <Route path="/s/:id" element={<SpecPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

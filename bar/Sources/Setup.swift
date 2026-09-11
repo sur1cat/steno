@@ -24,6 +24,11 @@ struct Setup: Equatable {
     var envPath: String
     var panelEnabled: Bool
     var lang: String         // «lang» из настройки: приложение говорит на том же языке
+    /// Раздел agent: разрешено ли исполнение ТЗ и собираются ли ТЗ сами.
+    /// Читается из того же файла, который правит `steno agent on|off`, — и
+    /// переключатель в меню показывает ровно то, что там записано.
+    var agentEnabled: Bool
+    var agentAutoSpec: Bool
 
     var dbPath: String { dataDir + "/steno.db" }
     var dir: String { (configPath as NSString).deletingLastPathComponent }
@@ -157,6 +162,7 @@ enum Conf {
         let dir = (configPath as NSString).deletingLastPathComponent
         let envPath = dir + "/.env"
         let bot = root["bot"] as? [String: Any] ?? [:]
+        let agent = root["agent"] as? [String: Any] ?? [:]
         let pass = password(env: env, envPath: envPath).flatMap { $0.isEmpty ? nil : $0 }
         return .success(Setup(
             configPath: configPath,
@@ -168,7 +174,9 @@ enum Conf {
             passwordEnv: env,
             envPath: envPath,
             panelEnabled: panel["enabled"] as? Bool ?? false,
-            lang: root["lang"] as? String ?? ""))
+            lang: root["lang"] as? String ?? "",
+            agentEnabled: agent["enabled"] as? Bool ?? false,
+            agentAutoSpec: agent["auto_spec"] as? Bool ?? false))
     }
 
     /// Пути в настройке считаются от неё самой, а не от текущего каталога —

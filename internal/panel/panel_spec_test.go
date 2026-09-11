@@ -134,6 +134,109 @@ func TestSpecShowsGateReasons(t *testing.T) {
 	}
 }
 
+// Страница ТЗ получает задание разделами, разметку — на «скопировать», саму
+// задачу — рядом, и состояние выключателя: рисовать кнопку «запустить» при
+// выключенном исполнении, чтобы она ответила отказом, — не то, ради чего
+// панель делали.
+func TestSpecPageHasBodyItemAndAgent(t *testing.T) {
+	srv, st, store := testSpecPanel(t)
+	if err := st.AddItem(core.ProjectItem{
+		ID: "T-4", Project: "p", Kind: core.KindTask, Text: "Закончить сапар", Owner: "Ануар",
+		Quote: "сапар надо доделать"}); err != nil {
+		t.Fatal(err)
+	}
+	sp := &spec.Spec{
+		ID: "S-4", ItemID: "T-4", Project: "p", Repo: t.TempDir(), Status: spec.StatusDraft,
+		Title:    "Сапар",
+		Places:   []spec.Place{{Path: "sapar/tasks.py", Why: "очередь", Found: true}, {Path: "nowhere.py", Found: false}},
+		Steps:    []string{"поправить"},
+		Unknowns: []spec.Unknown{{Question: "что именно?", Why: "не сказано", Ask: "Ануар"}},
+	}
+	if err := store.Save(sp); err != nil {
+		t.Fatal(err)
+	}
+	a := login(t, srv, "тайна")
+	var out struct {
+		Spec struct {
+			Blocked []string `json:"blocked"`
+			Status  string   `json:"status"`
+		} `json:"spec"`
+		Body struct {
+			Found []bool `json:"found"`
+			Steps []string
+		} `json:"body"`
+		Item struct {
+			Text  string `json:"text"`
+			Quote string `json:"quote"`
+		} `json:"item"`
+		Agent struct {
+			Enabled bool `json:"enabled"`
+		} `json:"agent"`
+		Markdown string `json:"markdown"`
+	}
+	a.get("/api/specs/S-4", &out)
+	if len(out.Spec.Blocked) != 0 || out.Spec.Status != "draft" {
+		t.Errorf("годное ТЗ помечено негодным: %+v", out.Spec)
+	}
+	if len(out.Body.Found) != 2 || !out.Body.Found[0] || out.Body.Found[1] {
+		t.Errorf("проверка путей не доехала до панели: %v", out.Body.Found)
+	}
+	if out.Item.Text != "Закончить сапар" || out.Item.Quote == "" {
+		t.Errorf("задача рядом с ТЗ не та: %+v", out.Item)
+	}
+	if out.Agent.Enabled {
+		t.Error("исполнение выключено, а панели сказано обратное")
+	}
+	if !strings.Contains(out.Markdown, "что именно?") {
+		t.Error("разметка для «скопировать» без вопросов")
+	}
+
+	// Список по проекту: последнее ТЗ на задачу плюс что собирается сейчас.
+	var list struct {
+		Specs    map[string]struct{ Status string } `json:"specs"`
+		Building []string                           `json:"building"`
+		Failed   map[string]string                  `json:"failed"`
+	}
+	a.get("/api/specs?project=p", &list)
+	if list.Specs["T-4"].Status != "draft" || len(list.Building) != 0 || len(list.Failed) != 0 {
+		t.Errorf("список ТЗ: %+v", list)
+	}
+
+	// Состояние агента есть и в настройках — раздел «Агент» рисуется по нему.
+	var settings struct {
+		Agent struct {
+			Enabled      bool   `json:"enabled"`
+			BranchPrefix string `json:"branchPrefix"`
+		} `json:"agent"`
+	}
+	a.get("/api/settings", &settings)
+	if settings.Agent.Enabled || settings.Agent.BranchPrefix != "steno/" {
+		t.Errorf("агент в настройках: %+v", settings.Agent)
+	}
+}
+
+// Пока по ТЗ идёт работа, второе нажатие не заводит вторую ветку.
+func TestSpecRunRefusesWhileRunning(t *testing.T) {
+	srv, _, store := testSpecPanel(t)
+	dir := t.TempDir()
+	writeFile(t, dir+"/steno.json", `{"agent":{"enabled":true}}`)
+	t.Setenv("STENO_CONFIG", dir+"/steno.json")
+	sp := &spec.Spec{
+		ID: "S-5", ItemID: "T-5", Project: "p", Repo: dir, Status: spec.StatusRunning,
+		Title: "идёт", Branch: "steno/idet",
+		Places:   []spec.Place{{Path: "a.py", Found: true}},
+		Steps:    []string{"сделать"},
+		Unknowns: []spec.Unknown{{Question: "что?"}},
+	}
+	if err := store.Save(sp); err != nil {
+		t.Fatal(err)
+	}
+	a := login(t, srv, "тайна")
+	if code, body := a.do("POST", "/api/specs/S-5/run", nil); code != http.StatusConflict {
+		t.Fatalf("повторный запуск по идущему ТЗ: код %d, тело %s", code, body)
+	}
+}
+
 func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {

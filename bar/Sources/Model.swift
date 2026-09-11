@@ -56,6 +56,12 @@ final class Loader: ObservableObject {
     /// отказ сервиса надо показать словами — они у него человеческие.
     @Published private(set) var noteBusy = false
     @Published private(set) var noteMessage: (ok: Bool, text: String)?
+    /// ТЗ: по каким задачам сборка запрошена и ещё не видна в базе, и что
+    /// ответил сервис на последнее нажатие. Ключ — id задачи, значение — когда
+    /// нажали: сборка считается идущей, пока в базе не появится ТЗ новее.
+    @Published private(set) var specRequested: [String: Date] = [:]
+    @Published private(set) var specMessage: (ok: Bool, text: String)?
+    @Published private(set) var specBusy = false
 
     private var timer: Timer?
     private var tick: Timer?
@@ -170,6 +176,16 @@ final class Loader: ObservableObject {
         case .success(let snap):
             snapshot = snap
             health = .ok
+            // Запрошенное ТЗ появилось в базе — сборка кончилась. Или прошло
+            // столько, что ждать её дальше незачем: сервис держит сборку в
+            // четверть часа.
+            for (item, at) in specRequested {
+                if let sp = snap.specs[item], sp.created >= at.addingTimeInterval(-2) {
+                    specRequested[item] = nil
+                } else if Date().timeIntervalSince(at) > 15 * 60 {
+                    specRequested[item] = nil
+                }
+            }
         case .failure(let e):
             let why = (e as? DbError)?.message ?? e.localizedDescription
             if case .missing = e as? DbError {
@@ -306,6 +322,91 @@ final class Loader: ObservableObject {
     }
 
     func forgetNoteMessage() { noteMessage = nil }
+
+    // --- ТЗ --------------------------------------------------------------------
+
+    /// Собрать ТЗ по задаче — сервисом: это чтение репозитория и запрос к
+    /// модели, минута, и делает его тот же код, что и кнопка в панели.
+    func buildSpec(_ item: Item) async {
+        guard let api = specApi() else { return }
+        specBusy = true
+        specMessage = nil
+        defer { specBusy = false }
+        do {
+            _ = try await api.post("/api/items/\(item.id)/spec", body: [:], as: NoteReply.self)
+            specRequested[item.id] = Date()
+            specMessage = (true, L.t("собираю ТЗ по «%@» — около минуты", Format.cut(item.text, 40)))
+        } catch let e as ApiError {
+            specMessage = (false, e.message)
+        } catch {
+            specMessage = (false, error.localizedDescription)
+        }
+    }
+
+    /// Отдать ТЗ агенту. Кнопка стоит только у годного ТЗ при включённом
+    /// исполнении, но последнее слово — за сервисом: он проверяет всё заново и
+    /// отвечает словами, если что-то не так.
+    func runSpec(_ sp: SpecRow) async {
+        guard let api = specApi() else { return }
+        specBusy = true
+        specMessage = nil
+        defer { specBusy = false }
+        do {
+            _ = try await api.post("/api/specs/\(sp.id)/run", body: [:], as: NoteReply.self)
+            specMessage = (true, L.t("отдал %@ агенту — ход работы в панели", sp.id))
+        } catch let e as ApiError {
+            specMessage = (false, e.message)
+        } catch {
+            specMessage = (false, error.localizedDescription)
+        }
+        await refresh()
+    }
+
+    func forgetSpecMessage() { specMessage = nil }
+
+    private func specApi() -> Api? {
+        guard let s = setup, let base = s.base, let password = s.password else {
+            specMessage = (false, L.t("некому собирать: не собрался адрес панели или нет пароля"))
+            return nil
+        }
+        guard service.isRunning else {
+            specMessage = (false, L.t("ТЗ собирает сервис, а он не запущен"))
+            return nil
+        }
+        return Api(base: base, password: password)
+    }
+
+    /// Выключатель исполнения — командой steno, как autostart. Файл правит
+    /// steno, а приложение перечитывает его при следующем опросе.
+    func setAgent(_ on: Bool) async {
+        guard let path = setup?.configPath else { return }
+        busyWithService = true
+        serviceLog = nil
+        defer { busyWithService = false }
+        if let why = Daemon.agent(on, configPath: path) {
+            serviceLog = why
+            specMessage = (false, why)
+        } else {
+            specMessage = (true, on ? L.t("исполнение включено: агент может заводить ветки на этой машине")
+                                    : L.t("исполнение выключено: ТЗ собираются, ветки не заводятся"))
+        }
+        await refresh()
+    }
+
+    func setAgentAuto(_ on: Bool) async {
+        guard let path = setup?.configPath else { return }
+        busyWithService = true
+        serviceLog = nil
+        defer { busyWithService = false }
+        if let why = Daemon.agentAuto(on, configPath: path) {
+            serviceLog = why
+            specMessage = (false, why)
+        } else {
+            specMessage = (true, on ? L.t("ТЗ будут собираться сами после каждого разбора")
+                                    : L.t("ТЗ — только по запросу"))
+        }
+        await refresh()
+    }
 
     /// Поднять сервис в фоне — тем же способом, каким это делает человек в
     /// терминале: `steno serve -d`. Подпроцессом запускать нельзя, он умрёт

@@ -98,7 +98,10 @@ func TestRunUnreachableFromInbound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inbound := []string{"internal/sources", "internal/bot"}
+	// Конвейеры — тоже вход снаружи: созвон и заметка приходят от людей на
+	// звонке, и то, что после разбора собирается само (ТЗ), не имеет права
+	// само же и запускать.
+	inbound := []string{"internal/sources", "internal/bot", "internal/pipeline", "internal/note"}
 	found := 0
 	for _, rel := range inbound {
 		dir := filepath.Join(root, rel)

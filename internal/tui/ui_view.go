@@ -281,6 +281,8 @@ func (m *uiModel) rebuildBody() {
 		body = m.projectBody(w)
 	case scrHelp:
 		body = uiHelpBody(w)
+	case scrSpec:
+		body = m.specBody(w)
 	default:
 		return
 	}
@@ -794,7 +796,7 @@ func (m *uiModel) counters() string {
 func (m *uiModel) contextLine() string {
 	pad := strings.Repeat(" ", uiGutter)
 	switch m.screen() {
-	case scrMeeting, scrTranscript, scrProject, scrHelp:
+	case scrMeeting, scrTranscript, scrProject, scrHelp, scrSpec:
 		return m.cardContext()
 	case scrForm:
 		if m.form != nil && m.form.old != "" {
@@ -842,6 +844,13 @@ func (m *uiModel) cardContext() string {
 		title = m.projectName
 	case scrHelp:
 		title = i18n.Tr("что нажимать")
+	case scrSpec:
+		if m.spec != nil {
+			title = i18n.Tr("ТЗ ") + m.spec.ID
+			if t := strings.TrimSpace(m.spec.Title); t != "" {
+				title += " · " + t
+			}
+		}
 	}
 	left := strings.Repeat(" ", uiGutter) + uiBold.Render(uiTrunc(title, max(m.w-24, 10)))
 	right := ""
@@ -973,7 +982,7 @@ func (m *uiModel) columns() string {
 
 func (m *uiModel) content() []string {
 	switch m.screen() {
-	case scrMeeting, scrTranscript, scrProject, scrHelp:
+	case scrMeeting, scrTranscript, scrProject, scrHelp, scrSpec:
 		return m.bodyWindow()
 	case scrForm:
 		return uiWindowAround(m.formView, m.listHeight())
@@ -1610,6 +1619,9 @@ func (m *uiModel) hints() string {
 	case scrProject:
 		return join(key("↑↓", i18n.Tr("листать")), key("e", i18n.Tr("правка")), key("s", i18n.Tr("справка")),
 			key("D", i18n.Tr("удалить")), key("←", i18n.Tr("назад")))
+	case scrSpec:
+		return join(key("↑↓", i18n.Tr("листать")), key("a", i18n.Tr("агенту")), key("b", i18n.Tr("собрать заново")),
+			key("r", i18n.Tr("перечитать")), key("←", i18n.Tr("назад")))
 	}
 
 	if m.editing() {
@@ -1621,7 +1633,7 @@ func (m *uiModel) hints() string {
 		return join(key("↑↓", i18n.Tr("выбрать")), key("enter", "follow-up"), key("t", i18n.Tr("расшифровка")),
 			key("D", i18n.Tr("удалить")), key("/", i18n.Tr("фильтр")), key("q", i18n.Tr("выход")))
 	case tabTasks:
-		return join(key("enter", i18n.Tr("созвон")), key("d", i18n.Tr("сделана")), key("x", i18n.Tr("снять")),
+		return join(key("enter", i18n.Tr("созвон")), key("t", i18n.Tr("ТЗ")), key("d", i18n.Tr("сделана")), key("x", i18n.Tr("снять")),
 			key("p", i18n.Tr("проект")), key("o", i18n.Tr("кто")), key("v", i18n.Tr("вид")), key("a", i18n.Tr("закрытые")))
 	case tabProjects:
 		return join(key("enter", i18n.Tr("открыть")), key("n", i18n.Tr("новый")), key("e", i18n.Tr("правка")),
@@ -1672,6 +1684,12 @@ func uiHelpBody(w int) []string {
 			{"v", i18n.Tr("фильтр по виду: задачи, вопросы, решения")},
 			{"a", i18n.Tr("показывать и закрытые")},
 			{"c", i18n.Tr("снять все фильтры")},
+			{"t", i18n.Tr("ТЗ по задаче: открыть, а если его нет — собрать по репозиторию проекта")},
+		}},
+		{i18n.Tr("ТЗ"), []row{
+			{"a", i18n.Tr("отдать агенту: рабочая копия, ветка, коммит — после вопроса «точно?»")},
+			{"b", i18n.Tr("собрать заново — после того, как на вопросы ответили")},
+			{"r", i18n.Tr("перечитать: пока агент работает, растёт журнал")},
 		}},
 		{i18n.Tr("Проекты"), []row{
 			{"enter", i18n.Tr("карточка: описание, источники, справка, что открыто")},
@@ -1891,6 +1909,10 @@ func (m *uiModel) previewItem(w int) []string {
 	if it.Quote != "" {
 		out = append(out, "")
 		out = append(out, uiWrapLines(uiDim.Render(i18n.Tr("  из разговора: ")), "«"+it.Quote+"»", w)...)
+	}
+	if line := m.specLine(it); line != "" {
+		out = append(out, "")
+		out = append(out, uiWrapLines(uiDim.Render("  "), line, w)...)
 	}
 	out = append(out, "", uiDim.Render(i18n.Tr("  enter — созвон, на котором это появилось")))
 	return out

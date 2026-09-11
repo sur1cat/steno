@@ -113,6 +113,17 @@ struct PanelView: View {
                     get: { loader.autostartOn },
                     set: { on in Task { await loader.setAutostart(on) } }))
                     .disabled(loader.setup == nil || loader.busyWithService)
+                // Выключатели агента — здесь, а не в веб-панели: это право
+                // писать файлы на этой машине, и даёт его тот, кто за ней
+                // сидит. Меняются командой steno agent, файл правит она же.
+                Toggle(L.t("Отдавать задачи агенту"), isOn: Binding(
+                    get: { loader.setup?.agentEnabled ?? false },
+                    set: { on in Task { await loader.setAgent(on) } }))
+                    .disabled(loader.setup == nil || loader.busyWithService)
+                Toggle(L.t("Собирать ТЗ после каждого разбора"), isOn: Binding(
+                    get: { loader.setup?.agentAutoSpec ?? false },
+                    set: { on in Task { await loader.setAgentAuto(on) } }))
+                    .disabled(loader.setup == nil || loader.busyWithService)
                 Button(L.t("Открыть панель в браузере")) { open("/") }
                     .disabled(!loader.panelReachable)
                 Button(L.t("Показать лог сервиса")) { revealLog() }
@@ -341,8 +352,10 @@ struct PanelView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 Text(meta(item)).font(.system(size: 10.5))
                                     .foregroundStyle(.tertiary).lineLimit(1)
+                                specLine(item)
                             }
-                            Spacer(minLength: 0)
+                            Spacer(minLength: 4)
+                            specAction(item)
                         }
                     }
                 }
@@ -353,6 +366,54 @@ struct PanelView: View {
                                meta: Format.blank(q.project) ? nil : q.project)
                     }
                 }
+            }
+        }
+    }
+
+    /// ТЗ по задаче — строкой под задачей: есть ли, что с ним. Прямо здесь, а
+    /// не за кликом: «у этой задачи уже есть ветка» — то, ради чего в строку
+    /// меню и смотрят между созвонами.
+    @ViewBuilder private func specLine(_ item: Item) -> some View {
+        if loader.specRequested[item.id] != nil {
+            Text(L.t("ТЗ: собирается…")).font(.system(size: 10.5)).foregroundStyle(.orange)
+        } else if let sp = loader.snapshot.specs[item.id] {
+            HStack(spacing: 4) {
+                Circle().fill(sp.tone).frame(width: 5, height: 5)
+                Text(sp.word).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                if !sp.branch.isEmpty && (sp.status == "done" || sp.status == "running") {
+                    Text(sp.branch).font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary).lineLimit(1)
+                }
+            }
+        }
+    }
+
+    /// Одно действие у правого края строки: собрать ТЗ, отдать агенту или
+    /// открыть готовое. Ровно одно, потому что ширина 360 не вмещает два.
+    @ViewBuilder private func specAction(_ item: Item) -> some View {
+        let sp = loader.snapshot.specs[item.id]
+        let building = loader.specRequested[item.id] != nil
+        if !Format.blank(item.project) && item.project != "не определён" && item.kind == "task" {
+            if building {
+                EmptyView()
+            } else if let sp {
+                if sp.status == "draft" && sp.runnable && loader.setup?.agentEnabled == true {
+                    Button(L.t("агенту")) { Task { await loader.runSpec(sp) } }
+                        .buttonStyle(Flat(prominent: true))
+                        .disabled(loader.specBusy || !loader.service.isRunning)
+                        .help(L.t("отдать ТЗ агенту: рабочая копия, ветка, коммит — никогда push"))
+                } else if loader.panelReachable {
+                    Button(L.t("открыть")) { open("/s/\(sp.id)") }
+                        .buttonStyle(Flat())
+                        .help(L.t("ТЗ целиком — в панели"))
+                }
+            } else {
+                Button(L.t("ТЗ")) { Task { await loader.buildSpec(item) } }
+                    .buttonStyle(Flat())
+                    .disabled(loader.specBusy || !loader.service.isRunning)
+                    .help(loader.service.isRunning
+                          ? L.t("написать ТЗ по репозиторию проекта — около минуты")
+                          : L.t("ТЗ собирает сервис, а он не запущен"))
             }
         }
     }
@@ -497,6 +558,16 @@ struct PanelView: View {
                     .foregroundStyle(m.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
                 Spacer(minLength: 4)
                 IconButton(icon: "xmark", help: L.t("скрыть")) { loader.forgetNoteMessage() }
+            } else if let m = loader.specMessage {
+                // Ответ сервиса на кнопку ТЗ — его словами: он один знает,
+                // почему задача не про код или чего не хватает исполнителю.
+                Image(systemName: m.ok ? "doc.text" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(m.ok ? Color.green : Color.orange)
+                Text(m.text).font(.system(size: 10.5)).lineLimit(2)
+                    .foregroundStyle(m.ok ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+                Spacer(minLength: 4)
+                IconButton(icon: "xmark", help: L.t("скрыть")) { loader.forgetSpecMessage() }
             } else if let closed = loader.justClosed {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 10)).foregroundStyle(.green)

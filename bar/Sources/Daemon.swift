@@ -79,6 +79,16 @@ enum Daemon {
         run(["autostart", on ? "on" : "off", "-c", configPath])
     }
 
+    /// Выключатель исполнения ТЗ — той же командой, что и в терминале. Файл
+    /// правит steno, а не приложение: у него один разбор и один порядок полей.
+    static func agent(_ on: Bool, configPath: String) -> String? {
+        run(["agent", on ? "on" : "off", "-c", configPath])
+    }
+
+    static func agentAuto(_ on: Bool, configPath: String) -> String? {
+        run(["agent", "auto", on ? "on" : "off", "-c", configPath])
+    }
+
     /// Включён ли автозапуск. Смотрим сам файл службы: спрашивать бинарник на
     /// каждую отрисовку меню — значит запускать процесс ради одной строки.
     static var autostartOn: Bool {

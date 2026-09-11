@@ -221,6 +221,9 @@ func seedRU(st *core.Store) (projects []core.Project, n int, err error) {
 			}
 		}
 	}
+	if err := seedSpecs(st, "ru"); err != nil {
+		return nil, 0, err
+	}
 	return cfg.Projects, len(all), nil
 }
 
@@ -456,6 +459,9 @@ func seedEN(st *core.Store) (projects []core.Project, n int, err error) {
 				_ = st.CloseItem(it.ID, "done", "the rollback worked on a copy of prod", "2026-09-08-1530-c3d4")
 			}
 		}
+	}
+	if err := seedSpecs(st, "en"); err != nil {
+		return nil, 0, err
 	}
 	return cfg.Projects, len(all), nil
 }

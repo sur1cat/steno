@@ -18,6 +18,7 @@ import (
 	"github.com/sur1cat/steno/internal/core"
 	"github.com/sur1cat/steno/internal/i18n"
 	"github.com/sur1cat/steno/internal/publish"
+	"github.com/sur1cat/steno/internal/spec"
 )
 
 // Надиктованная заметка — второй вход в тот же конвейер.
@@ -474,9 +475,13 @@ func ProcessNote(ctx context.Context, cfg *core.Config, st *core.Store, id strin
 	publish.PublishProjectDocs(ctx, cfg, st, f, id, log.New(os.Stderr, "", log.Ltime))
 
 	if noPublish {
+		spec.AfterFollowup(ctx, cfg, st, id)
 		return nil
 	}
 	errs := publish.PublishAll(ctx, cfg, st, m, f, segs, log.New(os.Stderr, "", log.Ltime))
+	// ТЗ — после рассылки, как и у созвона: сначала итог в чат, потом
+	// минута на каждую задачу с проектом.
+	spec.AfterFollowup(ctx, cfg, st, id)
 	if len(errs) > 0 {
 		msg := errors.Join(errs...).Error()
 		_ = st.SetStatus(id, "publish_failed", msg)

@@ -17,6 +17,7 @@ import (
 	"github.com/sur1cat/steno/internal/brain"
 	"github.com/sur1cat/steno/internal/core"
 	"github.com/sur1cat/steno/internal/i18n"
+	"github.com/sur1cat/steno/internal/spec"
 	"golang.org/x/term"
 )
 
@@ -145,6 +146,7 @@ func cmdSetup(ctx context.Context, args []string) error {
 		s.askSources,
 		s.askTargets,
 		s.askPanel,
+		s.askAgent,
 	}
 	// +1 — «Готово» тоже раздел и тоже печатает заголовок. Без этого последним
 	// показывалось «шаг 8 из 7».
@@ -680,6 +682,32 @@ func (s *setupState) askPanel(ctx context.Context) error {
 		s.cfg.Panel.Secure = s.confirm(i18n.Tr("Панель за HTTPS?"), true)
 		if !s.cfg.Panel.Secure {
 			fmt.Println(warn(i18n.Tr("панель смотрит наружу без TLS — пароль и cookie пойдут открытым текстом")))
+		}
+	}
+	return nil
+}
+
+// askAgent — отдавать ли задачи агенту. Два вопроса, и оба по умолчанию
+// «нет»: ТЗ стоит денег на каждый разбор, а исполнение — это право писать
+// файлы на этой машине. Тот, кто ставит steno ради заметок, должен получить
+// «нет» пустым Enter'ом, а не разбираться, что такое рабочая копия.
+func (s *setupState) askAgent(ctx context.Context) error {
+	section(i18n.Tr("Задачи — агенту"))
+	fmt.Println(dim(i18n.Tr("Задачу с созвона steno умеет превратить в ТЗ по репозиторию проекта, а ТЗ —")))
+	fmt.Println(dim(i18n.Tr("отдать Claude Code или Codex: отдельная рабочая копия, своя ветка, никогда push.")))
+	fmt.Println(dim(i18n.Tr("Оба выключателя меняются потом: steno agent on|off, steno agent auto on|off.")))
+	s.cfg.Agent.AutoSpec = s.confirm(i18n.Tr("Собирать ТЗ самому после каждого разбора? (чтение кода и запрос к модели)"), false)
+	s.cfg.Agent.Enabled = s.confirm(i18n.Tr("Разрешить агенту работать в репозитории на этой машине?"), false)
+	if s.cfg.Agent.Enabled {
+		// Исполнитель — тот же, кем платят за разбор; если это не агент,
+		// сказать об этом здесь, а не при первом нажатии в панели.
+		r := spec.Check(s.cfg, s.cfg.Agent, false)
+		if r.Executor == "" {
+			fmt.Println(warn(r.Why))
+		} else {
+			fmt.Println(ok(i18n.Tr("исполняет ") + r.Executor +
+				dim(i18n.Tr("; ветки ")+r.BranchPrefix+i18n.Tr("…, рабочие копии в ")+
+					filepath.Join(s.cfg.DataDir, "agent"))))
 		}
 	}
 	return nil

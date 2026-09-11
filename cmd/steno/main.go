@@ -85,6 +85,8 @@ const usage = `steno — заметки и follow-up с созвонов.
   steno context [проект]     собрать справки о проектах по коду и сайтам
   steno spec                 ТЗ по задачам с созвонов: собрать, показать,
                              отдать агенту (steno spec help — подробно)
+  steno agent on|off         разрешить агенту работать в репозитории;
+                             steno agent auto on — собирать ТЗ самому
   steno bot --url <u>        сам бот; запускается внутри контейнера
 
 Общие флаги:
@@ -154,6 +156,8 @@ func main() {
 		err = cmdProjects(args)
 	case "spec":
 		err = cmdSpec(ctx, args)
+	case "agent":
+		err = cmdAgent(args)
 	case "context":
 		err = cmdContext(ctx, args)
 	case "prune":

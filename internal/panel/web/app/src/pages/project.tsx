@@ -5,13 +5,42 @@ import { api, type ProjectItem } from "@/lib/api";
 import { dateRu, dueRu, overdue } from "@/lib/fmt";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { SpecMark } from "@/components/spec-mark";
 import { Empty, Failed, GroupHead, Loading, PageHead } from "@/components/layout";
 import { t } from "@/lib/i18n";
+
+// Корзина «не определён» — не проект: у неё нет репозитория, и ТЗ по её
+// задачам собрать нельзя. Кнопку там не показываем вовсе, а не показываем
+// отказ после нажатия. Значение из базы, как в projects.tsx.
+const UNASSIGNED = "не определён";
 
 export function ProjectPage() {
   const { name = "" } = useParams();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["project", name], queryFn: () => api.project(name) });
+
+  // ТЗ по задачам этого проекта — отдельным запросом, а не полем у задачи:
+  // задание живёт своей жизнью (собирается минуту, исполняется полчаса), и
+  // пока что-то идёт, страница опрашивает его чаще.
+  const specs = useQuery({
+    queryKey: ["specs", name],
+    queryFn: () => api.specs(name),
+    enabled: name !== UNASSIGNED,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      if (!d) return false;
+      const live = d.building.length > 0 || Object.values(d.specs).some((s) => s.status === "running");
+      return live ? 3000 : false;
+    },
+  });
+  const build = useMutation({
+    mutationFn: (id: string) => api.buildSpec(id),
+    onSuccess: () => {
+      toast.success(t("Собираю ТЗ — это чтение репозитория и запрос к модели, около минуты."));
+      qc.invalidateQueries({ queryKey: ["specs", name] });
+    },
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t("не получилось")),
+  });
 
   // Задачу можно закрыть и вернуть руками. Без этого закрыть её можно было
   // только упомянув на созвоне: сделал тихо — висит вечно. А закрытую по
@@ -78,6 +107,16 @@ export function ProjectPage() {
                 >
                   {t("закрыть")}
                 </Button>
+                {/* ТЗ — только у задач с проектом: у корзины нет репозитория. */}
+                {name !== UNASSIGNED && specs.data && (
+                  <SpecMark
+                    spec={specs.data.specs[it.id]}
+                    building={specs.data.building.includes(it.id)}
+                    failed={specs.data.failed[it.id]}
+                    busy={build.isPending}
+                    onBuild={() => build.mutate(it.id)}
+                  />
+                )}
               </Meta>
               {it.quote && <Quote>{it.quote}</Quote>}
             </Row>
@@ -142,6 +181,17 @@ export function ProjectPage() {
                   <Link to={`/m/${it.closedIn}`} className="text-primary underline-offset-4 hover:underline">
                     {t("созвон")}
                   </Link>
+                )}
+                {/* ТЗ переживает задачу: ветка, сделанная по нему, остаётся
+                    и после того, как задачу закрыли. Собирать новое по
+                    закрытой нельзя — только смотреть. */}
+                {specs.data?.specs[it.id] && (
+                  <SpecMark
+                    spec={specs.data.specs[it.id]}
+                    building={false}
+                    onBuild={() => {}}
+                    readOnly
+                  />
                 )}
                 <Button
                   variant="link"
