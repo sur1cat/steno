@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -112,9 +113,55 @@ func googleSet(path string, in *bufio.Reader) error {
 		return err
 	}
 	fmt.Println(ok(i18n.Tr("записано: Client ID в ") + filepath.Base(path) + i18n.Tr(", секрет в .env")))
+
+	// Сервис читает .env на старте — секрет он увидит только после
+	// перезапуска. Просить человека набрать две команды после того, как он
+	// продрался через консоль Google, — лишнее: перезапускаем сами, спросив.
+	if _, _, state := findDaemon(path); state == daemonRunning && term.IsTerminal(int(os.Stdin.Fd())) {
+		if askYesNo(in, i18n.Tr("Перезапустить сервис сейчас, чтобы он прочитал секрет?"), true) {
+			if err := restartDaemon(path); err != nil {
+				return err
+			}
+			fmt.Println(ok(i18n.Tr("перезапущен — осталось нажать «Подключить Google» в настройках панели")))
+			return nil
+		}
+	}
 	fmt.Println(dim(i18n.Tr("  сервис читает .env на старте:  steno stop && steno start")))
 	fmt.Println(dim(i18n.Tr("  потом «Подключить Google» в настройках панели")))
 	return nil
+}
+
+// restartDaemon — стоп и старт тем же бинарником, что и человек набрал бы.
+// Старт — отдельным процессом: `steno start` отвязывается от терминала, и
+// повторять эту механику здесь незачем.
+func restartDaemon(cfgPath string) error {
+	if err := stopDaemon(cfgPath, 0); err != nil {
+		return err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(self, "start", "-c", cfgPath)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// askYesNo — вопрос да/нет с умолчанием; Enter берёт умолчание.
+func askYesNo(in *bufio.Reader, question string, def bool) bool {
+	hint := "y/N"
+	if def {
+		hint = "Y/n"
+	}
+	fmt.Printf("  %s [%s]: ", question, dim(hint))
+	line, _ := in.ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "":
+		return def
+	case "y", "yes", "д", "да":
+		return true
+	}
+	return false
 }
 
 // setConfigClientID правит две строки в JSON, а не перезаписывает файл из
