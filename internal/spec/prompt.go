@@ -279,6 +279,16 @@ func triageHead(it core.ProjectItem, p core.Project, ev Evidence) string {
 		fmt.Fprintf(&b, " — %s", p.About)
 	}
 	b.WriteString("\n")
+	// Люди и сервисы проекта — теми же словами, что в промпте follow-up.
+	// Без них отбор гадал, кто такой «Сапар»: человек, подрядчик или модуль, —
+	// хотя он вписан в проект как сервис. Отбор «кодом или руками» без этого
+	// списка не различает «разобраться с сервисом» и «поговорить с человеком».
+	if len(p.People) > 0 {
+		fmt.Fprintf(&b, "Люди проекта: %s\n", strings.Join(p.People, ", "))
+	}
+	if words := p.OtherWords(); len(words) > 0 {
+		fmt.Fprintf(&b, "Сервисы и сокращения проекта (не люди): %s\n", strings.Join(words, ", "))
+	}
 	if len(ev.Modules) > 0 {
 		fmt.Fprintf(&b, "Модули репозитория: %s\n", strings.Join(ev.Modules, ", "))
 	}

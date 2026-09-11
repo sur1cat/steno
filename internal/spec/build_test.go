@@ -3,7 +3,10 @@ package spec
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/sur1cat/steno/internal/core"
 )
 
 // Модель возвращает путь как придётся. Всё это один и тот же файл, и объявлять
@@ -62,5 +65,20 @@ func TestVerifyPlacesTellsRealFromInvented(t *testing.T) {
 	}
 	if places[3].Found {
 		t.Errorf("путь наружу признан настоящим: %+v", places[3])
+	}
+}
+
+// Отбор «кодом или руками» обязан видеть, кто в проекте человек, а что —
+// сервис. Без этого «разобраться с Сапаром» читалось как «поговорить с
+// подрядчиком Сапар», хотя Сапар вписан в проект как сервис.
+func TestTriageHeadNamesProjectPeopleAndServices(t *testing.T) {
+	p := core.Project{Name: "Такси", People: []string{"Ануар", "Гульназ"}, Vocabulary: []string{"Сапар", "МДС", "Ануар"}}
+	it := core.ProjectItem{Text: "Разобраться с Сапаром", Owner: "Ануар"}
+	head := triageHead(it, p, Evidence{})
+	if !strings.Contains(head, "Люди проекта: Ануар, Гульназ") {
+		t.Errorf("людей проекта в отборе нет:\n%s", head)
+	}
+	if !strings.Contains(head, "Сервисы и сокращения проекта (не люди): Сапар, МДС") {
+		t.Errorf("сервисов проекта в отборе нет (или в них попал человек):\n%s", head)
 	}
 }
