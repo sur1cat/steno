@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/sur1cat/steno/internal/core"
+	"github.com/sur1cat/steno/internal/demo"
 )
 
 // Наполняет базу правдоподобными данными, чтобы панель можно было посмотреть
@@ -22,7 +23,7 @@ func TestSeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	_, n, err := seedDemo(st, "ru")
+	_, n, err := demo.Seed(st, "ru")
 	if err != nil {
 		t.Fatal(err)
 	}

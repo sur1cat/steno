@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sur1cat/steno/internal/core"
+	"github.com/sur1cat/steno/internal/demo"
 	"github.com/sur1cat/steno/internal/i18n"
 	"github.com/sur1cat/steno/internal/panel"
 )
@@ -41,7 +42,7 @@ func cmdDemo(ctx context.Context, args []string) error {
 		return err
 	}
 	defer st.Close()
-	projects, n, err := seedDemo(st, i18n.UILang)
+	projects, n, err := demo.Seed(st, i18n.UILang)
 	if err != nil {
 		return fmt.Errorf(i18n.Tr("демо-данные: %w"), err)
 	}

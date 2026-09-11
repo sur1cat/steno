@@ -45,6 +45,7 @@ needs the service running. `-c <path>` points at another `steno.json`.
 | `steno transcript [id]` | the transcript itself |
 | `steno projects [name]` | what is open per project |
 | `steno cost [days]` | measured tokens and what they cost |
+| `steno mcp` | an MCP server over stdio — a model asks the same database, see [below](#ask-a-model) |
 
 <img src="../assets/cli-show.svg" width="880" alt="steno show — the follow-up as text, with timecodes and publication links">
 
@@ -60,6 +61,30 @@ The state that outlives the meeting. Short ids, so the CLI and the panel talk
 about the same thing.
 
 <img src="../assets/cli-cost.svg" width="880" alt="steno cost — measured spend over 30 days">
+
+## Ask a model
+
+`steno mcp` is an MCP server over stdio on the same database: Claude Code,
+Claude Desktop or Cursor connect to it and answer *"what did we decide about
+the migration?"* or *"what is open on payments?"* themselves. No service needs
+to run, and `-c` picks the config the same way it does everywhere else.
+
+```console
+claude mcp add steno -- steno mcp        # Claude Code
+```
+
+Claude Desktop and Cursor take the same thing in their JSON:
+`{"mcpServers": {"steno": {"command": "steno", "args": ["mcp"]}}}` — Claude
+Desktop does not read your shell's PATH, so give it the full path from `which steno`.
+
+| | |
+|---|---|
+| `list_meetings` | recent meetings: id, title, when, how long, who, status, task count; `project` narrows it |
+| `get_followup` | one meeting's write-up: tldr, decisions, tasks with owners and dates, questions, risks |
+| `get_transcript` | the lines with their second and speaker; `from_sec`/`to_sec` window, 200 lines per call |
+| `search` | full text over transcripts and follow-ups: meeting, second, passage |
+| `projects` · `open_items` | what is open per project — tasks, questions, decisions, with owner and origin |
+| `close_item` | the one tool that writes: closes an item as done or dropped, with a reason |
 
 ## Projects — how it learns your vocabulary
 

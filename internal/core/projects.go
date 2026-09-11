@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -118,6 +119,21 @@ func (s *Store) queryItems(q string, args ...any) ([]ProjectItem, error) {
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// Item — один пункт по идентификатору. Нужен тому, кто закрывает пункт снаружи
+// созвона — из MCP: CloseItem молчит, если такого id нет или он уже закрыт,
+// а ответить «закрыл» на опечатку в id — значит соврать.
+func (s *Store) Item(id string) (ProjectItem, error) {
+	items, err := s.queryItems(`SELECT id,project,kind,text,owner,due,status,quote,opened_at,updated_at,opened_in,closed_in,note
+		FROM project_items WHERE id=?`, id)
+	if err != nil {
+		return ProjectItem{}, err
+	}
+	if len(items) == 0 {
+		return ProjectItem{}, sql.ErrNoRows
+	}
+	return items[0], nil
 }
 
 func (s *Store) AddItem(it ProjectItem) error {

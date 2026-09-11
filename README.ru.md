@@ -607,6 +607,8 @@ steno context [проект]       собрать справку по коду �
 
 steno doctor             проверить, чего не хватает для запуска
 steno demo               панель на демо-данных: без настройки и созвона
+steno mcp                MCP-сервер для Claude Code, Claude Desktop, Cursor:
+                         claude mcp add steno -- steno mcp
 steno cost [дней]        сколько потрачено на follow-up
 steno version            версия и какой образ бота ей соответствует
 steno prune              удалить старые записи по срокам из конфига

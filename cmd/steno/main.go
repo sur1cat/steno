@@ -24,6 +24,7 @@ import (
 	"github.com/sur1cat/steno/internal/brain"
 	"github.com/sur1cat/steno/internal/core"
 	"github.com/sur1cat/steno/internal/i18n"
+	"github.com/sur1cat/steno/internal/mcp"
 	"github.com/sur1cat/steno/internal/note"
 	"github.com/sur1cat/steno/internal/panel"
 	"github.com/sur1cat/steno/internal/pipeline"
@@ -67,6 +68,7 @@ const usage = `steno — заметки и follow-up с созвонов.
   steno prune                удалить старые записи по срокам из конфига
   steno doctor               проверить, чего не хватает для запуска
   steno demo                 панель на демо-данных: без настройки и созвона
+  steno mcp                  MCP-сервер для Claude Code, Claude Desktop, Cursor
   steno version              версия и какой образ бота ей соответствует
   steno cost [дней]          сколько потрачено на follow-up
   steno projects [проект]    что открыто по проектам
@@ -140,6 +142,8 @@ func main() {
 		err = cmdDoctor(args)
 	case "demo":
 		err = cmdDemo(ctx, args)
+	case "mcp":
+		err = cmdMCP(ctx, args)
 	case "version", "--version", "-v":
 		err = cmdVersion()
 	case "cost":
@@ -783,6 +787,29 @@ func cmdList(args []string) error {
 		fmt.Println(i18n.Tr("созвонов пока нет"))
 	}
 	return nil
+}
+
+// cmdMCP — MCP-сервер по stdio: Claude Code, Claude Desktop и Cursor
+// спрашивают про созвоны инструментами поверх той же базы, что у `steno show`
+// и `steno projects`. Сервис не нужен — как и остальным командам, которые
+// только читают; сами инструменты живут в internal/mcp.
+//
+// Клиент подключает его одной строкой: claude mcp add steno -- steno mcp.
+// stdout занят протоколом, поэтому всё, что говорится человеку, — включая
+// «настройка: …» из open(), — уходит в stderr через log, и печатать сюда
+// fmt.Print нельзя.
+func cmdMCP(ctx context.Context, args []string) error {
+	fs := newFlagSet("mcp")
+	cfgPath := setupFlags(fs)
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
+	_, st, err := open(*cfgPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	return mcp.Serve(ctx, st)
 }
 
 // cmdMeetingRm — `steno rm <id>`. Имя выбрано по соседям: `show`, `process`,

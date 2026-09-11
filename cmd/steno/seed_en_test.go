@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/sur1cat/steno/internal/core"
+	"github.com/sur1cat/steno/internal/demo"
 )
 
 // Английский демо-набор. Тот же смысл, что у TestSeed, но на языке, на котором
@@ -23,7 +24,7 @@ func TestSeedEN(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	_, n, err := seedDemo(st, "en")
+	_, n, err := demo.Seed(st, "en")
 	if err != nil {
 		t.Fatal(err)
 	}

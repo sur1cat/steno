@@ -625,13 +625,27 @@ type MeetingRow struct {
 }
 
 func (s *Store) ListMeetings(limit, offset int) ([]MeetingRow, error) {
+	return s.listMeetings("", nil, limit, offset)
+}
+
+// ProjectMeetings — созвоны, на которых проект всплывал: где по нему завели
+// или закрыли пункт. Другой связи созвона с проектом в базе нет, и заводить её
+// незачем: проект живёт у пунктов, а не у созвона, потому что на одном созвоне
+// говорят о трёх проектах сразу.
+func (s *Store) ProjectMeetings(project string, limit int) ([]MeetingRow, error) {
+	return s.listMeetings(`WHERE EXISTS (SELECT 1 FROM project_items i
+		WHERE i.project = ? AND (i.opened_in = m.id OR i.closed_in = m.id))`,
+		[]any{project}, limit, 0)
+}
+
+func (s *Store) listMeetings(where string, args []any, limit, offset int) ([]MeetingRow, error) {
 	rows, err := s.DB.Query(`
 		SELECT m.id, m.title, m.started_at, COALESCE(m.ended_at,0), m.participants,
 		       m.status, m.left_reason, m.audio_path,
 		       (SELECT COUNT(*) FROM tasks t WHERE t.meeting_id = m.id)
-		FROM meetings m
+		FROM meetings m `+where+`
 		ORDER BY m.started_at DESC
-		LIMIT ? OFFSET ?`, limit, offset)
+		LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, err
 	}

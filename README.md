@@ -105,7 +105,7 @@ there is nothing to deploy but a file.
 | 💻 **Your laptop** | your own meetings. Local whisper plus platform captions and nothing leaves the machine |
 | 🖧 **One cheap VM** | the team's meetings. No GPU needed if transcription goes to Groq |
 
-**How you look at it** — same database underneath; three of the four need no
+**How you look at it** — same database underneath; four of the five need no
 service running.
 
 | | | needs the service |
@@ -114,6 +114,7 @@ service running.
 | 🖥️ **[`steno ui`](#tour)** | full-screen terminal: meetings, tasks, projects, search | no |
 | 🌐 **[Panel](#tour)** | a browser, on the machine or over the network | yes |
 | 🍎 **[Menu bar](#in-the-menu-bar)** | macOS: today, tasks, projects, one field to send the bot | only to send the bot |
+| 🤖 **[MCP](docs/commands.md#ask-a-model)** | Claude Code, Claude Desktop, Cursor: `claude mcp add steno -- steno mcp` | no |
 
 **Who writes it up** — `steno setup` asks; `brain.provider` pins it. All four
 hand back the same JSON, so nothing downstream knows who answered.
