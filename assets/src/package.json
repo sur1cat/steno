@@ -1,0 +1,7 @@
+{
+  "name": "steno-assets-src",
+  "private": true,
+  "type": "module",
+  "description": "Кадры анимированных SVG для проверки: npm i && node frame.mjs <svg> <секунда> <png> [x y w h]",
+  "dependencies": { "puppeteer-core": "^25.10.0" }
+}
