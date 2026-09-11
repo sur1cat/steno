@@ -170,7 +170,7 @@ func (t meetingToll) ReopenWords() string {
 // здесь один на удаление и на счёт: разъехавшись, они дали бы вопрос «удалить?»
 // с честными цифрами и удаление, которое половину из них не трогает.
 var meetingTables = []string{
-	"segments", "tasks", "followups", "publications", "seen_events", "search_fts",
+	"segments", "tasks", "followups", "publications", "search_fts",
 }
 
 // DeleteMeeting забывает созвон целиком: строку в списке, расшифровку, разбор,
@@ -212,6 +212,15 @@ func (s *Store) DeleteMeeting(id string) (meetingToll, error) {
 	// когда-то закрыли, — а созвона, на который ссылался closed_in, уже нет.
 	if _, err := tx.Exec(`UPDATE project_items SET status='open', closed_in='', updated_at=?
 		WHERE closed_in=?`, time.Now().Unix(), id); err != nil {
+		return toll, err
+	}
+	// Отметку о событии не удаляем, а отвязываем. Ключ события — это память
+	// «бот сюда уже ходил», и она нужна календарю после удаления даже больше,
+	// чем до: на живом прогоне удаление мусорного захода в пустую комнату
+	// сняло отметку, и следующий опрос отправил бота туда же снова. Для зова
+	// через Telegram отвязанная отметка не помеха: EventSeen смотрит на статус
+	// созвона, а созвона больше нет.
+	if _, err := tx.Exec(`UPDATE seen_events SET meeting_id='' WHERE meeting_id=?`, id); err != nil {
 		return toll, err
 	}
 	if _, err := tx.Exec(`DELETE FROM meetings WHERE id=?`, id); err != nil {

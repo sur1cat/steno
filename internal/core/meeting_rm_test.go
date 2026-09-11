@@ -295,3 +295,32 @@ func TestMeetingTollCountsThePrice(t *testing.T) {
 		t.Errorf("цена удаления пустого созвона: %q", empty.Text)
 	}
 }
+
+// Удаление созвона не снимает отметку с календарного события: она значит
+// «бот сюда уже ходил», и после удаления мусорного захода нужна как раз для
+// того, чтобы следующий опрос не отправил бота в ту же пустую комнату.
+func TestDeleteMeetingKeepsEventMark(t *testing.T) {
+	st, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := &Meeting{ID: "cal-x", MeetURL: "https://meet.google.com/abc-defg-hij", StartedAt: time.Now(), Status: "recording"}
+	if err := st.CreateMeeting(m); err != nil {
+		t.Fatal(err)
+	}
+	const key = "https://meet.google.com/abc-defg-hij@2026-09-11T12:07Z"
+	if ok, err := st.MarkEventSeen(key, m.ID); err != nil || !ok {
+		t.Fatalf("отметка: %v %v", ok, err)
+	}
+	if _, err := st.DeleteMeeting(m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if been, _ := st.EventAttempted(key); !been {
+		t.Error("удаление созвона сняло отметку с события — календарь пойдёт туда снова")
+	}
+	// А для зова человеком дорога свободна: созвона нет, значит он не «идёт».
+	if seen, _ := st.EventSeen(key); seen {
+		t.Error("отвязанная отметка не должна выглядеть как идущий созвон")
+	}
+}
