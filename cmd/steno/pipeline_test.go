@@ -14,6 +14,7 @@ import (
 
 	"github.com/sur1cat/steno/internal/audio"
 	"github.com/sur1cat/steno/internal/core"
+	"github.com/sur1cat/steno/internal/pipeline"
 	"github.com/sur1cat/steno/internal/publish"
 )
 
@@ -443,5 +444,44 @@ func TestTransactionTakesWriteLockAtBegin(t *testing.T) {
 	if waited < held/2 {
 		t.Fatalf("запись прошла за %v, не дожидаясь чужой транзакции — "+
 			"значит блокировка берётся не на BEGIN, и снимок может разъехаться", waited)
+	}
+}
+
+// Пустая расшифровка не доходит до модели и в пути сервиса — а не только при
+// записи из терминала. Календарный бот, зашедший в пустую комнату, отдавал
+// тишину в Claude и получал за деньги follow-up из одного вопроса.
+func TestProcessMeetingRefusesEmptyTranscript(t *testing.T) {
+	dir := t.TempDir()
+	whisper := filepath.Join(dir, "silence.json")
+	mustWrite(t, whisper, `{"segments":[]}`)
+
+	cfg := core.DefaultConfig()
+	cfg.DataDir = dir
+	cfg.Transcribe.Cmd = []string{"cat", "{{audio}}"}
+
+	st, err := core.OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	m := &core.Meeting{ID: "silent-1", Title: "Пустая комната", MeetURL: "https://meet.google.com/abc-defg-hij",
+		StartedAt: time.Now(), AudioPath: whisper, Status: "recorded"}
+	if err := st.CreateMeeting(m); err != nil {
+		t.Fatal(err)
+	}
+
+	err = pipeline.ProcessMeeting(context.Background(), cfg, st, m.ID, true)
+	if err == nil || !strings.Contains(err.Error(), "нет речи") {
+		t.Fatalf("ждали отказ «в расшифровке нет речи», получили: %v", err)
+	}
+	got, err := st.Meeting(m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "failed" {
+		t.Errorf("статус %q, ждали failed — иначе созвон выглядит нормально записанным", got.Status)
+	}
+	if f, _ := st.Followup(m.ID); f != nil {
+		t.Error("follow-up по тишине всё-таки сделан")
 	}
 }

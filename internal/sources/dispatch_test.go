@@ -304,3 +304,50 @@ func TestMeetingKeyAcrossPlatforms(t *testing.T) {
 		t.Error("комнаты разных площадок дали один ключ")
 	}
 }
+
+// Календарь зовёт сам и по кругу, поэтому событию положена одна попытка:
+// бот вышел «остался один» — и следующий опрос не должен отправить его в ту
+// же пустую комнату. Через Telegram (Start) повторный зов остаётся возможен:
+// там зовёт человек, осознанно.
+func TestStartOnceDoesNotRejoinFinishedEvent(t *testing.T) {
+	st, err := core.OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	d := NewDispatcher(core.DefaultConfig(), st, log.New(io.Discard, "", 0))
+	// Вместо бота: заводим строку и тут же заканчиваем её как «остался один».
+	d.Run = func(_ context.Context, _ *core.Config, st *core.Store, m *core.Meeting) error {
+		if err := st.CreateMeeting(m); err != nil {
+			return err
+		}
+		return st.FinishMeeting(m.ID, m.StartedAt, time.Now(), []string{"Rustem"}, "published", "", "остался один")
+	}
+
+	key := "https://meet.google.com/abc-defg-hij@2026-09-11T12:00:00Z"
+	first := &core.Meeting{ID: "cal-1", MeetURL: "https://meet.google.com/abc-defg-hij",
+		StartedAt: time.Now(), Status: "recording"}
+	if got := d.StartOnce(context.Background(), key, first, "календарь"); got != Started {
+		t.Fatalf("первый заход: %v", got)
+	}
+	// Дождаться, пока «бот» вернётся и созвон закроется.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if m, err := st.Meeting("cal-1"); err == nil && m.Status == "published" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("созвон так и не закрылся")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	again := &core.Meeting{ID: "cal-2", MeetURL: first.MeetURL, StartedAt: time.Now(), Status: "recording"}
+	if got := d.StartOnce(context.Background(), key, again, "календарь"); got != Duplicate {
+		t.Errorf("календарь позвал на то же событие второй раз: %v", got)
+	}
+	// А зов человеком — по-прежнему можно: созвон кончился, путь свободен.
+	if got := d.Start(context.Background(), key, again, "Telegram"); got != Started {
+		t.Errorf("осознанный повторный зов после конца созвона должен пройти: %v", got)
+	}
+}

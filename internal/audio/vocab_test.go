@@ -78,6 +78,9 @@ func TestVocabularyCollectsPeopleAndServices(t *testing.T) {
 	}
 	got := v.Prompt(promptBudget)
 	t.Logf("подсказка при живом бюджете: %s", got)
+	// Порядок отсечения виден только при тесном бюджете: рабочий (160)
+	// вмещает всё, что здесь собрано. Тесный — 60, на котором это мерилось.
+	tight := v.Prompt(60)
 
 	// Просторный бюджет — чтобы видеть весь собранный словарь, а не только то,
 	// что влезло. Собирается и режется это в разных местах, и проверять их
@@ -146,12 +149,12 @@ func TestVocabularyCollectsPeopleAndServices(t *testing.T) {
 	// человек вписал сам; название проекта во фразу уже не влезает — оно
 	// нужно модели, а не whisper, и уступает.
 	for _, want := range []string{"Rustem Turgeldin", "Орынгали", "аквайринг"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("при живом бюджете потерялось %q:\n%s", want, got)
+		if !strings.Contains(tight, want) {
+			t.Errorf("при тесном бюджете потерялось %q:\n%s", want, tight)
 		}
 	}
-	if strings.Contains(got, "taxi-kolesa") {
-		t.Errorf("название проекта вытеснило бы слово от человека, а влезло вместе с ним:\n%s", got)
+	if strings.Contains(tight, "taxi-kolesa") {
+		t.Errorf("название проекта вытеснило бы слово от человека, а влезло вместе с ним:\n%s", tight)
 	}
 	// Подсказка — фраза с точками, люди в одном предложении, названия в другом.
 	// Это измерено на записях (twopass_test.go): список через запятую рушит
@@ -216,7 +219,8 @@ func TestVocabularySharesBudgetBetweenProjects(t *testing.T) {
 	if v == nil {
 		t.Fatal("словарь не собрался")
 	}
-	got := v.Prompt(promptBudget)
+	// Тесный бюджет: при рабочем сорок слов влезают целиком, и очерёдность не видна.
+	got := v.Prompt(60)
 	// Слова второго проекта идут вперемешку со словами первого, а не после
 	// всех сорока: и первое, и второе его слово обязаны влезть.
 	for _, want := range []string{"каспи", "лотереи"} {
@@ -315,9 +319,12 @@ func TestVocabularyPromptFitsBudget(t *testing.T) {
 		v.addTerms(s)
 	}
 
-	full := v.Prompt(promptBudget)
-	if n := wordTokens(full); n > promptBudget {
-		t.Fatalf("подсказка на %d токенов при бюджете %d:\n%s", n, promptBudget, full)
+	// Порядок отсечения мерился на 60 — на нём и проверяем; рабочий бюджет
+	// выше и здесь ничего бы не отрезал.
+	const tight = 60
+	full := v.Prompt(tight)
+	if n := wordTokens(full); n > tight {
+		t.Fatalf("подсказка на %d токенов при бюджете %d:\n%s", n, tight, full)
 	}
 	// Сервисов больше, чем влезает, — значит хвост обязан быть отрезан.
 	if strings.Contains(full, "kaspi") {
@@ -467,5 +474,33 @@ func TestTranscriberOmitsEmptyVocabulary(t *testing.T) {
 	}
 	if strings.TrimSpace(string(raw)) != "set=" {
 		t.Errorf("пустой словарь всё равно выставил STENO_PROMPT: %q", raw)
+	}
+}
+
+// Рабочий бюджет обязан вмещать всё, что человек вписал руками. При 60 на
+// живом созвоне 2026-09-11 шестое имя — «Гульназ» — отрезалось на два токена,
+// whisper услышал «для нас», и задача осталась без исполнителя.
+func TestVocabularyBudgetHoldsEveryHandWrittenName(t *testing.T) {
+	cfg := core.DefaultConfig()
+	cfg.DataDir = t.TempDir()
+	cfg.Projects = []core.Project{{
+		Name:       "Такси",
+		Aliases:    []string{"такси", "парк"},
+		People:     []string{"Ануар", "Орынгали", "Азамат", "Рустем", "Гульназ"},
+		Vocabulary: []string{"Сапар", "Yandex"},
+	}}
+	v := MeetingVocabulary(context.Background(), cfg, nil,
+		&core.Meeting{Participants: []string{"Rustem Turgeldin"}})
+	if v == nil {
+		t.Fatal("словарь не собрался")
+	}
+	got := v.Prompt(promptBudget)
+	for _, want := range []string{"Ануар", "Орынгали", "Азамат", "Рустем", "Гульназ", "Сапар", "Yandex"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("вписанное руками %q не влезло в рабочий бюджет:\n%s", want, got)
+		}
+	}
+	if n := wordTokens(got); n > promptTokenLimit/2 {
+		t.Errorf("подсказка на %d токенов по оценке — слишком близко к пределу whisper %d, режущему с начала", n, promptTokenLimit)
 	}
 }

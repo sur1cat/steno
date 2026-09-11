@@ -282,6 +282,14 @@ func ProcessMeeting(ctx context.Context, cfg *core.Config, st *core.Store, id st
 		_ = st.SetStatus(id, "failed", err.Error())
 		return err
 	}
+	// Та же проверка, что и у записи из терминала: расшифровка из одной тишины
+	// до модели не доходит. Здесь её не было, и календарный бот, зашедший в
+	// пустую комнату, отдал тишину в Claude — и получил за деньги follow-up
+	// из одного открытого вопроса, который выглядит как настоящий.
+	if err := audio.CheckTranscript(segs); err != nil {
+		_ = st.SetStatus(id, "failed", err.Error())
+		return err
+	}
 	if err := st.SaveSegments(id, segs); err != nil {
 		// Молча вернуться нельзя: созвон остался бы в статусе «записан», а это
 		// спокойный статус, который никто не перепроверяет и никто не

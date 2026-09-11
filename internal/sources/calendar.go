@@ -150,7 +150,7 @@ func (s *CalendarSource) consider(ctx context.Context, calID string, ev *calenda
 	if s.D.st.ScheduleOverride(key) == "skip" {
 		return
 	}
-	s.D.Start(ctx, key, &core.Meeting{
+	s.D.StartOnce(ctx, key, &core.Meeting{
 		ID:         core.NewID(start),
 		Title:      ev.Summary,
 		MeetURL:    meetURL,

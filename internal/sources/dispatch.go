@@ -48,6 +48,20 @@ const (
 	StartError                    // не смогли записать в базу
 )
 
+// StartOnce — то же, что Start, но для источников, которые зовут сами и по
+// кругу: событие, на которое бот уже ходил, не считается снова, как бы тот
+// заход ни кончился. Иначе календарный опрос звал бы в пустую комнату каждые
+// две минуты до конца события.
+func (d *Dispatcher) StartOnce(ctx context.Context, key string, m *core.Meeting, why string) StartResult {
+	if been, err := d.st.EventAttempted(key); err != nil {
+		d.log.Printf(i18n.Tr("проверка «%s»: %v"), key, err)
+		return StartError
+	} else if been {
+		return Duplicate
+	}
+	return d.Start(ctx, key, m, why)
+}
+
 // Start заводит бота на созвон. key должен быть одинаковым для одного и того
 // же созвона, как бы про него ни узнали, — иначе на встречу придут два бота.
 func (d *Dispatcher) Start(ctx context.Context, key string, m *core.Meeting, why string) StartResult {
