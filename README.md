@@ -250,14 +250,6 @@ Four ways in, four ways out. No tokens in this screen and there never will be.
 </tr>
 </table>
 
-<div align="center">
-
-*Light theme included, following the system unless you say otherwise.*
-
-<img src="assets/panel-meetings-light.png" width="700" alt="The same panel in the light theme">
-
-</div>
-
 ## Docs
 
 | | |
