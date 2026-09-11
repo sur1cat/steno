@@ -40,8 +40,10 @@ func cmdGoogle(ctx context.Context, args []string) error {
 		return googleStatus(path)
 	case "set":
 		return googleSet(path, bufio.NewReader(os.Stdin))
+	case "connect":
+		return googleConnect(ctx, path, bufio.NewReader(os.Stdin))
 	}
-	return fmt.Errorf(i18n.Tr("не понял «%s»: steno google | steno google set"), fs.Arg(0))
+	return fmt.Errorf(i18n.Tr("не понял «%s»: steno google | steno google set | steno google connect"), fs.Arg(0))
 }
 
 // googleStatus — три вещи, которые нужны, чтобы кнопка в панели заработала,
@@ -74,7 +76,7 @@ func googleStatus(path string) error {
 	case cfg.Google.ClientID == "" || os.Getenv(secretEnv) == "":
 		fmt.Println(dim(i18n.Tr("  вставить Client ID и секрет:  steno google set")))
 	case tokErr != nil:
-		fmt.Println(dim(i18n.Tr("  осталось нажать «Подключить Google» в настройках панели")))
+		fmt.Println(dim(i18n.Tr("  дать согласие:  steno google connect   (или кнопка в панели)")))
 	}
 	return nil
 }
@@ -122,12 +124,12 @@ func googleSet(path string, in *bufio.Reader) error {
 			if err := restartDaemon(path); err != nil {
 				return err
 			}
-			fmt.Println(ok(i18n.Tr("перезапущен — осталось нажать «Подключить Google» в настройках панели")))
+			fmt.Println(ok(i18n.Tr("перезапущен — осталось согласие:  steno google connect")))
 			return nil
 		}
 	}
 	fmt.Println(dim(i18n.Tr("  сервис читает .env на старте:  steno stop && steno start")))
-	fmt.Println(dim(i18n.Tr("  потом «Подключить Google» в настройках панели")))
+	fmt.Println(dim(i18n.Tr("  потом согласие:  steno google connect")))
 	return nil
 }
 

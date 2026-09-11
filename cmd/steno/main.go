@@ -87,6 +87,7 @@ const usage = `steno — заметки и follow-up с созвонов.
                              отдать агенту (steno spec help — подробно)
   steno google               вход по кнопке: что уже есть; steno google set —
                              вставить Client ID и секрет из консоли Google
+  steno panel on|off         поднимать ли веб-панель вместе с сервисом
   steno agent on|off         разрешить агенту работать в репозитории;
                              steno agent auto on — собирать ТЗ самому
   steno bot --url <u>        сам бот; запускается внутри контейнера
@@ -162,6 +163,8 @@ func main() {
 		err = cmdGoogle(ctx, args)
 	case "agent":
 		err = cmdAgent(args)
+	case "panel":
+		err = cmdPanel(args)
 	case "context":
 		err = cmdContext(ctx, args)
 	case "prune":

@@ -670,6 +670,8 @@ const defaultPanelAddr = "127.0.0.1:8422"
 
 func (s *setupState) askPanel(ctx context.Context) error {
 	section(i18n.Tr("Панель"))
+	fmt.Println(dim(i18n.Tr("  Веб-панель: архив, поиск, проекты, кнопки. Необязательна — то же есть")))
+	fmt.Println(dim(i18n.Tr("  в steno ui и в строке меню. Меняется потом: steno panel on|off.")))
 	addr := s.ask(i18n.Tr("Адрес"), defaultPanelAddr)
 	pass := s.askSecret(i18n.Tr("Пароль (общий на команду)"), "")
 	if pass == "" {
@@ -677,6 +679,14 @@ func (s *setupState) askPanel(ctx context.Context) error {
 		fmt.Println(ok(i18n.Tr("сгенерировал: ") + pass))
 	}
 	s.setPanel(addr, pass)
+	// Адрес и пароль записаны в любом случае — чтобы `steno panel on` потом
+	// работал без мастера. А поднимать ли её с сервисом — спрашиваем: раньше
+	// панель включалась молча, и человек получал порт, о котором не просил.
+	s.cfg.Panel.Enabled = s.confirm(i18n.Tr("Поднимать панель вместе с сервисом?"), true)
+	if !s.cfg.Panel.Enabled {
+		fmt.Println(dim(i18n.Tr("  выключена; включить потом:  steno panel on")))
+		return nil
+	}
 	if !strings.HasPrefix(s.cfg.Panel.Addr, "127.0.0.1") &&
 		!strings.HasPrefix(s.cfg.Panel.Addr, "localhost") {
 		s.cfg.Panel.Secure = s.confirm(i18n.Tr("Панель за HTTPS?"), true)

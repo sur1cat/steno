@@ -90,3 +90,18 @@ func TestGoogleSetFromPipe(t *testing.T) {
 		t.Errorf("client_id не в конфиге: %s", cfg)
 	}
 }
+
+// Код из вставленного адреса: только при совпавшем state — иначе можно
+// подсунуть чужой код. Голая строка без адреса кодом не считается.
+func TestCodeFromPastedRequiresMatchingState(t *testing.T) {
+	const st = "abc123"
+	if got := codeFromPasted("http://127.0.0.1:5555/callback?state=abc123&code=4/xyz", st); got != "4/xyz" {
+		t.Errorf("код не вынут: %q", got)
+	}
+	if got := codeFromPasted("http://127.0.0.1:5555/callback?state=other&code=4/xyz", st); got != "" {
+		t.Errorf("чужой state принят: %q", got)
+	}
+	if got := codeFromPasted("4/xyz", st); got != "" {
+		t.Errorf("голая строка принята как код: %q", got)
+	}
+}
